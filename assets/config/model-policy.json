@@ -1,0 +1,10 @@
+{
+  "taskPlanning":  { "model": "claude-sonnet", "effort": "low" },
+  "research":      { "model": "claude-sonnet", "effort": "medium" },
+  "implementation":{ "model": "codex",         "effort": "medium" },
+  "review":        { "model": "claude-opus",   "effort": "high" },
+  "fix":           { "model": "codex",         "effort": "low" },
+  "improveCheck":  { "model": "claude-sonnet", "effort": "low" },
+  "reflection":    { "model": "claude-sonnet", "effort": "low" },
+  "reviewAudit":   { "model": "claude-opus",   "effort": "high" }
+}

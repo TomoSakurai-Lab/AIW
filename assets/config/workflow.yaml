@@ -1,0 +1,481 @@
+version: 5          # workflow 構造のバージョン。詳細は versions セクション
+
+settings:
+  statusFile: current-status.json
+  singleActiveFeature: true    # current-*.md がフラット構造のため並行 feature 不可(意図的制約)
+  # verify-local: ローカルで決定論的に実行できる検証(M1.5 第3部)。
+  # プロジェクトごとに定義する。ここが空なら validator は skipped になり、
+  # 「検査していない」ことが Event Log と status --summary に出る(passed にはしない)。
+  # verifyLocal:
+  #   typecheck:
+  #     cwd: <checkRepoRoot からの相対パス>
+  #     command: ["npx", "tsc", "--noEmit", "--listFiles"]
+  #     countFilesExcluding: ["node_modules"]
+  #     timeoutMs: 120000
+  #     notChecked: "<このコマンドが見ていない範囲>"
+
+defaults:
+  escalation:
+    to: human
+    action: halt
+
+# --------------------------------------------------------
+# バージョン分離(rev.3)
+# --------------------------------------------------------
+# 変更対象ごとにバージョンを持ち、Event Log に使用バージョンを記録する。
+versions:
+  workflow: 5
+  prompts:
+    taskPlanning: 3
+    research: 9                # M2 Stage3: 手順を Skill、環境固有手順を local-environment へ分離
+    implementation: 2          # M2 Stage3: 手順を Skill、恒久規則を Instructions へ分解
+    review: 7                  # M2 Stage3: 監査手順を Skill、Backlog 基準を Instructions へ分解
+    fix: 2                     # M2 Stage3: 手順を Skill、恒久規則を Instructions へ分解
+    reviewAudit: 1
+    improveCheck: 5            # M2 Stage3: 判断手順を Skill へ分解
+    reflection: 7              # M2 Stage3: 手順を Skill、backlog/知識ファイルの規則を Instructions へ分解
+  templates:
+    currentTask: 2
+    currentResult: 2           # M1: 検証パッケージ化
+    currentReview: 5           # Verification Data を追加(fix が検証で使う実データ値の置き場)
+    researchFindings: 1        # M1 で新設
+  schemas:
+    currentStatus: 1
+  # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
+  skills:
+    implementation: 1
+    fix: 2                     # 修正着手前の準備(Verification Data の使用)と検証の段階制
+    review: 2                  # Verification Data の記載要件
+    improve-check: 1
+    reflection: 1
+    research: 1
+  instructions:
+    coding-rules: 3            # e2e 規則を「最終検証」と「開発中の反復」で分離
+                               # (キーは宣言名そのもの = instructions/<name>.md)
+    backlog-rules: 2           # M2 Stage3: backlog.md の書式と語彙を reflection から集約
+    knowledge-files: 1
+
+# --------------------------------------------------------
+# Artifact Contract 定義(§7.4)。Validator から artifact キーで参照する。
+# --------------------------------------------------------
+artifacts:
+  current-task:
+    path: current-task.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Task"
+        - "## Goal"
+        - "## Scope"
+        - "## Requirements"
+        - "## Out of Scope"
+        - "## Acceptance Criteria"
+
+  # Codex 入力(M1)。読者は実装者のみ。Current/Target/Delta や Open Decisions は
+  # research-findings.md 側に置く。token-range を維持するための分割(設計原則3)。
+  context-package:
+    path: context-package.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Task Summary"
+        - "# Source Requirements"    # 仕様書に明記された内容のみ。算出値は Inferred へ
+        - "# Constraints"
+        - "# Files"
+        - "## Read"
+        - "## Modify"
+        - "## Reference"
+        - "## Ignore"
+        - "# Acceptance Criteria Matrix"
+        - "# Test Strategy"
+
+  codex-prompt:
+    path: codex-prompt.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Objective"
+        - "# Required Changes"
+        - "# Scope Boundaries"
+        - "# Acceptance Criteria"
+        - "# Required Tests"
+
+  # 人間(ゲート②) + review / improve-check / reflection 向け(M1)。token-range 制約なし。
+  # Codex には渡さない。実装者に Open Decisions や Delta を渡すとノイズになる。
+  research-findings:
+    path: research-findings.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Current Behavior"
+        - "# Target Behavior"
+        - "# Delta"
+        - "# Uncertain Delta"
+        - "# Inferred Behavior"      # research が計算・測定・推定した値。算出根拠を必ず併記
+        - "# Open Decisions"
+        - "# UX Assumptions"
+        - "# Risk Areas"
+
+  # 実装結果ではなく検証パッケージ(M1・設計原則6)。AC ごとに PASS/FAIL/NOT VERIFIED を出す。
+  current-result:
+    path: current-result.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Summary"
+        - "## Change Map"
+        - "## Files Changed"
+        - "## Acceptance Criteria Verification"
+        - "## Automated Evidence"
+        - "## Manual Verification Required"
+        - "## Unresolved Decisions"
+        - "## Risk Areas"
+        - "## Tests Run"
+        - "## Test Results"
+        - "## Deviations"
+
+  current-review:
+    path: current-review.md
+    contract:
+      type: markdown-sections
+      sections:
+        - "# Summary"
+        - "## Specification Coverage Audit"          # 実装と Source Requirements の一致
+        - "## Acceptance Criteria Evidence Audit"    # AC ごとの証拠の実在 + 三値の妥当性
+        - "## Manual Verification Audit"             # Manual Verification の漏れ
+        - "## Risk Area Audit"                       # Inferred の算出根拠の検算 + High Risk 差分
+        - "## Critical"
+        - "## Major"
+        - "## Minor"
+        - "## Good"
+        - "## Backlog"
+        - "## Ready"
+        - "## Verification Data"       # fix が検証で使う実データ値。Fix Scope の直前に置く
+        - "## Fix Scope"
+        - "### Files To Modify"
+        - "### Critical"
+        - "### Major"
+        - "### Acceptance Criteria"
+        - "### Test Required"
+
+  current-status:
+    path: current-status.json
+    contract:
+      type: json-schema
+      schema: schemas/current-status.schema.json
+
+steps:
+  # Step ID はマップキーとして表現する。WorkflowStep.id はローダーがキーから注入し、
+  # YAML 本文には重複記載しない(§7.1)。
+
+  task-planning:
+    role: claude
+    inputs:
+      - path: user-task.md
+      - path: context.md
+      - path: feature.md
+        optional: true             # マルチフェーズ継続時
+      - path: backlog.md
+        optional: true             # 積み残し解消タスクの参照用(rev.5)
+    outputs:
+      - path: current-task.md
+      - path: current-status.json
+    optionalOutputs:
+      - path: feature.md
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [current-task.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+      - type: artifact-contract
+        onViolation: halt
+        artifact: current-task
+    approval:
+      required: true
+      actor: human
+      timing: after                # 承認ゲート①
+      onReject: rerun
+    transitions:
+      planned:
+        next: research
+
+  research:
+    role: claude
+    skill: research
+    # 環境固有の実行手順。**runtime にしか存在しない**(assets へ置かない)。
+    # 無い環境では組み立て出力に (no local-environment.md) の1行が残る。KI-01 の解消。
+    optionalInstructions: [local-environment]
+    inputs:
+      - path: current-task.md
+      - path: context.md
+      - path: feature.md
+        optional: true
+    outputs:
+      - path: context-package.md
+      - path: codex-prompt.md
+      - path: research-findings.md # 人間 + レビュアー向け(M1)。Codex へは渡さない
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [context-package.md, codex-prompt.md, research-findings.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+      - type: artifact-contract
+        onViolation: halt
+        artifact: context-package
+      - type: artifact-contract
+        onViolation: halt
+        artifact: codex-prompt
+      - type: artifact-contract
+        onViolation: halt
+        artifact: research-findings
+      # 下限の役割は M1 で変わった。元の 500 は「全部入りの context-package」への制約だったが、
+      # Current/Target/Delta と Requirements の詳細を research-findings.md へ移した以上、
+      # context-package が薄くなるのは分割の必然的な帰結であり「情報不足」の指標ではない。
+      # 現在の下限は「research がスタブや空の骨格を書いた」ことの検知として機能する。
+      # 実測(estimateTokens): 骨格のみ 118 / 最小(AC1・Modify1) 268 / 中規模(AC4・Modify3) 352 /
+      # 大規模(AC10・Modify10) 556。250 は骨格を止めつつ実測最小を通す値。
+      # report にしない理由: token-range は min/max で onViolation を共有し、仮に分離できても
+      # report はコンソールに出ない(Event Log のみ)ため「検知した」ことにならない。
+      - type: token-range
+        onViolation: halt
+        target: context-package.md
+        min: 250
+        max: 1500                # 上限は Codex の焦点を守るための制約。緩和しない
+    approval:
+      required: true
+      actor: human
+      timing: after                # 承認ゲート②(実装前)
+      onReject: rerun
+    transitions:
+      research-complete:
+        next: implementation
+      ux-decision-required:        # UX判断が未確定(M1)。人間が Open Decisions に決定を書いて再実行
+        next: research
+
+  implementation:
+    role: codex
+    # M2: プロンプトの分解。宣言したファイルが無ければ組み立て時に失敗する
+    # (Skill 抜きのプロンプトを黙って配らない)。
+    skill: implementation
+    instructions: [coding-rules]
+    inputs:
+      - path: codex-system.md
+      - path: context-package.md
+      - path: codex-prompt.md
+    outputs:
+      - path: current-result.md
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [current-result.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+      - type: artifact-contract
+        onViolation: report        # 実装結果の構造欠落はレビューで扱う
+        artifact: current-result
+      - type: diff-scope
+        onViolation: report        # 逸脱は scope-violation-report.md として review へ添付
+        declaredFilesFrom: context-package.md
+      - type: verify-local
+        onViolation: report        # 失敗は test-report.md として review へ渡し fix ループに乗せる
+        command: typecheck
+    postActions:
+      - snapshotResult             # attempts/result-<n>.md へ複製
+    transitions:
+      implemented:
+        next: review
+
+  review:
+    role: claude
+    skill: review
+    # coding-rules は「実装が守るべき規則」= レビューが突き合わせる対象でもある
+    instructions: [coding-rules, backlog-rules]
+    inputs:
+      - path: current-task.md
+      - path: context-package.md
+      - path: research-findings.md # Inferred Behavior の算出根拠を検算するため(M1)
+      - path: current-result.md
+      - path: git-diff
+      - path: test-report.md
+        optional: true             # verify-local 失敗時のみ(M1.5 第3部)
+      - path: scope-violation-report.md
+        optional: true
+    outputs:
+      - path: current-review.md
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [current-review.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+      - type: artifact-contract
+        onViolation: halt          # Fix の契約になるため構造欠落は許容しない
+        artifact: current-review
+    approval:
+      required: true
+      actor: human
+      timing: after                # 承認ゲート③(Fix Scope 承認)
+      onReject: rerun
+    transitions:
+      ready:
+        next: reflection
+      fix-required:
+        next: fix
+
+  fix:
+    role: codex
+    skill: fix
+    instructions: [coding-rules]
+    inputs:
+      - path: codex-system.md
+      - path: context-package.md
+      - path: current-review.md
+      - path: test-report.md
+        optional: true             # verify-local(typecheck) 失敗時のみ
+    outputs:
+      - path: current-result.md
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [current-result.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+      - type: diff-scope
+        onViolation: halt          # Bounded Fixes: Fix の逸脱は即 halt
+        declaredFilesFrom: current-review.md
+      - type: verify-local
+        onViolation: report        # halt にすると flaky 1本で無人運転が止まる
+        command: typecheck
+    retryPolicy:
+      counter: fixAttempts
+      maxRetries: 2              # 上限判定は maxRetries + 1(§7.6)
+      retryOn:                   # リトライ判別用の宣言。カウントは入場確定時に無条件(§7.6)
+        - fix-incomplete
+      onExhausted: escalate
+    postActions:
+      - snapshotResult
+    transitions:
+      fixed:
+        next: improve-check
+
+  improve-check:
+    role: claude
+    skill: improve-check
+    inputs:
+      - path: current-review.md
+      - path: current-result.md
+      - path: research-findings.md # M1
+      - path: git-diff
+    outputs:
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+    transitions:
+      ready-for-reflection:
+        next: reflection
+      fix-incomplete:
+        next: fix                  # Fix入場確定時に fixAttempts 加算、上限超過で escalate(§7.6)
+
+  reflection:
+    role: claude
+    skill: reflection
+    instructions: [backlog-rules, knowledge-files]
+    inputs:
+      - path: context.md
+      - path: current-task.md
+      - path: current-result.md
+      - path: current-review.md
+      - path: context-package.md   # 実装へ渡した宣言(知識抽出の突合用)
+      - path: research-findings.md # Open Decisions / Risk Areas の消し込み確認(M1)
+      - path: learnings.md
+      - path: backlog.md           # Backlog 転記・消し込みの対象(rev.5)
+      - path: feature.md
+        optional: true
+      - path: research/            # 調査メモ置き場(後続タスクで参照される内容のみ更新)
+        optional: true
+    outputs:
+      - path: context.md
+      - path: learnings.md
+      - path: backlog.md           # current-review の Backlog を出典付きで転記(rev.5)
+      - path: task-metadata.json   # archive 用のタスク要約。postActions が退避後テンプレへ戻す
+      - path: current-status.json
+    optionalOutputs:
+      - path: research/            # 残す価値のある調査メモが無ければ触らない
+    validators:
+      - type: file-exists
+        onViolation: halt
+        # task-metadata.json を含める理由: postActions の archiveArtifacts は existsSync ガードで
+        # 無ければ黙ってスキップし、直後の restoreTemplates がテンプレートで上書きする。
+        # validator は §7.7 の順序上 postActions より先に走るので、ここで止めるしかない。
+        targets: [task-metadata.json, current-status.json]
+      - type: json-schema
+        onViolation: halt          # feature-continue 時の nextPhaseId 必須は schema が担う
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+    postActions:
+      - archiveArtifacts
+      - restoreTemplates
+      - discardTaskMetadata        # 退避後に削除。空テンプレを残すと file-exists が素通りする
+      - resetFixAttempts
+      - advancePhase               # feature-continue のとき CLI が feature.md を更新
+    transitions:
+      feature-continue:
+        next: task-planning        # フェーズ境界で承認ゲート①を通す
+      feature-complete:
+        next: complete
+
+  review-audit:
+    role: claude
+    session: fresh                 # 監査の独立性のため必須
+    standalone: true               # 通常フロー外。auditPolicy に基づき CLI が起動提案
+    inputs:
+      - path: current-task.md
+      - path: context-package.md
+      - path: current-result.md
+      - path: current-review.md
+      - path: git-diff
+    outputs:
+      - path: audit-report.md
+      - path: current-status.json
+    validators:
+      - type: file-exists
+        onViolation: halt
+        targets: [audit-report.md, current-status.json]
+      - type: json-schema
+        onViolation: halt
+        target: current-status.json
+        schema: schemas/current-status.schema.json
+    transitions:
+      audit-complete:
+        next: complete
+
+auditPolicy:
+  cleanReviewThreshold: 5          # Critical/Major ゼロの連続回数。カウンタは CLI 所有
+  counterOwner: cli
+  alsoSuggestOn:
+    - monthly
+    - large-feature-complete
+    - prompt-change
+    - model-change

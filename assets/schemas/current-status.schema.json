@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "current-status",
+  "type": "object",
+  "required": ["step", "result", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "step": { "type": "string", "minLength": 1 },
+    "result": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string" },
+    "nextPhaseId": { "type": ["string", "null"] }
+  },
+  "if": {
+    "properties": { "result": { "const": "feature-continue" } },
+    "required": ["result"]
+  },
+  "then": {
+    "required": ["step", "result", "reason", "nextPhaseId"],
+    "properties": { "nextPhaseId": { "type": "string", "minLength": 1 } }
+  }
+}

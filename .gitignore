@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+# 実行時ルート。context.md / learnings.md / archive/ には実タスクの内容が入るため
+# このリポジトリには絶対に含めない（雛形は assets/ 側にある）。
+.ai-workflow/
+.ai-workflow2/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+*.swp
+.env

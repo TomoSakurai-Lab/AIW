@@ -1,0 +1,30 @@
+{
+  "name": "aiw",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && node dist/cli.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "test": "tsx test/index.ts",
+    "aiw": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "clipboardy": "^3.0.0",
+    "commander": "^9.5.0",
+    "yaml": "^2.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "3.7.1",
+    "typescript": "^5.5.3"
+  },
+  "bin": {
+    "aiw": "./dist/cli.js"
+  },
+  "volta": {
+    "node": "20.19.0"
+  }
+}
