@@ -36,7 +36,7 @@ import {
   EngineError
 } from "./engine/engine.js";
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard } from "./engine/executors/index.js";
-import type { ExecutorResult } from "./engine/executors/types.js";
+import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
 import { resolveRoot, rootPaths } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
 import { deleteBaseline, readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
@@ -156,11 +156,31 @@ function printStatus(withSummary: boolean, asJson: boolean): void {
 
 // `aiw exec <step>`: resolve the step's executor and run it. Produces artifacts only — no
 // validation, no transition, no state.json write. `aiw run <step>` still does all of that.
-async function engineExecCmd(stepArg?: string): Promise<void> {
+/**
+ * 進行の1行サマリを stderr へ流す（M3・課題I）。
+ *
+ * clipboard 運用では人間が対話画面で進行を見ていた。executor 化でその可視性を失うと
+ * 「30 分走っているが何をしているか分からない」状態になる。
+ *
+ * ⚠️ **バッファしない。** 届いた順にそのまま出す（進行の異常検知が目的）。
+ * ⚠️ 全文は出さない。詳細は runs/ の JSONL にある。
+ * 出力先を stderr にするのは、stdout を成果物・機械可読出力のために空けておくため。
+ */
+function progressPrinter(quiet: boolean): ((e: ExecutorProgress) => void) | undefined {
+  if (quiet) {
+    return undefined;
+  }
+  return (e) => {
+    const at = new Date().toTimeString().slice(0, 8);
+    console.error(`[${at}] ${e.text}`);
+  };
+}
+
+async function engineExecCmd(stepArg?: string, opts: { quiet?: boolean } = {}): Promise<void> {
   const root = engineRoot();
   const config = loadConfig(root);
   const step = stepArg ?? readEngineState(root).currentStep;
-  const result = await engineExecStep(root, config, step);
+  const result = await engineExecStep(root, config, step, { onProgress: progressPrinter(opts.quiet === true) });
   printExecResult(step, config.steps[step]?.executor ?? "clipboard", result);
 }
 
@@ -304,8 +324,9 @@ program
 program
   .command("exec [step]")
   .description("Run the step's executor to produce its outputs (default: current step; does NOT touch state.json)")
-  .action(async (step: string | undefined) => {
-    await engineExecCmd(step);
+  .option("--quiet", "進行の1行サマリを出さない（M5 の auto ループ向け）")
+  .action(async (step: string | undefined, opts: { quiet?: boolean }) => {
+    await engineExecCmd(step, opts);
   });
 
 program

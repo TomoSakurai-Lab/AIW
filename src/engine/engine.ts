@@ -9,7 +9,7 @@ import {
 } from "./completion.js";
 import { appendEvent } from "./eventLog.js";
 import { getExecutor } from "./executors/index.js";
-import type { ExecutorResult, StepExecutor } from "./executors/types.js";
+import type { ExecutorRequest, ExecutorResult, StepExecutor } from "./executors/types.js";
 import { getStep, loadWorkflow } from "./loader.js";
 import { ASSETS_DIR, rootPaths } from "./paths.js";
 import { readState, updateState, writeState } from "./state.js";
@@ -106,7 +106,31 @@ function staleStatusStep(
 
 export type ExecOptions = {
   executor?: StepExecutor; // test seam: bypass the registry (keeps tests off the OS clipboard)
+  /** 進行の逐次通知（M3・課題I）。エンジンは中継するだけで、整形と表示は CLI の責務 */
+  onProgress?: ExecutorRequest["onProgress"];
+  /** 中断シグナル。無人運転で外から止めるための口 */
+  signal?: AbortSignal;
 };
+
+/**
+ * executor の meta から Event Log のトークン欄を取り出す（M3・B-4）。
+ *
+ * appendEvent は既定で inputTokens / outputTokens / cacheReadTokens を null で埋める。
+ * ここで値が取れたときだけ上書きする。**取れなければ null のまま**にすること。
+ */
+function tokenFields(result: ExecutorResult): Record<string, unknown> {
+  const usage = (result.meta as { usage?: Record<string, number | null> } | undefined)?.usage;
+  if (!usage) {
+    return {};
+  }
+  return {
+    inputTokens: usage.inputTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    cacheReadTokens: usage.cacheReadTokens ?? null,
+    cacheWriteTokens: usage.cacheWriteTokens ?? null,
+    reasoningTokens: usage.reasoningTokens ?? null
+  };
+}
 
 // `aiw exec <step>`: resolve the step's executor and call it. Produces artifacts only —
 // NO validation, NO transition, NO state.json write (§設計原則1). `aiw run` still owns all of that.
@@ -132,15 +156,20 @@ export async function execStep(
   appendEvent(root, "exec.started", logBase);
   let result: ExecutorResult;
   try {
-    result = await executor.execute({ root, config, step });
+    result = await executor.execute({ root, config, step, onProgress: opts.onProgress, signal: opts.signal });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendEvent(root, "exec.failed", { ...logBase, message });
     throw error;
   }
+  // M3: executor が測ったトークンを Event Log の既存フィールドへ写す。
+  // これが「token 系が全件 null」の解消点。executor が測れなかった場合は null のまま
+  // （0 に丸めない。「測れなかった」と「0 だった」を混ぜない）。
   appendEvent(root, result.ok ? "exec.completed" : "exec.failed", {
     ...logBase,
+    ...tokenFields(result),
     outputs: result.outputs,
+    failureKind: result.failureKind ?? null,
     message: result.error ?? null,
     meta: result.meta ?? null
   });

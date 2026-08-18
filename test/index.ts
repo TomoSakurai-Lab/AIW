@@ -17,3 +17,4 @@ import "./prompt-assembly.test.js";
 import "./measurement-completeness.test.js";
 import "./session-ref.test.js";
 import "./codex-executor.test.js";
+import "./codex-integration.test.js";

@@ -3,6 +3,14 @@ version: 5          # workflow 構造のバージョン。詳細は versions セ
 settings:
   statusFile: current-status.json
   singleActiveFeature: true    # current-*.md がフラット構造のため並行 feature 不可(意図的制約)
+  # codex executor(M3 段階1)。**隔離した CODEX_HOME を指す。**
+  # デスクトップアプリの ~/.codex と共有してはいけない:
+  #   (1) 実行のたびにアプリの config.toml が汚れる([projects....] が追記される。実測)
+  #   (2) アプリ側の設定変更が実行へ混入する
+  # 使う前に、このディレクトリで一度だけ `codex login` を実行すること(人間が実施)。
+  # 認証は $CODEX_HOME/auth.json に属し、空だと 401 になる(実測)。
+  codexHome: .codex-home
+  # codexTimeoutMs: 1800000   # 既定 30 分。実測の implementation 中央値 17 分に対して 3 倍弱
   # verify-local: ローカルで決定論的に実行できる検証(M1.5 第3部)。
   # プロジェクトごとに定義する。ここが空なら validator は skipped になり、
   # 「検査していない」ことが Event Log と status --summary に出る(passed にはしない)。
@@ -261,6 +269,11 @@ steps:
 
   implementation:
     role: codex
+    # M3 段階1: codex executor は実装済み。**既定はまだ clipboard のまま**にしてある。
+    # 切り替えは 1 ステップずつ行えるので、まず implementation だけ試して
+    # 数タスク並行運用してから広げること(切り替え時期は人間の判断)。
+    #   executor: codex
+    # 戻すときはこの行を消すだけでよい(未指定の既定が clipboard)。
     # M2: プロンプトの分解。宣言したファイルが無ければ組み立て時に失敗する
     # (Skill 抜きのプロンプトを黙って配らない)。
     skill: implementation
