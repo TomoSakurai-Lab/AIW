@@ -204,8 +204,10 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
         "--ephemeral",
         "--ignore-user-config",
         "--strict-config",
-        "-s",
-        "workspace-write",
+        // ⚠️ `-s/--sandbox` と `--approve-for-me` は **排他**（0.147.0 実測。併記すると exit 2）。
+        // --approve-for-me は「workspace-write サンドボックスを使って承認要求を自動レビューへ回す」
+        // フラグなので、これ単体で「ワークスペース内は書ける + 無人で止まらない」を満たす。
+        // 設計(課題A-4)は両方を併記していたが、実装時に排他と判明したためこちらを採る。
         "--approve-for-me",
         "-C",
         projectRoot,

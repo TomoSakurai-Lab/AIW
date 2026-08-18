@@ -567,6 +567,60 @@ execFile(<pin された codex 実行ファイルの絶対パス>, [
 
 ---
 
+# 実装時の決定（段階1-1・2026-08-18）
+
+## 設計の不備（実装で判明・報告事項）
+
+### `-s/--sandbox` と `--approve-for-me` は排他
+
+課題A-4 は両方を併記する形で書いていたが、**0.147.0 では併記すると `exit 2` で即座に落ちる**。
+
+```text
+error: the argument '--sandbox <SANDBOX_MODE>' cannot be used with '--approve-for-me'
+```
+
+`--approve-for-me` のヘルプは
+「**workspace-write サンドボックスを使って**承認要求を自動レビューへ回す」なので、
+このフラグ自体がサンドボックス指定を含む。
+**`--approve-for-me` 単体**を採り、`-s workspace-write` を落とした
+（無人実行で止まらない最小権限、という A-4 の意図は変わらない）。
+
+⚠️ 設計文書の課題A-4 と「推奨案（まとめ）」の argv 例は**両方を併記したままなので誤り**。
+この節が正しい。次に設計文書を触るときに直す。
+
+### 失敗した起動が 0 バイトの JSONL を残す
+
+排他エラーで落ちた実行が `runs/codex/` に 0 バイトのファイルを1つ残した。
+実害は無いが、`aiw log` を作るときに空ファイルを掴む。保持方針（下記）と一緒に扱う。
+
+## 4 件の未決を決めた
+
+| 論点 | 決定 | 根拠 |
+| --- | --- | --- |
+| タイムアウト既定値 | **30 分**（`CODEX_DEFAULT_TIMEOUT_MS`。`settings.codexTimeoutMs` で上書き可） | 実測の implementation 中央値 17 分に対して 3 倍弱。長すぎると無人運転で気付かず、短すぎると正常なタスクを殺す |
+| `--approve-for-me` の採否 | **採用**（`-s` は併記できないので落とす） | 上記の排他。無人実行で承認待ちに入らないことが要件 |
+| 既定 executor の切り替え時期 | **提案のみ**。`workflow.yaml` にコメントで置き、既定は clipboard のまま | 切り替えは人間の判断。1 ステップずつ切り替えられるので implementation から始めるのを勧める |
+| JSONL の保持 | **当面は全保存**（`runs/codex/<時刻>-<step>.jsonl`） | まだ量の実測が無い。1 実行 1.2 KB（疎通時）。実タスク数本の実測を見てから archive 退避を決める |
+
+## 疎通確認（実物の codex・偽の launch ではない）
+
+使い捨ての git リポジトリに `aiw init` した root で、pin 済み 0.147.0 を実際に起動した。
+
+| 確認 | 結果 |
+| --- | --- |
+| 所要 | **13.6 秒**（`durationMs: 13191`） |
+| 進行表示 | **リアルタイムに出た**（message → edit → message → tokens の4行） |
+| 成果物 | `.ai-workflow2/current-result.md` が書かれた（**gitignore 配下へ書けている**） |
+| Event Log のトークン | `input 28,760 / output 129 / cacheRead 16,896 / cacheWrite 0 / reasoning 32` |
+| `cacheRead / input` | **59%**（§2 のキャッシュ指標が初めて測れた） |
+| 生 session ID | Event Log に **0 件**。`meta.session` は hash + tail のみ。生値は `runs/codex/` の JSONL だけ |
+| アプリの `config.toml` | 汚れていない（smoke の `[projects.…]` は 0 件） |
+
+⚠️ **これは疎通確認であって実タスクではない。** 受け入れ確認（BL-050 / BL-054 の再発）は
+実タスク1本を通すまで未了。
+
+---
+
 # 決定ログ
 
 **決めたことはここへ追記する。** decision の置き場を一元化し、
