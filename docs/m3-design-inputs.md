@@ -200,6 +200,17 @@ error: unexpected argument '--full-auto' found
 0.148.0-alpha.9 との差異は `fork` サブコマンドの有無のみで、
 `--approve-for-me` / `--ephemeral` / `--ignore-user-config` を含む他は全て一致した。
 
+### 実際の挙動（flag の有無ではなく、走らせた結果）
+
+pin 版を実機で走らせた実測は **`docs/design-codex-executor.md` の「調査結果（実測）」が正本**。
+ここには再掲しない。特に設計判断を変えたものだけ挙げると:
+
+- **exit code 0 は「作業をした」を意味しない**（read-only で拒否されても 0 で返る）
+- **`codex exec` はデスクトップアプリの `config.toml` を書き換える**（`[projects.…]` を追記）。
+  CODEX_HOME 隔離は「設定の混入を防ぐ」だけでなく「相手の設定を汚さない」ためにも要る
+- **空の CODEX_HOME では 401**。認証は `$CODEX_HOME/auth.json` に属する
+- `turn.completed.usage` にトークンが揃っている（`input` / `cached_input` / `output` ほか）
+
 ---
 
 ## 5. codex mcp-server 常駐案 —— v1 では採らない
