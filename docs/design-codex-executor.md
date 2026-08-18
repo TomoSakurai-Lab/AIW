@@ -109,6 +109,20 @@ trivial なタスク1回で 6 行。
 probe を1回流しただけで `[projects.'…\scratchpad\codex-probe']` が追記された。
 **隔離しない限り、aiw の実行はアプリの設定ファイルを毎回汚す。**
 
+### 隔離の効果（2026-08-18 実測・login 後）
+
+`.ai-workflow2/.codex-home/` で `codex login` を1回行ったうえで、
+`CODEX_HOME=<隔離 home> --ignore-user-config -s read-only` で実行した結果:
+
+| 確認 | 結果 |
+| --- | --- |
+| 認証 | **通った**（exit 0 / 401 ゼロ / 応答が返る）。同じ経路が空 home では 401 だった |
+| デスクトップアプリの `config.toml` | **更新されない**（`[projects.…tools\aiw]` は 0 件。更新時刻も隔離前のまま） |
+| 隔離 home に生成されたもの | `auth.json` / `installation_id` / `*.sqlite`（goals / logs / memories / queue / state）/ `skills` / `plugins` / `models_cache.json` ほか |
+| 隔離 home の `config.toml` | **生成されない**（`--ignore-user-config` なので読まれもしない） |
+
+**「相手を汚さない」が実測で成立した。** 隔離は設計上の主張ではなく、確認済みの性質になった。
+
 ## 8. MCP 登録
 
 `~/.codex/config.toml` には既に `[mcp_servers.node_repl]`（デスクトップアプリのもの）がある。
@@ -499,13 +513,12 @@ execFile(<pin された codex 実行ファイルの絶対パス>, [
 | 4 | この設計文書が承認されている | ✅ 2026-08-18 承認 |
 | 5 | 故障注入リスト（課題G）が合意されている | ✅ 2026-08-18 合意（**9 件**。#9 を追加） |
 | 6 | タスク境界にいる | 実装着手時に確認 |
-| 7 | **隔離 CODEX_HOME で `codex login` 済み** | ⬜ **未**（人間が実施する） |
+| 7 | 隔離 CODEX_HOME で `codex login` 済み | ✅ 2026-08-18（人間が実施。`auth.json` 生成・両リポで追跡対象外を確認） |
 
-⚠️ **7 が残っている。** 認証が無いと 401 で何も走らないので、
-実装しても受け入れ確認（BL-050 / BL-054 の再発確認）まで到達できない。
+**開始条件はすべて満たした。実装に入れる。**
 
 **実タスク1本目は小さいものを選ぶ。** 環境系の問題はタスクの中身と無関係に出るため、
-切り分けやすい題材にする。
+切り分けやすい題材にする（BL-050 / BL-054 の再発確認が目的）。
 
 ---
 
