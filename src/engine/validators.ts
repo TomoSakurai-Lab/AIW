@@ -169,7 +169,7 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
     case "verify-local":
       return runVerifyLocalValidator(root, config, v);
     case "consumer-presence":
-      return runConsumerPresence(root, v);
+      return runConsumerPresenceFromManifest(root, v);
     case "measurement-completeness":
       return runMeasurementCompleteness(root, v);
     default:
@@ -219,6 +219,58 @@ function runConsumerPresence(root: string, v: ValidatorRef): RunOne {
     }
   }
   return passed(`consumer-presence found ${count} consumer(s) under ${consumerRoot}`);
+}
+
+function runConsumerPresenceFromManifest(root: string, v: ValidatorRef): RunOne {
+  if (!v.manifest) return skipped("no manifest configured", "consumer-presence skipped: no manifest configured");
+  const manifest = jsonFile(root, v.manifest) as {
+    acceptanceCriteria?: { id: string; implementationStatus?: string }[];
+    consumerChecks?: { id: string; root: string; pattern: string; minConsumers?: number }[];
+  } | null;
+  if (!manifest) return skipped("manifest is absent or invalid", "consumer-presence skipped: manifest is absent or invalid");
+
+  const misreport = findMisreportedUnimplemented(root, v, manifest);
+  const checks = manifest.consumerChecks ?? [];
+  const failures: string[] = [];
+  const observations: string[] = [];
+  for (const check of checks) {
+    const dir = path.resolve(root, check.root);
+    if (!existsSync(dir)) {
+      failures.push(check.id + ": consumer root does not exist: " + check.root);
+      continue;
+    }
+    let pattern: RegExp;
+    try { pattern = new RegExp(check.pattern, "m"); } catch {
+      failures.push(check.id + ": invalid consumer pattern");
+      continue;
+    }
+    const count = filesUnder(dir).filter((file) => pattern.test(readFileSync(file, "utf8"))).length;
+    const minimum = check.minConsumers ?? 1;
+    observations.push(check.id + "=" + count);
+    if (count < minimum) failures.push(check.id + ": found " + count + " consumer(s), expected at least " + minimum);
+  }
+  if (misreport.length > 0) failures.push("unimplemented AC reported as NOT VERIFIED: " + misreport.join(", "));
+  if (failures.length > 0) return failed("consumer-presence " + failures.join("; "));
+  if (checks.length === 0) {
+    return misreport.length > 0
+      ? failed("consumer-presence unimplemented AC reported as NOT VERIFIED: " + misreport.join(", "))
+      : skipped("manifest has no consumer checks", "consumer-presence skipped: manifest has no consumer checks");
+  }
+  return passed("consumer-presence checks passed (" + observations.join(", ") + ")");
+}
+
+function findMisreportedUnimplemented(
+  root: string,
+  v: ValidatorRef,
+  manifest: { acceptanceCriteria?: { id: string; implementationStatus?: string }[] }
+): string[] {
+  if (!v.result) return [];
+  const result = jsonFile(root, v.result) as { results?: { id: string; status: string }[] } | null;
+  if (!result) return [];
+  const statuses = new Map((result.results ?? []).map((item) => [item.id, item.status.toLowerCase().replace(/\s+/g, "-")]));
+  return (manifest.acceptanceCriteria ?? [])
+    .filter((item) => item.implementationStatus === "not-implemented" && statuses.get(item.id) === "not-verified")
+    .map((item) => item.id);
 }
 
 function runMeasurementCompleteness(root: string, v: ValidatorRef): RunOne {
