@@ -126,6 +126,13 @@ export type WorkflowConfig = {
     >;
     knownFailurePatternsFile?: string;
     testCommand?: string;
+    /** codex executor（M3）。runtimeRoot からの相対、または絶対パス。
+     *  ⚠️ 隔離した CODEX_HOME を指す。デスクトップアプリの ~/.codex とは別物にすること。
+     *  共有すると (1) アプリの config.toml が実行のたびに汚れる（実測）
+     *  (2) アプリ側の設定変更が実行へ混入する。詳細は docs/design-codex-executor.md 課題 A-3 */
+    codexHome?: string;
+    /** codex exec のタイムアウト（ミリ秒）。未指定なら CODEX_DEFAULT_TIMEOUT_MS */
+    codexTimeoutMs?: number;
     [key: string]: unknown;
   };
   defaults?: Record<string, unknown>;

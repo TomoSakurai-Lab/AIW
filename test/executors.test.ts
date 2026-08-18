@@ -118,27 +118,32 @@ test("17: exec refuses when halted, awaiting approval, or off the current step",
   await assert.rejects(() => execStep(root, config, "task-planning"), (e: Error) => e instanceof EngineError && /workflow is halted/.test(e.message));
 });
 
-// Test 18 — codex / claude are declared but not implemented until M2 / M3.
-test("18: codex and claude executors report not-implemented", async () => {
+// Test 18 — レジストリの解決と、未実装 executor の定型応答。
+//
+// codex は M3 段階1で実装済みになったのでこのテストの対象から外れた。
+// **claude（M4）だけが未実装**であり、その定型応答をここで固定する。
+// codex の失敗経路は codex-executor.test.ts が個別に見る。
+test("18: the registry resolves every executor and claude reports not-implemented", async () => {
   const { root, config } = makeRoot();
   const step = config.steps["implementation"];
 
   assert.equal(getExecutor("clipboard").name, "clipboard");
   assert.equal(getExecutor("codex"), codexExecutor);
   assert.equal(getExecutor("claude"), claudeExecutor);
+  assert.equal(codexExecutor.name, "codex");
 
-  for (const [executor, milestone] of [
-    [codexExecutor, "M2"],
-    [claudeExecutor, "M3"]
-  ] as const) {
-    const result = await executor.execute({ root, config, step });
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.outputs, []);
-    assert.match(result.error ?? "", new RegExp(`${milestone} で実装予定`));
-  }
+  const result = await claudeExecutor.execute({ root, config, step });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.outputs, []);
+  assert.match(result.error ?? "", /M3 で実装予定/);
 });
 
-// Test 19 — a not-implemented executor is logged as exec.failed but changes no state.
+// Test 19 — 失敗した executor は exec.failed として記録されるが、state は変えない。
+//
+// M3 以降、この経路を通るのは「未実装の executor」ではなく **codex の実際の失敗**
+// （一時ルートには隔離 CODEX_HOME が無いので permanent で落ちる）。
+// 見たいのは失敗の理由ではなく「失敗しても state.json を書かない」ことなので、
+// 対象が実装済みになっても意味は変わらない。
 test("19: exec logs a failing executor without mutating state", async () => {
   const { root } = makeRoot();
   const { workflowYaml, stateFile, eventLog } = rootPaths(root);
