@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { loadWorkflow } from "../src/engine/loader.js";
 import { checkMarkdownSections } from "../src/engine/artifactContract.js";
 import { runValidators } from "../src/engine/validators.js";
-import { makeRoot, reviewMissingInnerCritical, seedReflectionOutputs, validReview, writeStatus, setStep } from "./helpers.js";
+import { makeRoot, reviewMissingInnerCritical, seedReflectionOutputs, validReview, writeStatus, setStep, writeIn } from "./helpers.js";
 
 // Test 11 — loader injects `id` from the steps map key (§7.1).
 test("11: loader injects step id from map key", () => {
@@ -48,4 +50,20 @@ test("10: json-schema enforces feature-continue nextPhaseId + additionalProperti
 
   writeStatus(root, { step: "reflection", result: "feature-continue", reason: "x", nextPhaseId: "phase-2" });
   assert.equal(runValidators(root, config, validators).halt, false, "feature-continue with nextPhaseId must pass");
+});
+
+test("schema: AC manifest accepts evidenceKind and rejects an unknown kind", () => {
+  const { root, config } = makeRoot();
+  mkdirSync(path.join(root, "schemas"), { recursive: true });
+  writeIn(root, "schemas/ac-manifest.schema.json", JSON.stringify({
+    type: "object", required: ["acceptanceCriteria"], properties: {
+      acceptanceCriteria: { type: "array", items: { type: "object", required: ["id", "evidenceKind"], properties: { id: { type: "string" }, evidenceKind: { enum: ["command", "diff", "browser", "file"] } } } }
+    }
+  }));
+  const validators = [{ type: "json-schema", onViolation: "report", target: "ac-manifest.json", schema: "schemas/ac-manifest.schema.json" }] as const;
+  const cfg = { ...config, steps: { ...config.steps, implementation: { ...config.steps.implementation, validators: [...validators] } } };
+  writeIn(root, "ac-manifest.json", JSON.stringify({ acceptanceCriteria: [{ id: "AC-01", evidenceKind: "browser" }] }));
+  assert.equal(runValidators(root, cfg, cfg.steps.implementation.validators).results[0].status, "passed");
+  writeIn(root, "ac-manifest.json", JSON.stringify({ acceptanceCriteria: [{ id: "AC-01", evidenceKind: "screen" }] }));
+  assert.equal(runValidators(root, cfg, cfg.steps.implementation.validators).results[0].status, "failed");
 });

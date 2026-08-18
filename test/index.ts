@@ -14,3 +14,4 @@ import "./gitscope.test.js";
 import "./diff-scope-injection.test.js";
 import "./verify-local.test.js";
 import "./prompt-assembly.test.js";
+import "./measurement-completeness.test.js";

@@ -9,7 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { runStep } from "../src/engine/engine.js";
 import { runValidators } from "../src/engine/validators.js";
-import { countCheckedFiles, runVerifyLocal, scopeNote } from "../src/engine/verifyLocal.js";
+import { countCheckedFiles, knownFailureHint, runVerifyLocal, scopeNote } from "../src/engine/verifyLocal.js";
 import { makeRoot, setStep, validResult, writeIn, writeStatus } from "./helpers.js";
 
 // node を直接叩くので、環境に npx/tsc が無くても成立する。
@@ -179,4 +179,24 @@ test("80: test-report.md is written on failure and removed when it passes", () =
   writeStatus(root, { step: "implementation", result: "implemented", reason: "x" });
   runStep(root, passing, "implementation");
   assert.equal(existsSync(report), false, "古いレポートは残さない");
+});
+
+test("known failure patterns: NU1301 is presented, unknown output is not", () => {
+  const patterns = [{ pattern: "NU1301", guidance: "NUGET_PACKAGES を設定して再実行" }];
+  assert.equal(knownFailureHint("error NU1301: unable to load", patterns), "既知パターン提示: NUGET_PACKAGES を設定して再実行");
+  assert.equal(knownFailureHint("error TS2322", patterns), null);
+});
+
+test("known failure report does not halt the step", () => {
+  const { root, config, repoRoot } = makeRoot();
+  const bad = script(repoRoot, "known-failure.js", [
+    "console.log('C:/repo/src/a.ts');",
+    "console.error('NU1301: unable to load package');",
+    "process.exit(2);"
+  ].join("\n"));
+  const cfg = { ...config, settings: { ...config.settings, verifyLocal: { typecheck: { command: [nodeExe, bad], knownFailurePatterns: [{ pattern: "NU1301", guidance: "NUGET_PACKAGES を設定して再実行" }] } } }, steps: { ...config.steps, implementation: { ...config.steps.implementation, validators: [{ type: "verify-local", onViolation: "report", command: "typecheck" }] } } };
+  const outcome = runValidators(root, cfg, cfg.steps.implementation.validators);
+  assert.equal(outcome.halt, false);
+  assert.equal(outcome.results[0].status, "failed");
+  assert.match(outcome.results[0].message, /既知パターン提示/);
 });

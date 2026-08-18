@@ -12,7 +12,9 @@ export type ValidatorType =
   | "diff-scope"
   | "token-range"
   | "verify-local"
-  | "command-exit-code";
+  | "command-exit-code"
+  | "consumer-presence"
+  | "measurement-completeness";
 
 export type ValidatorRef = {
   type: ValidatorType;
@@ -26,6 +28,11 @@ export type ValidatorRef = {
   command?: string; // verify-local: settings.verifyLocal のキー
   min?: number; // token-range
   max?: number;
+  manifest?: string;
+  result?: string;
+  consumerRoot?: string;
+  apiPattern?: string;
+  minConsumers?: number;
 };
 
 export type RetryPolicy = {
@@ -117,6 +124,7 @@ export type WorkflowConfig = {
         notChecked?: string;
       }
     >;
+    knownFailurePatternsFile?: string;
     testCommand?: string;
     [key: string]: unknown;
   };

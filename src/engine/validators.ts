@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import AjvModule from "ajv";
 import { checkMarkdownSections } from "./artifactContract.js";
@@ -9,7 +9,7 @@ import { resolveConfigRef } from "./paths.js";
 import { estimateTokens } from "./tokens.js";
 import { isDeclared, parseDeclaredFiles } from "./declaredFiles.js";
 import { compareToBaseline, readBaseline, readRepoState, resolveCheckRepoRoot } from "./gitScope.js";
-import { runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
+import { knownFailureHint, runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
 import type { ValidatorRef, WorkflowConfig } from "./types.js";
 
 export type Violation = {
@@ -55,7 +55,9 @@ const ORDER: Record<ValidatorRef["type"], number> = {
   "token-range": 2,
   "diff-scope": 3,
   "verify-local": 4,
-  "command-exit-code": 4
+  "command-exit-code": 4,
+  "consumer-presence": 4,
+  "measurement-completeness": 4
 };
 
 // Validators that are declared in workflow.yaml but deliberately not executed yet. They are NOT
@@ -166,11 +168,75 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       return runDiffScope(root, config, v, ctx);
     case "verify-local":
       return runVerifyLocalValidator(root, config, v);
+    case "consumer-presence":
+      return runConsumerPresence(root, v);
+    case "measurement-completeness":
+      return runMeasurementCompleteness(root, v);
     default:
       // Unreachable while NOT_IMPLEMENTED covers every unhandled type. Failing (rather than
       // passing) keeps an unknown validator from becoming a silent success.
       return failed(`validator "${v.type}" has no implementation`);
   }
+}
+
+function jsonFile(root: string, rel: string): unknown | null {
+  const file = abs(root, rel);
+  if (!existsSync(file)) return null;
+  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
+}
+
+function filesUnder(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    if (["node_modules", ".git", "bin", "obj", "dist"].includes(name)) continue;
+    const file = path.join(dir, name);
+    if (statSync(file).isDirectory()) out.push(...filesUnder(file));
+    else out.push(file);
+  }
+  return out;
+}
+
+function runConsumerPresence(root: string, v: ValidatorRef): RunOne {
+  const consumerRoot = v.consumerRoot ?? ".";
+  const dir = abs(root, consumerRoot);
+  if (!existsSync(dir)) return skipped(`consumer root does not exist: ${consumerRoot}`, `consumer-presence skipped: ${consumerRoot} is absent`);
+  if (!v.apiPattern) return skipped("no apiPattern configured", "consumer-presence skipped: no apiPattern configured");
+  let pattern: RegExp;
+  try { pattern = new RegExp(v.apiPattern, "m"); } catch { return failed(`invalid apiPattern: ${v.apiPattern}`); }
+  const count = filesUnder(dir).filter((file) => pattern.test(readFileSync(file, "utf8"))).length;
+  const minimum = v.minConsumers ?? 1;
+  if (count < minimum) return failed(`consumer-presence found ${count} consumer(s), expected at least ${minimum} under ${consumerRoot}`);
+  if (v.manifest && v.result) {
+    const manifest = jsonFile(root, v.manifest) as { acceptanceCriteria?: { id: string; implementationStatus?: string }[] } | null;
+    const result = jsonFile(root, v.result) as { results?: { id: string; status: string }[] } | null;
+    if (manifest && result) {
+      const statuses = new Map((result.results ?? []).map((item) => [item.id, item.status.toLowerCase().replace(/\s+/g, "-")]));
+      const misreported = (manifest.acceptanceCriteria ?? []).filter(
+        (item) => item.implementationStatus === "not-implemented" && statuses.get(item.id) === "not-verified"
+      );
+      if (misreported.length > 0) return failed(`consumer-presence found unimplemented AC reported as NOT VERIFIED: ${misreported.map((x) => x.id).join(", ")}`);
+    }
+  }
+  return passed(`consumer-presence found ${count} consumer(s) under ${consumerRoot}`);
+}
+
+function runMeasurementCompleteness(root: string, v: ValidatorRef): RunOne {
+  const manifest = v.manifest ? jsonFile(root, v.manifest) : null;
+  const result = v.result ? jsonFile(root, v.result) : null;
+  if (manifest === null || result === null) return skipped("manifest or result is absent", "measurement-completeness skipped: optional inputs are absent");
+  const expected = (manifest as { acceptanceCriteria?: { id: string; notApplicable?: boolean }[] }).acceptanceCriteria ?? [];
+  const actual = (result as { results?: { id: string; status: string }[] }).results ?? [];
+  const ids = actual.map((item) => item.id);
+  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+  const expectedIds = expected.filter((item) => !item.notApplicable).map((item) => item.id);
+  const missing = expectedIds.filter((id) => !ids.includes(id));
+  if (duplicates.length > 0 || missing.length > 0) {
+    return failed(`measurement-completeness missing: ${missing.join(", ") || "none"}; duplicate: ${duplicates.join(", ") || "none"}`);
+  }
+  const invalid = actual.filter((item) => !["passed", "failed", "skipped"].includes(item.status));
+  if (invalid.length > 0) return failed(`measurement-completeness has invalid status for ${invalid.map((x) => x.id).join(", ")}`);
+  return passed(`measurement-completeness recorded ${actual.length} result(s)`);
 }
 
 // Runs a step's validators in fixed order. A failing `halt` validator stops the pipeline;
@@ -375,7 +441,11 @@ function runVerifyLocalValidator(root: string, config: WorkflowConfig, v: Valida
     return unavailableLocal(v, `checkRepoRoot could not be resolved: ${resolved.reason}`);
   }
 
-  const outcome = runVerifyLocal(resolved.repoRoot, spec);
+  const patterns = loadKnownFailurePatterns(root, config.settings.knownFailurePatternsFile);
+  const outcome = runVerifyLocal(resolved.repoRoot, {
+    ...spec,
+    knownFailurePatterns: [...(spec.knownFailurePatterns ?? []), ...patterns]
+  });
   if (outcome.kind === "skipped") {
     // タイムアウト・起動失敗・0件はすべてここ。**failed にしない。**
     // 「型エラーがあった」ではなく「検査が完了しなかった」なので、
@@ -388,15 +458,29 @@ function runVerifyLocalValidator(root: string, config: WorkflowConfig, v: Valida
   if (outcome.kind === "passed") {
     return passed(`${key} passed — ${note}`);
   }
-  return failed(`${key} failed (exit ${outcome.exitCode ?? "?"}) — ${note}`, undefined, {
+  const hint = knownFailureHint(outcome.output, [...(spec.knownFailurePatterns ?? []), ...patterns]);
+  return failed(`${key} failed (exit ${outcome.exitCode ?? "?"}) — ${note}${hint ? `; ${hint}` : ""}`, undefined, {
     command: key,
     cwd: spec.cwd ?? ".",
     exitCode: outcome.exitCode,
     fileCount: outcome.fileCount,
     durationMs: outcome.durationMs,
     notChecked: spec.notChecked ?? null,
-    output: outcome.output
+    output: outcome.output,
+    knownFailureHint: hint
   });
+}
+
+function loadKnownFailurePatterns(root: string, file?: string): { pattern: string; guidance: string }[] {
+  if (!file) return [];
+  const absolute = abs(root, file);
+  if (!existsSync(absolute)) return [];
+  const patterns: { pattern: string; guidance: string }[] = [];
+  for (const line of readFileSync(absolute, "utf8").split(/\r?\n/)) {
+    const match = line.match(/aiw-known-failure:\s*pattern=([^|]+)\|\s*guidance=(.+?)\s*-->/i);
+    if (match) patterns.push({ pattern: match[1].trim(), guidance: match[2].trim() });
+  }
+  return patterns;
 }
 
 function unavailableLocal(v: ValidatorRef, reason: string): RunOne {

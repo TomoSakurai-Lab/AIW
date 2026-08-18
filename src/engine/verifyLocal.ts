@@ -22,6 +22,8 @@ export type VerifyLocalCommand = {
   timeoutMs?: number;
   /** このコマンドが**見ていない**範囲。メッセージへ必ず出す */
   notChecked?: string;
+  /** runtime 側の local-environment.md から読み込んだ既知失敗の提示情報 */
+  knownFailurePatterns?: { pattern: string; guidance: string }[];
 };
 
 export type VerifyLocalOutcome =
@@ -114,4 +116,15 @@ export function scopeNote(spec: VerifyLocalCommand, fileCount: number | null, du
   const secs = durationMs === undefined ? "" : ` (${(durationMs / 1000).toFixed(1)}s)`;
   const not = spec.notChecked ? `; ${spec.notChecked} not checked` : "";
   return `${files} source files in ${where}${secs}${not}`;
+}
+
+export function knownFailureHint(output: string, patterns: { pattern: string; guidance: string }[] = []): string | null {
+  for (const item of patterns) {
+    try {
+      if (new RegExp(item.pattern, "i").test(output)) return `既知パターン提示: ${item.guidance}`;
+    } catch {
+      // 不正な環境固有パターンは検査自体を壊さず無視する。
+    }
+  }
+  return null;
 }
