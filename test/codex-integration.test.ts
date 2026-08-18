@@ -17,6 +17,7 @@ import { PassThrough } from "node:stream";
 import { execStep, loadConfig, runStep } from "../src/engine/engine.js";
 import { createCodexExecutor } from "../src/engine/executors/codex.js";
 import { clipboardExecutor } from "../src/engine/executors/clipboard.js";
+import { driveExecutorNotice } from "../src/engine/executors/index.js";
 import { rootPaths } from "../src/engine/paths.js";
 import { makeRoot, setStep } from "./helpers.js";
 
@@ -219,4 +220,20 @@ test("105: switching the executor back to clipboard restores the previous behavi
   });
   assert.equal(restored.ok, true, "従来動作へ復帰する");
   assert.equal(written.length, 1);
+});
+
+// Test 106 — **drive は executor 宣言を無視する。それを黙って通さない（M3・段階2）。**
+//
+// drive は M0.4 以来 clipboard 固定で step.executor を解決しない。executor が実在しなかった
+// 当時は妥当だったが、M3 で codex が実装された結果「宣言したのに効かない」型になった。
+// drive を executor 対応にするのは実タスク検証のあと（段階1）。それまでは**毎回言う**。
+test("106: drive announces that an executor declaration does not apply to it", () => {
+  // 既定（clipboard）では何も言わない。ノイズにしない。
+  assert.equal(driveExecutorNotice("implementation", "clipboard"), null);
+  assert.equal(driveExecutorNotice("implementation", undefined), null);
+
+  const notice = driveExecutorNotice("implementation", "codex" as any);
+  assert.ok(notice, "宣言が効かないことを黙って通さない");
+  assert.match(notice, /効きません/, "効いていないと明言する");
+  assert.match(notice, /aiw exec implementation/, "代わりに何をすればよいかを示す");
 });

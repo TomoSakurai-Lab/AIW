@@ -593,6 +593,27 @@ error: the argument '--sandbox <SANDBOX_MODE>' cannot be used with '--approve-fo
 排他エラーで落ちた実行が `runs/codex/` に 0 バイトのファイルを1つ残した。
 実害は無いが、`aiw log` を作るときに空ファイルを掴む。保持方針（下記）と一緒に扱う。
 
+## `aiw drive` は executor 宣言を解決しない（実装後に判明・段階的に解消する）
+
+`drive` は M0.4 以来 **clipboard 固定**で `step.executor` を見ない
+（当時は executor が実在せず、「人間が1ステップずつ確認する経路」として妥当だった）。
+
+M3 で codex が実装された結果、**`executor: codex` と宣言しても `drive` では効かない**
+状態になった。これはこのコードベースが繰り返し潰してきた
+**「宣言はあるが効いていない」型（KI-09）**そのものである。
+
+**段階的に解消する（2026-08-18 承認）:**
+
+| 段階 | 内容 | 状態 |
+| --- | --- | --- |
+| **2（先）** | drive が「この宣言は効きません」と**毎回言う**。`aiw exec <step>` を案内する | ✅ 実装済み（`driveExecutorNotice` / Test 106） |
+| **1（後）** | drive も `step.executor` を解決する | ⬜ **実タスク検証のあと** |
+
+順序の理由: 先に drive を executor 対応にすると、**executor の挙動検証と drive の挙動変更が
+同時に動いて切り分けられない**。課題E で MCP を後ろに置いたのと同じ理由。
+
+⚠️ 既定は clipboard のままなので、**宣言を外し忘れても drive の挙動は変わらない**（安全側）。
+
 ## 4 件の未決を決めた
 
 | 論点 | 決定 | 根拠 |

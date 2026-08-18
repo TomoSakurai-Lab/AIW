@@ -35,7 +35,7 @@ import {
   statusView,
   EngineError
 } from "./engine/engine.js";
-import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard } from "./engine/executors/index.js";
+import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, driveExecutorNotice } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
 import { resolveRoot, rootPaths } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
@@ -852,6 +852,11 @@ async function runDrive(): Promise<void> {
       // it does not resolve step.executor (that is `aiw exec` / M4's `aiw auto`) and does not
       // write Event Log entries.
       const worker = step.role === "codex" ? "Codex" : "Claude";
+      // 宣言が効いていないことを黙って通さない（M3・段階2）。
+      const ignored = driveExecutorNotice(state.currentStep, step.executor);
+      if (ignored) {
+        console.error(ignored);
+      }
       const clip = clipboardMeta(await clipboardExecutor.execute({ root, config, step }));
       // outcome は3値（copied / copy-failed / no-prompt）。promptFile の有無で2値に潰すと
       // copy-failed が「コピーしました」に丸められ、quiet モードでは stderr 警告も出ないため
