@@ -123,9 +123,25 @@ M3 で executor が自動化されると、`task-metadata.json` を書くのも 
 
 ## 4. codex CLI の実行方法（2026-08-18 実測）
 
-**この節の数値と挙動は `codex-cli 0.148.0-alpha.9` を実機で叩いた結果である。**
+**この節の挙動は pin 済みの `codex-cli 0.147.0` を実機で叩いた結果である。**
+
+pin の実体:
+
+| 項目 | 値 |
+| --- | --- |
+| 入れ方 | `tools/aiw` の devDependency（`npm i --save-exact -D @openai/codex@0.147.0`） |
+| バージョン記載 | `package.json` に `"0.147.0"`（**`^` なし**。これが pin の本体） |
+| 実行パス | `tools/aiw/node_modules/.bin/codex` |
+| プラットフォーム実体 | `@openai/codex-win32-x64`（optionalDependencies で自動取得・354 MB） |
+| engines | `node >=16`（aiw は Node 20.19.0） |
+
+グローバル（`npm i -g`）にしない理由は、**pin した事実がどこにも記録されない**ため。
+devDependency なら `package.json` / `package-lock.json` に載り、別マシンでも `npm ci` で再現する。
+デスクトップアプリの自動更新（下記）から逃げた先で「誰かが `npm update -g` したら変わる」
+状態を作らないこと。
+
 ⚠️ **M3 の実装に着手する時点で測り直すこと。** 更新が速く（下記）、
-ここに書いた flag 面は数週間で変わりうる。推測で設計に書かない。
+pin を上げたら flag 面は変わりうる。推測で設計に書かない。
 
 ### 4-1. `--full-auto` は削除された
 
@@ -151,7 +167,11 @@ error: unexpected argument '--full-auto' found
 | 設定の隔離 | `--ignore-user-config` / `--strict-config` |
 
 `resume` は**サブコマンド**（`codex exec resume [SESSION_ID] [PROMPT]`、`--last` / `--all`）。
-`fork` もある。§1-1 の「resume を正しさの要件にしない」は、この resume を指す。
+§1-1 の「resume を正しさの要件にしない」は、この resume を指す。
+
+⚠️ **`fork` は 0.147.0 に無い**（0.148.0-alpha.9 にはある）。
+0.148 系と比較した結果、**flag 面の差異はこの 1 点だけ**だった。
+上の表のフラグはすべて 0.147.0 に存在し、`--full-auto` はどちらでも拒否される。
 
 `--ephemeral` は不変条件2と相性が良い。セッションを残さないので
 「前回の続き」に依存しようがなくなる。**v1 の既定に据える候補**。
@@ -176,8 +196,9 @@ error: unexpected argument '--full-auto' found
 `--ignore-user-config` を併用する。** デスクトップアプリの `config.toml`
 （marketplaces / plugins / notify）を共有したままだと、アプリ側の設定変更が実行へ混入する。
 
-⚠️ **pin 先を 0.147.0 にする場合、この節の flag 面は測り直しになる**
-（上の実測は 0.148.0-alpha.9 のもの）。
+**2026-08-18 に 0.147.0 で pin し、flag 面を測り直した。**
+0.148.0-alpha.9 との差異は `fork` サブコマンドの有無のみで、
+`--approve-for-me` / `--ephemeral` / `--ignore-user-config` を含む他は全て一致した。
 
 ---
 
