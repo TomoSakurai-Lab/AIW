@@ -16,6 +16,22 @@
 // それは責務の置き場所を間違えているサイン。
 import type { ExecutorName, WorkflowConfig, WorkflowStep } from "../types.js";
 
+/**
+ * 進行の1行サマリ（M3・課題I）。
+ *
+ * clipboard 運用では人間が対話画面で進行を見ていた。executor 化でその可視性を失わないため、
+ * executor は**イベントを流すだけ**にし、整形と表示は CLI が担う
+ * （「エンジンは結果を返す、CLI が表示する」の既存分離）。
+ *
+ * ⚠️ 全文は載せない。種別と対象の要約のみ。全文は runs/ の JSONL にある。
+ * ⚠️ 生 session ID を含めない（防衛線2の grep テスト対象）。
+ */
+export type ExecutorProgress = {
+  kind: "thinking" | "edit" | "shell" | "message" | "tokens" | "error";
+  /** 1行の要約。表示側がそのまま出せる長さに収めること */
+  text: string;
+};
+
 export type ExecutorRequest = {
   /** ランタイムルート（.ai-workflow2 のパス）。成果物はこの配下に置く */
   root: string;
@@ -23,6 +39,15 @@ export type ExecutorRequest = {
   config: WorkflowConfig;
   /** 対象ステップ。id / executor はローダーが注入済み */
   step: WorkflowStep;
+  // --- 以下は optional（M3 で追加）。既存 executor は無視してよい ---
+  /** 中断シグナル。無人運転で外から止めるための口 */
+  signal?: AbortSignal;
+  /** 実行の作業ディレクトリ（codex の -C）。未指定なら executor が解決する */
+  projectRoot?: string;
+  /** タイムアウト（ミリ秒）。未指定なら executor の既定 */
+  timeoutMs?: number;
+  /** 進行の逐次通知。**バッファせず、届いた順にそのまま呼ぶこと** */
+  onProgress?: (event: ExecutorProgress) => void;
 };
 
 export type ExecutorResult = {
@@ -32,6 +57,15 @@ export type ExecutorResult = {
   outputs: string[];
   /** ok:false のときの人間向けメッセージ */
   error?: string;
+  /**
+   * 失敗の種類（M3）。M5 の consecutiveExecFailures が
+   * 「再試行すべきか即停止か」を判断するために使う。
+   *
+   * ⚠️ **分類の入力に exit code を使わない。** 実測で、read-only サンドボックスが
+   * 書き込みを拒否しても exit 0 で返ることを確認している。exit code が語るのは
+   * 「プロセスが完走したか」だけ。分類は JSONL の error イベントと成果物の有無から導く。
+   */
+  failureKind?: "transient" | "permanent";
   /** 実行メタ情報。Event Log にそのまま載せる想定（生の session ID は入れない） */
   meta?: Record<string, unknown>;
 };
