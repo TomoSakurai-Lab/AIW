@@ -49,25 +49,31 @@ test("14: loader defaults executor to clipboard and rejects unknown values", () 
   writeFileSync(workflowYaml, raw, "utf8");
 });
 
-// Test 15 — clipboard executor: quiet transfers the file verbatim, print normalizes + narrates.
+// Test 15 — clipboard executor: quiet transfers the file body, print normalizes + narrates.
+//
+// 比較の前に改行だけ正規化する。成果物の改行表現は環境依存で（`.gitattributes` の `eol=lf` と
+// `core.autocrlf` のどちらが効くかで CRLF / LF が変わる）、一方 assembleStepPrompt は
+// 末尾の空白を落として改行を1つ付け直すため、CRLF の作業ツリーでは末尾だけが必ず食い違う。
+// このテストが見たいのは「どの本文を配ったか」であって改行の表現ではない。
 test("15: clipboard executor honours quiet vs print", async () => {
   const { root, config } = makeRoot();
   const step = config.steps["task-planning"];
   const body = readFileSync(path.join(rootPaths(root).promptsDir, "task-planning.md"), "utf8");
+  const eol = (s: string) => s.split("\r\n").join("\n");
 
   const quiet = fakeClipboard("quiet");
   const quietResult = await quiet.executor.execute({ root, config, step });
   assert.equal(quietResult.ok, true);
   assert.deepEqual(quietResult.outputs, []);
-  assert.deepEqual(quiet.sink.written, [body], "quiet mode must copy the raw file body");
+  assert.deepEqual(quiet.sink.written.map(eol), [eol(body)], "quiet mode must copy the raw file body");
   assert.deepEqual(quiet.sink.out, [], "quiet mode must not write to stdout");
   assert.deepEqual(quiet.sink.err, []);
 
   const print = fakeClipboard("print");
   await print.executor.execute({ root, config, step });
-  const normalized = `${body.trimEnd()}\n`;
-  assert.deepEqual(print.sink.out, [normalized], "print mode writes the normalized body to stdout");
-  assert.deepEqual(print.sink.written, [normalized], "print mode copies the same normalized body");
+  const normalized = `${eol(body).trimEnd()}\n`;
+  assert.deepEqual(print.sink.out.map(eol), [normalized], "print mode writes the normalized body to stdout");
+  assert.deepEqual(print.sink.written.map(eol), [normalized], "print mode copies the same normalized body");
   assert.deepEqual(print.sink.err, ["copied: prompt copied to clipboard."]);
 
   // clipboard failure is best-effort: still ok, with the reason in meta
