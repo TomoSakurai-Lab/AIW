@@ -11,6 +11,12 @@ settings:
   # 認証は $CODEX_HOME/auth.json に属し、空だと 401 になる(実測)。
   codexHome: .codex-home
   # codexTimeoutMs: 1800000   # 既定 30 分。実測の implementation 中央値 17 分に対して 3 倍弱
+  # 使うモデルを固定する。値は環境依存なので runtime 側で設定すること。
+  # ⚠️ **未指定だと、どのモデルで走ったかが事後に一切分からない。**
+  # codex はモデル名を JSONL にもログにも残さず、codex doctor も `<default>` としか言わない
+  # (2026-08-19 実測)。世代間で計測を比較するなら明示すること。
+  # 記録は Event Log の meta.modelRequested。**指定値であって実測値ではない**ので名前で区別している。
+  # codexModel: gpt-5.6-luna
   # verify-local: ローカルで決定論的に実行できる検証(M1.5 第3部)。
   # プロジェクトごとに定義する。ここが空なら validator は skipped になり、
   # 「検査していない」ことが Event Log と status --summary に出る(passed にはしない)。
