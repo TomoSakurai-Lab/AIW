@@ -133,6 +133,11 @@ export type WorkflowConfig = {
     codexHome?: string;
     /** codex exec のタイムアウト（ミリ秒）。未指定なら CODEX_DEFAULT_TIMEOUT_MS */
     codexTimeoutMs?: number;
+    /** codex exec に渡すモデル（`-m`）。未指定なら渡さず、codex の既定に委ねる。
+     *  ⚠️ 委ねた場合、**どのモデルで走ったかはどこにも記録されない**
+     *  （JSONL にモデル名は無く、`codex doctor` の表示も `<default>` のまま）。
+     *  計測を世代間で比較するなら明示すること。詳細は docs/design-codex-executor.md の決定ログ。 */
+    codexModel?: string;
     [key: string]: unknown;
   };
   defaults?: Record<string, unknown>;

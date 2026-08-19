@@ -219,3 +219,36 @@ test("99: usage maps onto the Event Log token fields", () => {
   // 欠けている値は 0 に丸めず null（「測れなかった」と「0 だった」を混ぜない）
   assert.deepEqual(usageFrom({ usage: { input_tokens: 5 } })?.outputTokens, null);
 });
+
+// Test 107 — モデルの pin。設定があれば -m を渡し、無ければ渡さない。
+//
+// ⚠️ codex は**使ったモデルをイベントにもログにも残さない**（実タスク 70 イベントを
+// 走査して "model" の出現 0 件・2026-08-19 実測）。したがって記録できるのは
+// **指定値であって実測値ではない**。フィールド名 modelRequested がその区別を持つ。
+test("107: a pinned model is passed with -m, and its absence is recorded, not hidden", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["implementation"];
+
+  // 指定あり
+  const pinned = fakeCodex(OK_EVENTS);
+  const withModel = await createCodexExecutor({ launch: pinned.launch }).execute({
+    root,
+    config: { ...config, settings: { ...config.settings, codexModel: "gpt-5.4-mini" } },
+    step,
+    projectRoot: root
+  });
+  const i = pinned.captured.argv.indexOf("-m");
+  assert.ok(i > 0, "-m が argv に入る");
+  assert.equal(pinned.captured.argv[i + 1], "gpt-5.4-mini");
+  assert.equal((withModel.meta as any).modelRequested, "gpt-5.4-mini");
+
+  // 指定なし → -m を渡さない。ただし **"unspecified" と明示記録する**
+  const bare = fakeCodex(OK_EVENTS);
+  const noModel = await createCodexExecutor({ launch: bare.launch }).execute({ root, config, step, projectRoot: root });
+  assert.equal(bare.captured.argv.includes("-m"), false, "指定が無ければ渡さない");
+  assert.equal(
+    (noModel.meta as any).modelRequested,
+    "unspecified",
+    "null や欠落にしない（「未指定と記録した」と「記録が無い」を区別する）"
+  );
+});

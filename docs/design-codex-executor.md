@@ -652,6 +652,57 @@ M3 で codex が実装された結果、**`executor: codex` と宣言しても `
 | 2026-08-18 | 隔離 CODEX_HOME の配置 | **`.ai-workflow2/.codex-home/`** | `tools/aiw` は公開予定リポなので避ける。runtime 状態は runtime に置く。バックアップリポの `.gitignore` に理由付きで `/.codex-home/` を追加 |
 | 2026-08-18 | 認証の用意方法 | **隔離 home で `codex login` を1回**（人間が実施） | 複製は陳腐化するうえ「どちらが正か」が曖昧になる。**KI-01 の認証版**になる |
 | 2026-08-18 | 故障注入リスト | **9 件**（#9 を追加） | exit 0 + 成果物なしは実測された実在の失敗モード |
+| 2026-08-19 | モデルの pin | **`settings.codexModel` → `-m`**。記録は `meta.modelRequested` | 下記 |
+
+## モデルの pin（2026-08-19）
+
+### なぜ「実測値」ではなく「指定値」を記録するのか
+
+**codex は使ったモデルをどこにも残さない。** 実タスク 1 本（70 イベント）を走査した結果:
+
+| 調べた場所 | 結果 |
+| --- | --- |
+| `--json` の JSONL 全文 | **`"model"` の出現 0 件** |
+| `thread.started` / `turn.completed` | モデル欄なし（`thread_id` / `usage` のみ） |
+| `codex doctor` / `doctor --all` | `model  <default> · openai`（**リテラルの `<default>` のまま解決されない**） |
+| 隔離 CODEX_HOME の `*.sqlite` | モデル slug の出現なし |
+| `codex debug models` | カタログのみ。**どれが既定かの印は無い** |
+| `log/` | `codex-login.log` だけ |
+
+したがって記録できるのは**こちらが指定した値**であり、実行されたモデルではない。
+フィールド名を **`modelRequested`** にして、実測と偽らないようにした。
+
+⚠️ **`-m` を渡さない限り、どのモデルで走ったかは事後に一切分からない。**
+これがモデルを pin する最大の理由であり、`versions.lock`（同じ番号なら同じ内容）が
+推論エンジンに対しては成立していなかった、ということでもある。
+
+### 未指定時の挙動
+
+`-m` を渡さず codex の既定に委ねるが、**`meta.modelRequested` に文字列 `"unspecified"` を明示記録する**。
+null や欠落にしない。「未指定と記録した」と「記録が無い」を区別するためで、
+`ValidatorStatus` の三値と同じ規律。
+
+### 実機確認（0.147.0）
+
+`-m` は `--approve-for-me` / `--ephemeral` / `--ignore-user-config` / `--strict-config` と
+**併用できる**（exit 0 で確認）。`--sandbox` のような排他は無い。
+
+### model-policy.json との統合は見送る
+
+`config/model-policy.json` は step ごとにモデルを宣言しているが、
+**読んでいるのは旧 CLI 経路だけ**でエンジンと executor は参照していない（known-issues の 10 例目）。
+
+統合しない理由は、**フェーズ別モデルの設計が M4 と絡む**ため。
+「fix だけ別モデル」「review は高 effort」といった割り当ては、
+モデル比較実験の設計とセットで決めるべきで、pin の実装に混ぜると
+「何を測っているのか」が曖昧になる。**ここでは 1 モデルの固定だけを入れる。**
+
+### ⚠️ 未決: 何を pin するか
+
+**`<default>` が何であるかは観測できなかった**ので、「現在と同じ値で pin する」は達成できない。
+値の決定は人間に委ねる（runtime の `workflow.yaml` に `codexModel` を書く）。
+`models_cache.json` にある実在の slug は
+`gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` / `gpt-5.5` / `gpt-5.4` / `gpt-5.4-mini` / `codex-auto-review`。
 
 ---
 

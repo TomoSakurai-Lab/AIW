@@ -490,6 +490,7 @@ typecheck passed — 54 source files in Primal.Template.Web.Front/ClientApp (6.7
 | 6 | `command-exit-code` validator | 宣言していた唯一のステップ(testing)が消え、参照ゼロ | **保留**（M7 で判断） |
 | 7 | `steps[].inputs` / `optionalOutputs` / `session` / `standalone` / `defaults` / `auditPolicy` | 型はあるがエンジンが読まない | **未修正**（KI-05） |
 | 8 | **`testing` ステップ（role: cli）** | **実行手段が無いのに遷移先として宣言されていた** | **削除済み**（下記） |
+| 9 | `config/model-policy.json` | step ごとにモデルを宣言しているが、**エンジンと executor は読まない**（読むのは旧 CLI 経路のみ） | **未修正**（M4 で判断） |
 
 ### 8 の実害 — 唯一、実際に運用を止めた
 
@@ -529,6 +530,22 @@ review / fix の入力に生きている。
 `test/preflight-consistency.test.ts` の Test 20 が
 「実行手段のない role を持つステップが宣言されていないこと」を検査しており、
 将来 `role` を増やしたときはこのテストが最初に落ちる。
+
+### 9 の実害 — 計測の前提が崩れる
+
+`model-policy.json` は `implementation: { model: "codex", effort: "medium" }` のように
+step ごとのモデルを宣言している。しかし参照しているのは `cli.ts` の**旧コマンド経路 3 箇所だけ**で、
+`aiw exec` / executor / エンジンはどこからも読んでいない（2026-08-19 に grep で実測）。
+
+M3 で codex executor が動き始めた結果、これは**単なる死んだ宣言では済まなくなった**。
+実行に使われるモデルは codex の既定に委ねられ、しかも
+**どのモデルだったかは事後に一切分からない**（JSONL にもログにも残らない）。
+CLI のバージョンは pin したのに、結果を最も左右する変数だけが野放しだった。
+
+**M3 段階1 での対処**: `settings.codexModel` を新設して `-m` で渡し、
+`meta.modelRequested` として Event Log に記録するようにした（指定値であることを名前で明示）。
+**`model-policy.json` 自体は触っていない。** フェーズ別モデルの割り当ては
+M4（モデル比較実験の設計）と絡むため、そこで判断する。
 
 ### このクラスへの構造的な対処（M1.5 で入れたもの）
 

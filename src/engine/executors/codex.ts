@@ -197,9 +197,16 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       const jsonlPath = path.join(runDir, `${stamp}-${req.step.id}.jsonl`);
       const lastMessagePath = path.join(runDir, `${stamp}-${req.step.id}.last-message.txt`);
 
+      // モデルの pin。未指定なら `-m` を渡さず codex の既定に委ねる。
+      // ⚠️ 委ねた場合、**実際に使われたモデルはどこにも残らない**（JSONL にモデル名は無く、
+      // codex doctor も `<default>` としか言わない）。だから記録は「指定値」であり、
+      // 実測値ではない。フィールド名を modelRequested にしてその区別を型で持たせる。
+      const model = stringSetting(req.config.settings.codexModel);
+
       const argv = [
         codexEntrypoint(),
         "exec",
+        ...(model ? ["-m", model] : []),
         "--json",
         "--ephemeral",
         "--ignore-user-config",
@@ -321,6 +328,11 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
 
       const meta: Record<string, unknown> = {
         executor: "codex",
+        // ⚠️ **指定値であって実測値ではない。** codex は使ったモデルをイベントにもログにも残さない
+        // （実タスク 70 イベントを走査して "model" の出現 0 件・2026-08-19 実測）。
+        // 未指定を null や欠落にしないのは、「未指定と記録した」と「記録が無い」を
+        // 区別するため（三値の規律と同じ）。
+        modelRequested: model ?? "unspecified",
         exitCode: outcome.code,
         durationMs,
         jsonl: path.relative(paths.root, jsonlPath).replace(/\\/g, "/"),
