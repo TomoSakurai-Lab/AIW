@@ -17,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { execStep, loadConfig, runStep } from "../src/engine/engine.js";
 import { createCodexExecutor } from "../src/engine/executors/codex.js";
 import { clipboardExecutor } from "../src/engine/executors/clipboard.js";
-import { driveExecutorNotice } from "../src/engine/executors/index.js";
+import { getExecutor } from "../src/engine/executors/index.js";
 import { rootPaths } from "../src/engine/paths.js";
 import { makeRoot, setStep } from "./helpers.js";
 
@@ -222,18 +222,31 @@ test("105: switching the executor back to clipboard restores the previous behavi
   assert.equal(written.length, 1);
 });
 
-// Test 106 — **drive は executor 宣言を無視する。それを黙って通さない（M3・段階2）。**
+// Test 106 — **drive も executor 宣言を解決する（M3 段階1）。**
 //
-// drive は M0.4 以来 clipboard 固定で step.executor を解決しない。executor が実在しなかった
-// 当時は妥当だったが、M3 で codex が実装された結果「宣言したのに効かない」型になった。
-// drive を executor 対応にするのは実タスク検証のあと（段階1）。それまでは**毎回言う**。
-test("106: drive announces that an executor declaration does not apply to it", () => {
-  // 既定（clipboard）では何も言わない。ノイズにしない。
-  assert.equal(driveExecutorNotice("implementation", "clipboard"), null);
-  assert.equal(driveExecutorNotice("implementation", undefined), null);
+// 段階2 では「宣言は効きません」と警告するだけだったが、実タスク検証が済んだので
+// drive 自身が executor を起動するようにした（driveExecutorNotice は役目を終えて削除）。
+//
+// drive は対話ループなのでループ本体は動かせない。ここで固定するのは
+// **宣言と実体の一致**——`getExecutor` が宣言どおりの executor を返すこと。
+// 「宣言したのに別物が動く」を防ぐのがこのテストの目的。
+test("106: a declared executor resolves to that executor, so drive runs what the config says", () => {
+  const { root } = makeRoot();
+  const { workflowYaml } = rootPaths(root);
+  const raw = readFileSync(workflowYaml, "utf8");
 
-  const notice = driveExecutorNotice("implementation", "codex" as any);
-  assert.ok(notice, "宣言が効かないことを黙って通さない");
-  assert.match(notice, /効きません/, "効いていないと明言する");
-  assert.match(notice, /aiw exec implementation/, "代わりに何をすればよいかを示す");
+  writeFileSync(
+    workflowYaml,
+    raw.replace("  implementation:\n    role: codex", "  implementation:\n    role: codex\n    executor: codex"),
+    "utf8"
+  );
+  const declared = loadConfig(root).steps["implementation"];
+  assert.equal(declared.executor, "codex");
+  assert.equal(getExecutor(declared.executor).name, "codex", "宣言どおりの executor が返る");
+
+  // 宣言を外せば既定の clipboard（drive は従来動作へ戻る = 不変条件5）
+  writeFileSync(workflowYaml, raw, "utf8");
+  const bare = loadConfig(root).steps["implementation"];
+  assert.equal(bare.executor, "clipboard");
+  assert.equal(getExecutor(bare.executor).name, "clipboard");
 });

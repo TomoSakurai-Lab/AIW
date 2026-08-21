@@ -35,7 +35,7 @@ import {
   statusView,
   EngineError
 } from "./engine/engine.js";
-import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, driveExecutorNotice, visibleOnScreen } from "./engine/executors/index.js";
+import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, visibleOnScreen } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
 import { findRunFile, formatRunLog, readRunLog } from "./engine/codexLog.js";
 import { resolveRoot, rootPaths } from "./engine/paths.js";
@@ -889,14 +889,37 @@ async function runDrive(): Promise<void> {
       }
 
       // producing step (claude / codex): copy the prompt, wait for the outputs, then run.
-      // drive is the human-in-the-loop path, so it always uses the clipboard executor directly —
-      // it does not resolve step.executor (that is `aiw exec` / M4's `aiw auto`) and does not
-      // write Event Log entries.
+      //
+      // M3 段階1: drive も `step.executor` を解決する。ただし**黙って走り出さない** —
+      // drive は人間が1ステップずつ確認する経路なので、executor を宣言しているステップでは
+      // 起動前に確認を挟み、n なら従来どおり clipboard へ逃がす（不変条件5 を運用面でも保つ）。
       const worker = step.role === "codex" ? "Codex" : "Claude";
-      // 宣言が効いていないことを黙って通さない（M3・段階2）。
-      const ignored = driveExecutorNotice(state.currentStep, step.executor);
-      if (ignored) {
-        console.error(ignored);
+      if (step.executor !== "clipboard") {
+        const useExecutor = yes(
+          await ask(`"${state.currentStep}" は executor: ${step.executor} を宣言しています。${step.executor} で実行しますか？ [y / n=クリップボードへ] `)
+        );
+        if (useExecutor) {
+          console.log(`▶ "${state.currentStep}" を ${step.executor} で実行します（進行を1行ずつ表示）。`);
+          // `safe` は同期専用なので、非同期の exec はここで受ける。
+          // ⚠️ 失敗しても drive は落とさない（人が次の手を選べる状態で止める）。
+          try {
+            printExecResult(
+              state.currentStep,
+              step.executor,
+              await engineExecStep(root, config, state.currentStep, { onProgress: progressPrinter({}) })
+            );
+          } catch (error) {
+            console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          // 成果物の当否は validator が決める。ここでは run へ進めるかだけを聞く。
+          if (!yes(await ask("成果物を確認したら y で検証して次へ。 [y / それ以外=中断] "))) {
+            console.log("drive を中断しました。準備できたら再度 `aiw drive`。");
+            break;
+          }
+          safe(() => printOutcome(engineRunStep(root, config, state.currentStep)));
+          continue;
+        }
+        console.log(`${step.executor} を使わず、クリップボードへコピーします。`);
       }
       const clip = clipboardMeta(await clipboardExecutor.execute({ root, config, step }));
       // outcome は3値（copied / copy-failed / no-prompt）。promptFile の有無で2値に潰すと
