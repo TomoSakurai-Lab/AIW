@@ -85,7 +85,9 @@ export function summarize(event: any, secret: SessionSecret | null): ExecutorPro
       case "reasoning":
         return done ? null : { kind: "thinking", text: "thinking..." };
       case "agent_message":
-        return done ? { kind: "message", text: `message: ${truncate(firstLine(item.text), 80)}` } : null;
+        // 画面に出る既定はこの種類だけなので、1行目 80 文字では削りすぎる。
+        // 改行を潰して 1 行に畳んだうえで、読める長さまで見せる。全文は runs/ の JSONL にある。
+        return done ? { kind: "message", text: flatten(item.text, 240) } : null;
       default:
         return done ? { kind: "message", text: `${item.type ?? "item"}` } : null;
     }
@@ -107,6 +109,11 @@ function firstLine(value: unknown): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
+}
+
+/** 複数行の本文を1行へ畳む（改行と連続空白を1つの空白にする）。 */
+function flatten(value: unknown, n: number): string {
+  return truncate(String(value ?? "").replace(/\s+/g, " ").trim(), n);
 }
 
 function k(n: unknown): string {

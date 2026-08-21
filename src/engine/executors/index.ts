@@ -4,7 +4,7 @@ import type { ExecutorName } from "../types.js";
 import { claudeExecutor } from "./claude.js";
 import { clipboardExecutor } from "./clipboard.js";
 import { codexExecutor } from "./codex.js";
-import type { StepExecutor } from "./types.js";
+import type { ExecutorProgress, StepExecutor } from "./types.js";
 
 const REGISTRY: Record<ExecutorName, StepExecutor> = {
   clipboard: clipboardExecutor,
@@ -34,6 +34,22 @@ export function driveExecutorNotice(stepId: string, executor: ExecutorName | und
     `⚠ "${stepId}" は executor: ${executor} を宣言していますが、drive は clipboard 固定です（この宣言は効きません）。` +
     `executor で実行するなら drive を抜けて \`aiw exec ${stepId}\` を使ってください。`
   );
+}
+
+/**
+ * 進行イベントを**画面へ**出すか（M3・課題I）。
+ *
+ * 既定は **codex 自身の発言（message）だけ**。shell / edit / thinking は画面へ出さない。
+ * 実測: 大きめのタスク 1 本で 119 イベント・shell 36 回。全種類を流すと**画面がコマンドで
+ * 埋まり、モデルが何を言っているかが読めなくなる**。
+ *
+ * ⚠️ **`error` は既定でも必ず出す。** 失敗を黙って通さないのはこのコードベースの一貫した規律で、
+ * 「発言だけ」を字義どおり適用して例外を握り潰すのは筋が違う。
+ *
+ * 捨てているのは**表示だけ**。全イベントは `runs/codex/` の JSONL に残り、`--verbose` でも見られる。
+ */
+export function visibleOnScreen(kind: ExecutorProgress["kind"], verbose: boolean): boolean {
+  return verbose || kind === "message" || kind === "error";
 }
 
 export function getExecutor(name: ExecutorName): StepExecutor {

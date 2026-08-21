@@ -14,6 +14,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { createCodexExecutor, summarize, usageFrom } from "../src/engine/executors/codex.js";
+import { visibleOnScreen } from "../src/engine/executors/index.js";
 import { assembleStepPrompt } from "../src/engine/promptAssembly.js";
 import { rootPaths } from "../src/engine/paths.js";
 import type { ExecutorProgress } from "../src/engine/executors/types.js";
@@ -195,8 +196,15 @@ test("98: progress lines summarize the event, they do not stream the content", (
     text: "tokens: in 26.5K / out 109"
   });
 
+  // 発言は**画面に出る既定の唯一の種類**なので、他より長く見せる。
+  // ただし全文は流さない（詳細は runs/ の JSONL）。
   const msg = summarize({ type: "item.completed", item: { type: "agent_message", text: long } }, null);
-  assert.ok((msg?.text.length ?? 0) <= 90, `全文を流さない（実際 ${msg?.text.length}）`);
+  assert.ok((msg?.text.length ?? 0) <= 240, `全文を流さない（実際 ${msg?.text.length}）`);
+  assert.ok((msg?.text.length ?? 0) > 90, "1行80文字では削りすぎるので広げてある");
+
+  // 複数行の発言は1行へ畳む（画面が縦に流れないように）
+  const multi = summarize({ type: "item.completed", item: { type: "agent_message", text: "一行目\n\n二行目   三行目" } }, null);
+  assert.equal(multi?.text, "一行目 二行目 三行目");
 
   // 開始と完了で二重に出さない
   assert.equal(summarize({ type: "item.started", item: { type: "file_change", changes: [] } }, null), null);
@@ -251,4 +259,20 @@ test("107: a pinned model is passed with -m, and its absence is recorded, not hi
     "unspecified",
     "null や欠落にしない（「未指定と記録した」と「記録が無い」を区別する）"
   );
+});
+
+// Test 108 — **画面に出すのは codex の発言だけ**（+ error）。shell / edit / thinking は出さない。
+//
+// 実測: 大きめのタスク 1 本で 119 イベント・shell 36 回。全種類を流すと画面がコマンドで埋まり、
+// モデルが何を言っているかが読めなくなる。
+//
+// ⚠️ **error は既定でも出す。** 失敗を黙って通さないのはこのコードベースの規律であり、
+// 「発言だけ」を字義どおり適用して例外を握り潰すのは筋が違う。
+// 捨てているのは表示だけで、全イベントは runs/ の JSONL に残る。
+test("108: the screen shows codex's own words (and errors), not its shell traffic", () => {
+  const kinds: ExecutorProgress["kind"][] = ["thinking", "edit", "shell", "message", "tokens", "error"];
+  const shown = (verbose: boolean) => kinds.filter((k) => visibleOnScreen(k, verbose));
+
+  assert.deepEqual(shown(false), ["message", "error"], "既定は発言と error のみ");
+  assert.deepEqual(shown(true), kinds, "--verbose では全種類");
 });
