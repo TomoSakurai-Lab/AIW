@@ -72,6 +72,17 @@ function ready() {
   return { root, config };
 }
 
+/** `fake` と同じだが、渡された argv を覗ける版（起動引数を検査したいテスト用）。 */
+function fakeCaptured(lines: unknown[]) {
+  const captured = { argv: [] as string[] };
+  const base = fake(lines);
+  const launch = (argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv }) => {
+    captured.argv = argv;
+    return (base.launch as any)(argv, o);
+  };
+  return { launch, captured, state: base.state };
+}
+
 function lastEvent(root: string, type: string): any {
   const lines = readFileSync(rootPaths(root).eventLog, "utf8").trim().split("\n").filter(Boolean);
   const hit = lines.map((l) => JSON.parse(l)).filter((r) => r.event === type);
@@ -249,4 +260,83 @@ test("106: a declared executor resolves to that executor, so drive runs what the
   const bare = loadConfig(root).steps["implementation"];
   assert.equal(bare.executor, "clipboard");
   assert.equal(getExecutor(bare.executor).name, "clipboard");
+});
+
+// Test 114 — **故障注入 #7: 認証切れ。** permanent として記録し、再試行に回さない。
+//
+// 実測（2026-08-18）: 空の CODEX_HOME では 401 Unauthorized で exit 1。
+// codex 自身が 5 回リトライしてから落ちるので、**aiw 側で再試行しても同じ結果**になる。
+// transient と誤分類すると、M5 の consecutiveExecFailures が無駄な再試行を重ねる。
+test("114: an expired credential is permanent, so the engine will not retry it", async () => {
+  const { root, config } = ready();
+  const { launch } = fake(
+    [
+      { type: "thread.started", thread_id: THREAD_ID },
+      { type: "error", message: "Reconnecting... 5/5 (unexpected status 401 Unauthorized: Missing bearer)" }
+    ],
+    undefined,
+    1
+  );
+
+  const result = await execStep(root, config, "implementation", { executor: createCodexExecutor({ launch }) });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "permanent", "401 は再試行しても直らない");
+  assert.match(result.error ?? "", /401|Unauthorized/i);
+
+  const ev = lastEvent(root, "exec.failed");
+  assert.equal(ev.failureKind, "permanent", "Event Log にも種別が残る（M5 が読む）");
+});
+
+// Test 115 — **故障注入 #8: runtimeRoot が checkRepoRoot の外。**
+// 起動せずに止める。**黙って書けない状態で走らせない。**
+//
+// codex は -C の配下しか書けない（workspace-write の実測）。runtimeRoot が外にあると
+// current-result.md を書けずに終わり、exit 0 で「何もしなかった」が返る（C-3 の形）。
+//
+// ⚠️ **設計文書の課題G #8 は「起動せずに停止」と書いていたが、これは A-2 の要約を誤っていた。**
+// A-2 の本文は「外なら `--add-dir <runtimeRoot>` を足す。**判定できないときだけ**起動しない」。
+// 実装は A-2 に従っている。#8 の行は実装に合わせて訂正した。
+test("115: a runtime root outside the workspace is rescued with --add-dir, and an unresolvable one does not launch", async () => {
+  const { root, config } = ready();
+
+  // (a) 通常: runtimeRoot が -C の配下 → --add-dir は要らない
+  const inside = fakeCaptured(events());
+  await createCodexExecutor({ launch: inside.launch }).execute({
+    root,
+    config,
+    step: config.steps["implementation"],
+    projectRoot: root
+  });
+  assert.equal(inside.captured.argv.includes("--add-dir"), false, "配下なら足さない（実測で不要）");
+
+  // (b) 外: --add-dir で runtimeRoot を救済する。**黙って書けない状態で走らせない**
+  //
+  // ⚠️ 「外」は**兄弟**でなければならない。祖先（root/../..）を渡すと runtimeRoot は
+  // その配下に入ってしまい、救済の経路を通らない（最初この前提を間違えてテストが落ちた）。
+  const sibling = path.resolve(root, "..", "elsewhere-workspace");
+  mkdirSync(sibling, { recursive: true });
+  const outside = fakeCaptured(events());
+  const rescued = await createCodexExecutor({ launch: outside.launch }).execute({
+    root,
+    config,
+    step: config.steps["implementation"],
+    projectRoot: sibling
+  });
+  assert.equal(rescued.ok, true);
+  const i = outside.captured.argv.indexOf("--add-dir");
+  assert.ok(i > 0, "外にあるなら --add-dir を足す");
+  assert.equal(path.resolve(outside.captured.argv[i + 1]), path.resolve(root), "救済する先は runtimeRoot");
+  assert.equal((rescued.meta as any).addDir !== null, true, "救済したことが meta に残る");
+
+  // (c) checkRepoRoot を解決できない → **起動しない**（permanent）
+  const broken = fakeCaptured(events());
+  const failed = await createCodexExecutor({ launch: broken.launch }).execute({
+    root,
+    config: { ...config, settings: { ...config.settings, repoRoot: "no/such/dir" } },
+    step: config.steps["implementation"]
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.failureKind, "permanent");
+  assert.deepEqual(broken.captured.argv, [], "解決できないときは起動そのものをしない");
 });
