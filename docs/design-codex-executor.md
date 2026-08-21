@@ -458,7 +458,21 @@ executor 化は**この可視性を失う**副作用を持つ。放置すると
 | 4 | 実装位置は executor 内ではなく **`ExecutorRequest.onProgress`（optional）** 経由 | executor はイベントを流すだけ。整形と表示は CLI の責務。「エンジンは結果を返す、CLI が表示する」の既存分離を守る |
 | 5 | **quiet で抑制できる** | M5 の auto ループではステップ単位の要約だけが欲しい |
 
-### 段階1-3 の後の小タスク: `aiw log`
+### `aiw log` —— **実装済み**（2026-08-21）
+
+`src/engine/codexLog.ts`（読み取り + 整形）+ `cli.ts` のコマンド。Test 109-113。
+
+実装して分かったこと:
+
+| 発見 | 対処 |
+| --- | --- |
+| **イベントにタイムスタンプが無い**（キーは type / item / thread_id / usage のみ） | 時刻はファイル名から復元し、順序は JSONL の並びを使う（`seq`） |
+| シェルは `"…\powershell.exe" -Command '<本体>'` の形で、素朴に切ると**インタプリタのパスで文字数を使い切る** | `shellBody()` が `-Command` / `-c` 以降を取り出す（Test 111） |
+| **`error` 本文に生 thread_id が混ざる** | `redactSession` を通す。**テストが実際にリークを検出した**（Test 110） |
+
+実測: 441 KB / 119 イベント / 401K 文字 → **66 行**。
+
+以下は実装前の設計。
 
 ```text
 aiw log <step>          直近実行の JSONL を人間可読に整形

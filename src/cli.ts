@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { Command } from "commander";
@@ -37,6 +37,7 @@ import {
 } from "./engine/engine.js";
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, driveExecutorNotice, visibleOnScreen } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
+import { findRunFile, formatRunLog, readRunLog } from "./engine/codexLog.js";
 import { resolveRoot, rootPaths } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
 import { deleteBaseline, readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
@@ -180,6 +181,30 @@ function progressPrinter(opts: { quiet?: boolean; verbose?: boolean }): ((e: Exe
     const at = new Date().toTimeString().slice(0, 8);
     console.error(`[${at}] ${e.text}`);
   };
+}
+
+/**
+ * `aiw log [step]` — 直近の codex 実行を読む（M3・課題I）。
+ *
+ * **読むだけ。** 情報源は `runs/codex/` の JSONL のみで、新しい記録は作らない。
+ * 画面の進行表示は発言だけに絞ってあるので、詳細を後から追う口がここになる。
+ */
+function engineLogCmd(stepArg: string | undefined, opts: { raw?: boolean; json?: boolean }): void {
+  const root = engineRoot();
+  const step = stepArg ?? readEngineState(root).currentStep;
+  const file = findRunFile(root, step);
+  if (!file) {
+    console.error(`no codex run recorded for step "${step}" (looked in ${path.join(rootPaths(root).runsDir, "codex")}).`);
+    console.error(`runs are written by the codex executor — steps driven through clipboard leave none.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (opts.raw) {
+    process.stdout.write(readFileSync(file, "utf8")); // 一次資料をそのまま
+    return;
+  }
+  const log = readRunLog(root, file);
+  console.log(opts.json ? JSON.stringify(log, null, 2) : formatRunLog(log));
 }
 
 async function engineExecCmd(stepArg?: string, opts: { quiet?: boolean; verbose?: boolean } = {}): Promise<void> {
@@ -334,6 +359,15 @@ program
   .option("--verbose", "shell / edit / thinking も画面へ出す（既定は codex の発言と error のみ）")
   .action(async (step: string | undefined, opts: { quiet?: boolean; verbose?: boolean }) => {
     await engineExecCmd(step, opts);
+  });
+
+program
+  .command("log [step]")
+  .description("Show the latest codex run for a step (default: current step). Reads runs/codex/ only")
+  .option("--raw", "生 JSONL をそのまま出す（一次資料）")
+  .option("--json", "機械可読な構造化出力")
+  .action((step: string | undefined, opts: { raw?: boolean; json?: boolean }) => {
+    engineLogCmd(step, opts);
   });
 
 program
