@@ -1,5 +1,6 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { currentTaskWindow, readEventLog } from "./observed.js";
 import { rootPaths } from "./paths.js";
 import type { EngineState, Status, WorkflowConfig, WorkflowStep } from "./types.js";
 
@@ -114,7 +115,51 @@ const archiveArtifacts: PostActionFn = ({ root, draft }) => {
   if (existsSync(attemptsDir)) {
     cpSync(attemptsDir, path.join(dest, "attempts"), { recursive: true });
   }
+  archiveCodexRuns(root, dest);
 };
+
+/**
+ * このタスクで走った codex の JSONL を archive へ随伴させる（M3・B2）。
+ *
+ * 目的は M7 の追跡（「一回の失敗を後から追える」）。成果物だけが archive にあっても、
+ * **その実装が何をしたか**は JSONL にしか無い。タスクの記録が2箇所に分かれていると、
+ * 半年後に照合できない。
+ *
+ * ⚠️ **copy であって move ではない。** `runs/codex/` は残す:
+ *   - `aiw log` は runs/ だけを見る（移すと直近の実行が読めなくなる）
+ *   - 退避中に落ちてもディスク上の一次資料が消えない
+ * 保持方針は「全保存」なので、二重に持つコストは受け入れる（1 実行あたり最大 441 KB の実測）。
+ *
+ * どれがこのタスクの分かは **Event Log のタスク窓**（最後の reflection 遷移以降）から決める。
+ * mtime やファイル名の推測に頼らない。窓の定義は observed.ts と同じものを使う。
+ */
+function archiveCodexRuns(root: string, dest: string): void {
+  const log = readEventLog(root);
+  if (log === "missing" || log === "unreadable") {
+    return; // Event Log が読めないなら何が今回の分か決められない。黙って何もしない方が安全
+  }
+  const files = new Set<string>();
+  for (const r of currentTaskWindow(log)) {
+    const rel = (r as { meta?: { jsonl?: unknown; lastMessage?: unknown } }).meta;
+    for (const key of ["jsonl", "lastMessage"] as const) {
+      const value = rel?.[key];
+      if (typeof value === "string" && value !== "") {
+        files.add(value);
+      }
+    }
+  }
+  if (files.size === 0) {
+    return; // clipboard だけで回したタスクには JSONL が無い（欠落ではなく正常）
+  }
+  const runsDest = path.join(dest, "runs");
+  mkdirSync(runsDest, { recursive: true });
+  for (const rel of files) {
+    const src = abs(root, rel);
+    if (existsSync(src)) {
+      copyFileSync(src, path.join(runsDest, path.basename(src)));
+    }
+  }
+}
 
 // Restore working docs from templates/. Idempotent by overwrite. current-task/result/review and
 // research-findings are reset every reflection; user-task.md (the human input) is reset ONLY on

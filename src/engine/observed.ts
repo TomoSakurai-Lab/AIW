@@ -31,7 +31,13 @@ export type Observed = {
 
 type LogRecord = Record<string, unknown>;
 
-function readEventLog(root: string): LogRecord[] | "missing" | "unreadable" {
+/**
+ * Event Log を読む。**三値**（レコード列 / missing / unreadable）を保つこと。
+ * 「読めなかった」を空配列へ潰すと、記録が無いのか読めなかったのかが区別できなくなる。
+ *
+ * postActions（archiveCodexRuns）とも共有する。タスク窓の定義を2箇所に持たないため。
+ */
+export function readEventLog(root: string): LogRecord[] | "missing" | "unreadable" {
   const { eventLog } = rootPaths(root);
   if (!existsSync(eventLog)) {
     return "missing";

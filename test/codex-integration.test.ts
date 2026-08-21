@@ -11,7 +11,7 @@
 //   #9 exit 0 + 成果物なし → file-exists が halt し、executor は成功を主張しない
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { execStep, loadConfig, runStep } from "../src/engine/engine.js";
@@ -19,6 +19,9 @@ import { createCodexExecutor } from "../src/engine/executors/codex.js";
 import { clipboardExecutor } from "../src/engine/executors/clipboard.js";
 import { getExecutor } from "../src/engine/executors/index.js";
 import { rootPaths } from "../src/engine/paths.js";
+import { defaultPostActions } from "../src/engine/postActions.js";
+import { DEFAULT_ENGINE_STATE } from "../src/engine/types.js";
+const archiveArtifacts = defaultPostActions.archiveArtifacts;
 import { makeRoot, setStep } from "./helpers.js";
 
 const THREAD_ID = "01a013b1-80e9-7c71-9460-305caf414464";
@@ -339,4 +342,58 @@ test("115: a runtime root outside the workspace is rescued with --add-dir, and a
   assert.equal(failed.ok, false);
   assert.equal(failed.failureKind, "permanent");
   assert.deepEqual(broken.captured.argv, [], "解決できないときは起動そのものをしない");
+});
+
+// Test 116 — **B2: このタスクの codex JSONL が archive へ随伴する。**
+//
+// 目的は M7 の追跡（一回の失敗を後から追える）。成果物だけが archive にあっても、
+// **その実装が何をしたか**は JSONL にしか無い。記録が 2 箇所に分かれると照合できない。
+//
+// ⚠️ copy であって move ではない（runs/ は残す。aiw log が読む先だから）。
+// ⚠️ どれが今回の分かは **Event Log のタスク窓**から決める。mtime の推測に頼らない。
+test("116: this task's codex runs travel with the archive, and runs/ is left intact", async () => {
+  const { root, config } = ready();
+  const { launch } = fake(events(), () => {
+    writeFileSync(path.join(root, "current-result.md"), "# Summary\n\ndone\n", "utf8");
+  });
+
+  const result = await execStep(root, config, "implementation", { executor: createCodexExecutor({ launch }) });
+  const jsonlRel = String((result.meta as any).jsonl);
+
+  archiveArtifacts({
+    root,
+    config,
+    step: config.steps["reflection"],
+    status: { step: "reflection", result: "feature-complete", reason: "t" } as any,
+    result: "feature-complete",
+    draft: { ...DEFAULT_ENGINE_STATE, currentStep: "reflection" } as any
+  });
+
+  const dirs = readdirSync(path.join(rootPaths(root).archiveDir, "single"));
+  assert.equal(dirs.length, 1);
+  const runsDir = path.join(rootPaths(root).archiveDir, "single", dirs[0], "runs");
+  assert.ok(existsSync(runsDir), "archive に runs/ が作られる");
+  assert.ok(
+    readdirSync(runsDir).some((f) => f === path.basename(jsonlRel)),
+    "この実行の JSONL が随伴している"
+  );
+  assert.ok(existsSync(path.join(root, jsonlRel)), "**move ではない**。runs/ 側は残る（aiw log が読む）");
+});
+
+// Test 117 — clipboard だけで回したタスクでは JSONL が無い。**欠落ではなく正常。**
+test("117: a clipboard-only task archives without a runs/ directory", () => {
+  const { root, config } = ready();
+
+  archiveArtifacts({
+    root,
+    config,
+    step: config.steps["reflection"],
+    status: { step: "reflection", result: "feature-complete", reason: "t" } as any,
+    result: "feature-complete",
+    draft: { ...DEFAULT_ENGINE_STATE, currentStep: "reflection" } as any
+  });
+
+  const dirs = readdirSync(path.join(rootPaths(root).archiveDir, "single"));
+  const runsDir = path.join(rootPaths(root).archiveDir, "single", dirs[0], "runs");
+  assert.equal(existsSync(runsDir), false, "空の runs/ を作らない（無いことが正しい）");
 });
