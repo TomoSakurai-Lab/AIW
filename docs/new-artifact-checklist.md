@@ -1,0 +1,54 @@
+# 新しい成果物ファイルを足すときのチェックリスト
+
+`.ai-workflow2/` に新しい成果物ファイル（`current-*.md` / `*-manifest.json` など）を
+足すときに通す確認項目。**生成側を配線した時点では完成していない。**
+
+> このファイルは BL-102 として新設した。
+> 由来は「生成だけ配線して掃除を忘れる」の**3回の再発**（`docs/aiw-known-issues.md` の
+> KI-09 サブパターン）。3回とも「動くこと」の確認で満足し、
+> **タスク2周目で初めて発覚**している。1周だけ回して完了にしない。
+
+---
+
+## チェックリスト
+
+```markdown
+- [ ] **生成**: どのステップが書くかを決め、Skill / プロンプトへ配線した
+- [ ] **contract**: `workflow.yaml` の `artifacts` に定義し、validator から参照した
+      （契約の正本は workflow.yaml。Skill やプロンプトへ見出し一覧を再記述しない）
+- [ ] **archive**: `postActions.ts` の `archiveArtifacts` の対象へ追加した
+- [ ] **掃除**: タスク終了時にどうするかを決めた
+      - 「作業中の器」なら `restoreTemplates` + `templates/` に雛形を置く
+      - 「そのタスクの記録」なら **archive 後に削除**する postAction を足し、
+        `workflow.yaml` の `reflection.postActions` に **`archiveArtifacts` より後**で宣言した
+      - ⚠️ 記録に空テンプレを置くと、中身が無いまま `file-exists` / `json-schema` が
+        素通りする（`task-metadata.json` で実際に踏んだ形）
+- [ ] **分類表**: `docs/m2-prompt-decomposition.md` の分類表へ行を足した
+      （どの情報がどこに属するかの照合リスト）
+- [ ] **許可リスト**: `codex-system.md` の「書いてよい」リストへ追加した
+      （2026-08-28 追加。ac-* で Skill と codex-system の指示が競合し、
+       実装が始まる前に停止する事象が多発した）
+- [ ] **パス規約**: ファイル内にパスを書くなら、**どこ起点か**を決めて入力側の Skill に
+      明記した。現行の規約は **checkRepoRoot（検査対象リポジトリのルート）相対**
+      （2026-09-04 追加。`consumerChecks[].root` を validator だけが runtimeRoot 起点で
+       解決しており、正しく書かれた宣言が全件「存在しない」になっていた。偽陽性 10 件）
+- [ ] **2周目のテスト**: **2タスク連続**で回して、それぞれの分が別々に残ることを固定した
+      （1タスクでは「2件目が1件目を上書きする」形の欠陥が出ない。KI-09 系譜 #4 で
+       ~30 タスク分が復旧不能になった）
+```
+
+## 使い方
+
+- 追加を含むタスクの `current-task.md` の `## Acceptance Criteria` へ、
+  **該当する項目を AC として写す**。チェックリストを別に持つと見ない
+- 「この成果物には当てはまらない」項目は**消さずに理由を1行**書く。
+  消すと、次に足す人が項目の存在を知らない
+
+## 再発の記録
+
+| 回 | 成果物 | 落とした項目 | 発覚 |
+| --- | --- | --- | --- |
+| 1 | `task-metadata.json` | 掃除（restore にして残骸が素通り） | 2周目 |
+| 2 | `research-findings.md` | archive と掃除の両方 | M1 レビュー |
+| 3 | `ac-manifest.json` / `ac-result.json` | archive と掃除の両方 + 許可リスト | 2周目（実装が停止） |
+| 4 | `consumerChecks[].root` の解決基準 | パス規約 | ソーク窓の偽陽性 10 件 |

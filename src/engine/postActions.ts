@@ -105,7 +105,12 @@ const archiveArtifacts: PostActionFn = ({ root, draft }) => {
     "current-result.md",
     "current-review.md",
     "current-status.json",
-    "task-metadata.json"
+    "task-metadata.json",
+    // KI-09 系譜 #10（BL-101）: ac-* はタスクごとの計画・計測記録。**作業中の器ではないので restore ではなく
+    // archive 後に削除する**（task-metadata と同じライフサイクル）。
+    // ソーク窓の実測: archive 直近3件の ac-* は 0 件——退避されず、次タスクへ持ち越されていた。
+    "ac-manifest.json",
+    "ac-result.json"
   ]) {
     const src = abs(root, f);
     if (existsSync(src)) {
@@ -200,6 +205,22 @@ const discardTaskMetadata: PostActionFn = ({ root }) => {
   rmSync(abs(root, "task-metadata.json"), { force: true });
 };
 
+/**
+ * ac-manifest.json / ac-result.json を archive 後に削除する（KI-09 系譜 #10 / BL-101 の恒久対応）。
+ *
+ * **正本は archive 側**。runtime に残すと次タスクが前タスクの計画を引き継いだように見え、
+ * 実測では sol が「証跡を消してよいか」と停止した（入力側の誤解）。
+ *
+ * ⚠️ restoreTemplates ではなく削除にする理由: この 2 つは**タスクの記録**であって
+ * **作業中の器ではない**。空テンプレを置くと file-exists / json-schema が素通りする
+ * （task-metadata で踏んだ形）。次タスクの implementation が必ず新規作成する。
+ */
+const discardAcArtifacts: PostActionFn = ({ root }) => {
+  for (const f of ["ac-manifest.json", "ac-result.json"]) {
+    rmSync(abs(root, f), { force: true });
+  }
+};
+
 // Reset the shared Fix budget on the committed state draft.
 const resetFixAttempts: PostActionFn = ({ draft }) => {
   draft.fixAttempts = 0;
@@ -225,6 +246,7 @@ const advancePhase: PostActionFn = ({ root, result, nextPhaseId, draft }) => {
 export const defaultPostActions: PostActionRegistry = {
   snapshotResult,
   discardTaskMetadata,
+  discardAcArtifacts,
   archiveArtifacts,
   restoreTemplates,
   resetFixAttempts,

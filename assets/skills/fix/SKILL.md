@@ -46,6 +46,14 @@ fix 1周 50 分のうち約 40 分が e2e の反復に消えた。
 implementation と同じ Artifact Contract を使う。必須見出しとその順序は
 `workflow.yaml` の `artifacts.current-result` が正本。**前回の内容を残さず作り直す**。
 
+### ac-result.json も作り直す
+
+`current-result.md` と同様に、`.ai-workflow2/ac-result.json` も**前回の内容を残さず作り直す**。
+再確認した AC は新しい観測値で、再確認していない AC は `"status": "skipped"` +
+`"reason"` で記録する。レコードの欠落は measurement-completeness validator が
+review へ report する（`ac-manifest.json` は実装フェーズが書いたものを引き継ぎ、
+Fix Scope が AC を追加した場合のみ行を足す）。
+
 ### 触れていない AC の扱い
 
 `## Acceptance Criteria Verification` は全 AC を再掲する。ここが fix 特有の要点で、

@@ -169,7 +169,7 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
     case "verify-local":
       return runVerifyLocalValidator(root, config, v);
     case "consumer-presence":
-      return runConsumerPresenceFromManifest(root, v);
+      return runConsumerPresenceFromManifest(root, config, v);
     case "measurement-completeness":
       return runMeasurementCompleteness(root, v);
     default:
@@ -197,44 +197,63 @@ function filesUnder(dir: string): string[] {
   return out;
 }
 
-function runConsumerPresence(root: string, v: ValidatorRef): RunOne {
-  const consumerRoot = v.consumerRoot ?? ".";
-  const dir = abs(root, consumerRoot);
-  if (!existsSync(dir)) return skipped(`consumer root does not exist: ${consumerRoot}`, `consumer-presence skipped: ${consumerRoot} is absent`);
-  if (!v.apiPattern) return skipped("no apiPattern configured", "consumer-presence skipped: no apiPattern configured");
-  let pattern: RegExp;
-  try { pattern = new RegExp(v.apiPattern, "m"); } catch { return failed(`invalid apiPattern: ${v.apiPattern}`); }
-  const count = filesUnder(dir).filter((file) => pattern.test(readFileSync(file, "utf8"))).length;
-  const minimum = v.minConsumers ?? 1;
-  if (count < minimum) return failed(`consumer-presence found ${count} consumer(s), expected at least ${minimum} under ${consumerRoot}`);
-  if (v.manifest && v.result) {
-    const manifest = jsonFile(root, v.manifest) as { acceptanceCriteria?: { id: string; implementationStatus?: string }[] } | null;
-    const result = jsonFile(root, v.result) as { results?: { id: string; status: string }[] } | null;
-    if (manifest && result) {
-      const statuses = new Map((result.results ?? []).map((item) => [item.id, item.status.toLowerCase().replace(/\s+/g, "-")]));
-      const misreported = (manifest.acceptanceCriteria ?? []).filter(
-        (item) => item.implementationStatus === "not-implemented" && statuses.get(item.id) === "not-verified"
-      );
-      if (misreported.length > 0) return failed(`consumer-presence found unimplemented AC reported as NOT VERIFIED: ${misreported.map((x) => x.id).join(", ")}`);
-    }
-  }
-  return passed(`consumer-presence found ${count} consumer(s) under ${consumerRoot}`);
+/**
+ * `ac-manifest.json` の `consumerChecks[].root` を解決する基準（2026-09-04 修正）。
+ *
+ * ⚠️ **manifest に書かれるパスは checkRepoRoot からの相対**。runtimeRoot ではない。
+ * 書き手（implementation Skill）は `Primal.Template.Web.Front/ClientApp/src` のような
+ * リポジトリ相対で書くのに、検査側が runtimeRoot（`.ai-workflow2/`）起点で解決していたため、
+ * **実在するパスが「存在しない」と判定され続けていた**。
+ *
+ * 実測（ソーク窓 7.5 日 / 20 本）: consumer-presence の failed 8 件が**全件この偽陽性**。
+ * review が言及したのは 1 件だけで、「常に違反を出す validator は誰も見なくなる」の実例。
+ *
+ * 解決は diff-scope と同じ `resolveCheckRepoRoot` を使い、**基準を 2 箇所に持たない**。
+ */
+function resolveConsumerBase(root: string, config: WorkflowConfig): { ok: true; base: string } | { ok: false; reason: string } {
+  const resolved = resolveCheckRepoRoot(root, config);
+  return resolved.ok ? { ok: true, base: resolved.repoRoot } : { ok: false, reason: resolved.reason };
 }
 
-function runConsumerPresenceFromManifest(root: string, v: ValidatorRef): RunOne {
+function runConsumerPresenceFromManifest(root: string, config: WorkflowConfig, v: ValidatorRef): RunOne {
   if (!v.manifest) return skipped("no manifest configured", "consumer-presence skipped: no manifest configured");
   const manifest = jsonFile(root, v.manifest) as {
     acceptanceCriteria?: { id: string; implementationStatus?: string }[];
     consumerChecks?: { id: string; root: string; pattern: string; minConsumers?: number }[];
+    pathBase?: string;
   } | null;
   if (!manifest) return skipped("manifest is absent or invalid", "consumer-presence skipped: manifest is absent or invalid");
 
   const misreport = findMisreportedUnimplemented(root, v, manifest);
   const checks = manifest.consumerChecks ?? [];
+
+  // 検査対象リポジトリを特定できないなら**検査していない**。skipped で返す。
+  // ⚠️ report 宣言の validator がここで failed を返すと、「検査できなかった」を
+  // 「違反があった」と偽ることになる（verify-local のタイムアウトで確立した論理と同じ）。
+  // manifest 自身が宣言するパス基準。省略は現行規約（checkRepoRoot 相対）とみなす。
+  // ⚠️ **知らない値なら検査せず skipped。** 別の基準で書かれた root を checkRepoRoot 起点で
+  // 解決すると、存在しないパスを見て「consumer 0 件」と報告する——それは今回直した偽陽性
+  // そのものなので、基準が変わったときは黙って走らずに止まる側へ倒す。
+  if (manifest.pathBase !== undefined && manifest.pathBase !== "checkRepoRoot") {
+    return skipped(
+      `unknown pathBase: ${manifest.pathBase}`,
+      `consumer-presence skipped: unknown pathBase (${manifest.pathBase})`
+    );
+  }
+
+  const base = checks.length > 0 ? resolveConsumerBase(root, config) : null;
+  if (base && !base.ok) {
+    return skipped(
+      `checkRepoRoot unresolved: ${base.reason}`,
+      `consumer-presence skipped: checkRepoRoot unresolved (${base.reason})`
+    );
+  }
+
   const failures: string[] = [];
   const observations: string[] = [];
   for (const check of checks) {
-    const dir = path.resolve(root, check.root);
+    // ⚠️ runtimeRoot ではなく checkRepoRoot 起点（上のコメント参照）
+    const dir = path.resolve((base as { base: string }).base, check.root);
     if (!existsSync(dir)) {
       failures.push(check.id + ": consumer root does not exist: " + check.root);
       continue;

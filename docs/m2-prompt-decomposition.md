@@ -59,6 +59,8 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | 各セクションの書き方（Change Map 等） | 手順 | Skill | ✅ |
 | `result` 許可値 `implemented` のみ | 遷移条件 | **Step に残す** | ✅ |
 | Prohibited: Scope 外変更 / 無関係リファクタ / 旧 `.ai-workflow/` 書き込み | 禁止事項 | Instructions（diff-scope が検査） | ✅ |
+| **(M3 追加)** 実装計画時に ac-manifest.json を書き、計測ごとに ac-result.json へ記録（失敗分析 Q6: 計画時の脱落への対処。ガードレール配線） | 手順 | Skill | ✅ |
+| **(M2 追加・後記)** Manual Verification / Unresolved Decisions を空にしたい誘惑への注意 | 手順 | Skill | ✅ |
 | `Manual Verification Required` / `Unresolved Decisions` を空にしたい誘惑への注意 | **新規追加**（Stage 3-1） | implementation Skill | ✅ |
 
 新規追加の意図: 三値規律の強化。**M1 版の `implementation.md` には存在しない**。
@@ -76,6 +78,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | `result` 許可値 `fixed` のみ | 遷移条件 | **Step に残す** | ✅ |
 | Prohibited: Minor 修正 / スコープ拡大 | 禁止事項 | Skill（Fix Scope の読み方）+ Instructions | ✅ |
 | Prohibited: `fix-package.md` を作らない | **死んでいる** | 🗑 削除 | 🗑 |
+| **(M3 追加)** ac-result.json を作り直す（ガードレール配線） | 手順 | Skill | ✅ |
 | Read の `test-report.md` を「Testing 失敗経由」と説明 | **死んでいる** | 🗑 verify-local 失敗時へ修正 | 🗑 |
 
 ### review.md

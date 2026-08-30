@@ -491,6 +491,79 @@ typecheck passed — 54 source files in Primal.Template.Web.Front/ClientApp (6.7
 | 7 | `steps[].inputs` / `optionalOutputs` / `session` / `standalone` / `defaults` / `auditPolicy` | 型はあるがエンジンが読まない | **未修正**（KI-05） |
 | 8 | **`testing` ステップ（role: cli）** | **実行手段が無いのに遷移先として宣言されていた** | **削除済み**（下記） |
 | 9 | `config/model-policy.json` | step ごとにモデルを宣言しているが、**エンジンと executor は読まない**（読むのは旧 CLI 経路のみ） | **未修正**（M4 で判断） |
+| 10 | `ac-manifest.json` / `ac-result.json` のライフサイクル | 生成は Skill 配線済み（M3）だが **archive も削除もされない**。前タスクの残骸が次タスクへ持ち越され、Codex が「監査証跡の上書き」と解釈して停止（2026-08-25 実測） | **修正済み**（2026-09-04。BL-101。archive 対象へ追加 + `discardAcArtifacts`） |
+| 11 | `consumer-presence` の `consumerChecks[].root` | **runtimeRoot 起点で解決していた**。manifest は checkRepoRoot 相対で書かれるので本番では常に「存在しない」。`report` 宣言のため halt せず、**failed（違反あり）として review へ流れていた** | **修正済み**（2026-09-04。下記） |
+
+### サブパターン: 「生成だけ配線して掃除を忘れる」（3回目）
+
+新しい成果物ファイルを足すとき、**生成側だけ配線して後始末（archive / restore-or-delete）を
+忘れる**という再発パターン。系譜 #10 で3回目:
+
+| 回 | 成果物 | 発覚と対処 |
+| --- | --- | --- |
+| 1 | `task-metadata.json` | テンプレ復元だと次タスクの file-exists が残骸で通る → `5f4d569`「archive 後に削除」 |
+| 2 | `research-findings.md` | M1 当初 archive も restore も対象外 → M1 修正で両方へ追加 |
+| 3 | `ac-manifest.json` / `ac-result.json` | archive も削除もされず、次タスクの Codex が停止（本項） |
+
+3回とも「動くこと」の確認で満足し、**タスク2周目で初めて発覚**している。
+再発防止のチェックリストは **`docs/new-artifact-checklist.md`**（BL-102・2026-09-04 新設）。
+**生成 / contract / archive / 掃除 / 分類表 / 許可リスト / パス規約 / 2周目のテスト** の8点。
+7点目（パス規約）と8点目（2周目のテスト）は 2026-09-04 追加——
+系譜 #11 が「パス基準を入力側と検査側で別々に決めた」形で、
+#4 と #10 が「1周だけ回して完了にした」形だったため。
+
+6点目（許可リスト）は 2026-08-28 追加: ac-* の生成を Skill に配線した際、
+codex-system.md の「書いてよい」リストを更新し忘れ、**Skill と codex-system の指示競合**で
+sol が実装前に停止する事象が多発した（同パターンの変種:
+生成は配線したが**書き込み許可**の更新を忘れる）。
+
+### 11 の実害 — `report` が偽陽性しか出していなかった
+
+`consumer-presence` は `ac-manifest.json` の `consumerChecks[].root` を **runtimeRoot
+（`.ai-workflow2/`）起点**で解決していた。manifest 側は checkRepoRoot 相対
+（`Primal.Template.Web.Front/ClientApp/src`）で書かれるので、**本番では必ず外れる**。
+
+宣言が `onViolation: report` だったことが発覚を遅らせた。halt していれば初回で止まったが、
+report は「違反あり」として review へ流すだけなので、**毎回同じ偽陽性が出続けても
+ワークフローは回り続けた**。
+
+Event Log の実測（`consumer-presence` の全記録）:
+
+| 状態 | 件数 | 内訳 |
+| --- | ---: | --- |
+| failed | **11** | `no implementation`（未実装期）1 / **`consumer root does not exist` 10** |
+| skipped | 21 | manifest 不在 7 / consumerChecks 宣言ゼロ 14 |
+| passed | **0** | — |
+
+偽陽性 10 件は 2026-08-20 〜 08-28、**すべて `implementation` ステップ**。
+M7 のソーク窓（08-24 以降）に限ると 8 件。
+
+⚠️ **passed が 0 件**であることが重要。この validator は一度も検査を完走しておらず、
+**真の違反を検出した実績も 0 件**。つまり
+「consumer 0 件の implemented を捕まえる」という導入目的に対する**検出力は未計測**で、
+2026-09-04 の修正後が初計測になる。件数を過去と比較しないこと。
+
+### 生き延びた理由 — テストが本番と違う土俵を作っていた
+
+`measurement-completeness.test.ts` の consumer-presence テストは、consumer root を
+**runtimeRoot 配下**（`<root>/src`）に作っていた。バグのある解決規則と一致していたので
+通り、修正すると落ちる形になっていた。**テストがバグを固定していた。**
+
+対処は 3 点:
+
+1. root 解決を `diff-scope` と同じ `resolveCheckRepoRoot()` へ寄せた（別実装を持たない）
+2. テストを checkRepoRoot 側（`makeRoot()` が返す `repoRoot`）へ移し、
+   **逆方向**（runtimeRoot 起点の相対が誤って passed にならない）も固定した
+3. checkRepoRoot を解決できないときは `failed` ではなく **`skipped`**。
+   理由文字列に `checkRepoRoot unresolved` を入れ、第1部の可視化（`aiw status --summary` /
+   Event Log）に乗せた。`report` 宣言の validator が「検査できなかった」を
+   「違反があった」と偽らない（verify-local のタイムアウトで確立した論理と同じ）
+
+さらに、manifest 自身に `pathBase`（現行の許容値は `checkRepoRoot` のみ）を書けるようにし、
+**知らない基準を名乗る manifest は検査せず skipped** にした。基準が将来変わったとき、
+古い manifest が黙って別の場所を検査して「0 件」と報告する形を塞ぐ。
+
+パス規約は入力側にも書いた（research Skill v2 / implementation Skill v3）。
 
 ### 8 の実害 — 唯一、実際に運用を止めた
 

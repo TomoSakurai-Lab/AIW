@@ -30,6 +30,19 @@ export type ValidatorRef = {
   max?: number;
   manifest?: string;
   result?: string;
+  // ⚠️⚠️ **死んでいる宣言（2026-09-04 時点）。この3つを読む関数はもう存在しない。**
+  //
+  // consumer-presence は ac-manifest.json の `consumerChecks[]` を読む方式へ移行済みで、
+  // これらを使っていた `runConsumerPresence` は削除した（同じ root 解決バグを抱えていて、
+  // 直したはずのバグが別経路で復活する形になっていたため）。
+  //
+  // ⚠️ **workflow.yaml にこれらを書いても一切効かない。**
+  // 型だけ残してあるのは、削除の影響範囲確認が c-p の root 解決修正という当時の主題から
+  // 逸れるため。**次に validator の型を触る作業で削除すること。**
+  //
+  // コメント無しで残すと `settings.contextPackage` と同じ「宣言はあるが効いていない」に
+  // なる（正しい値が入っていると「ここを変えれば効く」と誤解される）。
+  // 記録は docs/aiw-known-issues.md の KI-09 一覧。
   consumerRoot?: string;
   apiPattern?: string;
   minConsumers?: number;

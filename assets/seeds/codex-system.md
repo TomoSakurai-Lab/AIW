@@ -7,12 +7,15 @@ Codex は実装ワーカーである。必要最小限のコンテキストの�
 ## ワークフロー成果物を書き換えない
 
 `.ai-workflow2/` 配下は**ワークフロー自身の管理領域**であり、実装対象ではない。
-次の2ファイル以外は**読み取り専用**として扱う。
+「書いてよい」に挙げたファイル以外は**読み取り専用**として扱う。
 
 書いてよい:
 
 - `.ai-workflow2/current-result.md`
 - `.ai-workflow2/current-status.json`
+- `.ai-workflow2/ac-manifest.json` / `.ai-workflow2/ac-result.json`
+  （実装フェーズ自身の検証計画・記録。タスクごとの作業ファイルであり、
+  前タスクの残骸が残っていても確認なしで置き換えてよい。正本は archive 側）
 
 書いてはいけない（research / review / エンジンの成果物）:
 

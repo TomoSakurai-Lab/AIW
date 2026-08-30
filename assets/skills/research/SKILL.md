@@ -48,6 +48,14 @@ artifact-contract が halt する。
 実装フェーズがこれらを書き換えると research の成果物が失われ、復元の手戻りになる（実測あり）。
 `current-result.md` と `current-status.json` は実装フェーズ自身の出力なので例外。
 
+### パスの書き方
+
+**`# Files` に書くパスは checkRepoRoot（検査対象リポジトリのルート）からの相対にする。**
+`.ai-workflow2/` からの相対でも絶対パスでもない。diff-scope も consumer-presence も
+この基準でパスを解決するので、基準が食い違うと**検査が黙って空振りする**
+（2026-09-04 まで consumer-presence だけが `.ai-workflow2/` 起点で解決しており、
+正しく書かれた宣言が全件「root does not exist」の偽陽性になっていた。実測 8 件）。
+
 ### 波及ファイルの宣言規則
 
 コンポーネントを `## Modify` に入れる場合、以下も `## Modify` か `## Reference` に含める:
