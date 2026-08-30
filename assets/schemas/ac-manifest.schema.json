@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "緩い版（BL-113）: 必須フィールドと型のみ。enum は実害枠（pathBase）だけ。締めるのは実測後。書式の正本は skills/implementation/SKILL.md",
+  "type": "object",
+  "required": ["acceptanceCriteria"],
+  "properties": {
+    "pathBase": {
+      "enum": ["checkRepoRoot"],
+      "description": "consumerChecks[].root の解決基準の自己申告。省略時も checkRepoRoot 相対として扱う。許容値は consumer-presence が解決を実装している基準のみ（validators.ts の KNOWN_PATH_BASES とテストで機械同期）"
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "description": "minItems=1 は実害枠: 空 manifest は measurement-completeness を無言で無効化する。AC が本当に無いタスクは manifest 自体を書かない（optionalOutputs なので skipped になる）",
+      "items": {
+        "type": "object",
+        "required": ["id", "evidenceKind"],
+        "properties": {
+          "id": { "type": "string" },
+          "evidenceKind": { "type": "string" },
+          "implementationStatus": { "type": "string" },
+          "notApplicable": { "type": "boolean" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "consumerChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "root", "pattern"],
+        "properties": {
+          "id": { "type": "string" },
+          "root": { "type": "string" },
+          "pattern": { "type": "string" },
+          "minConsumers": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

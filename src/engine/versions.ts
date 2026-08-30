@@ -52,7 +52,21 @@ export type VersionInfo = {
   templateHash: string | null;
   schemaVersion: number | null;
   schemaHash: string | null;
+  /**
+   * BL-113: step の json-schema validator 宣言から動的に列挙した schema 全件。
+   * versions.schemas へ登録だけして Event Log に乗らないと「宣言はあるが効いていない」の
+   * 再生産になるため、宣言を正本に列挙する。schemaVersion/schemaHash（current-status 固定）は
+   * 既存の Event Log 消費側のため残す。
+   */
+  schemas: Array<{ schema: string; version: number | null; hash: string | null }>;
 } & SkillVersionInfo;
+
+// schemas/<name>.schema.json -> versions.schemas のキー（kebab-case -> camelCase）。
+// 例: current-status -> currentStatus / ac-manifest -> acManifest
+export function schemaVersionKey(schemaRef: string): string {
+  const base = path.basename(schemaRef).replace(/\.schema\.json$/, "");
+  return base.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
 
 function num(value: unknown): number | null {
   return typeof value === "number" ? value : null;
@@ -85,6 +99,15 @@ export function versionInfo(root: string, config: WorkflowConfig, stepId: string
     .filter((i) => existsSync(i.file))
     .map((i) => ({ name: i.name, version: i.version, hash: sha256File(i.file) }));
 
+  // BL-113: step が宣言する json-schema validator の schema を全件記録する。
+  const schemas = (step?.validators ?? [])
+    .filter((v) => v.type === "json-schema" && typeof v.schema === "string")
+    .map((v) => ({
+      schema: v.schema!,
+      version: num((versions.schemas ?? {})[schemaVersionKey(v.schema!)]),
+      hash: sha256File(path.isAbsolute(v.schema!) ? v.schema! : path.join(path.resolve(root), v.schema!))
+    }));
+
   return {
     skill: skillName,
     skillVersion: skillName ? num((versions.skills ?? {})[skillName]) : null,
@@ -96,6 +119,7 @@ export function versionInfo(root: string, config: WorkflowConfig, stepId: string
     templateVersion: tmpl ? num(versions.templates?.[tmpl[0]]) : null,
     templateHash: templateFile ? sha256File(templateFile) : null,
     schemaVersion: num(versions.schemas?.currentStatus),
-    schemaHash: sha256File(schemaFile)
+    schemaHash: sha256File(schemaFile),
+    schemas
   };
 }

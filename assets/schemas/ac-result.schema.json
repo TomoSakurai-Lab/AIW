@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "緩い版（BL-113）: 必須フィールドと型のみ。enum は実害枠（status の三値。壊れると measurement-completeness の集計が壊れる）だけ。締めるのは実測後。書式の正本は skills/implementation/SKILL.md",
+  "type": "object",
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["passed", "failed", "skipped"] },
+          "evidenceKind": { "type": "string" },
+          "value": {},
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

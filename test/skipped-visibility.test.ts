@@ -62,9 +62,11 @@ test("37: validation.completed records every validator status including skips", 
   // skipped (design 課題4), which is exactly what must stay visible rather than read as a pass.
   // diff-scope: baseline 未取得 / verify-local: このテスト設定に settings.verifyLocal が無い。
   // どちらも「検査できなかった」であって passed ではない。
+  // json-schema ×2 は BL-113 で配線した ac-manifest / ac-result。このテストは ac-* を
+  // 書かないので「optional target absent」の skipped になる（不在は違反ではなく未検査）。
   const skipped = results.filter((r) => r.status === "skipped").map((r) => r.type).sort();
-  assert.deepEqual(skipped, ["diff-scope", "verify-local"], "uncheckable validators are recorded as skipped");
-  assert.deepEqual((completed[0].skipped as string[]).sort(), ["diff-scope", "verify-local"], "and surfaced as a top-level field");
+  assert.deepEqual(skipped, ["diff-scope", "json-schema", "json-schema", "verify-local"], "uncheckable validators are recorded as skipped");
+  assert.deepEqual((completed[0].skipped as string[]).sort(), ["diff-scope", "json-schema", "json-schema", "verify-local"], "and surfaced as a top-level field");
 });
 
 // Test 38 — `report` violations and skips ride on the outcome so the CLI can print them.

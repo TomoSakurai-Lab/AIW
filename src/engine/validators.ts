@@ -105,6 +105,18 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       const target = v.target!;
       const file = abs(root, target);
       if (!existsSync(file)) {
+        // optionality の正本は step の optionalOutputs 宣言（BL-113。新しい knob は足さない）。
+        // ac-* のような任意成果物は「書かない自由」があるので、不在は違反ではなく未検査。
+        // failed にすると書かなかったタスク全部で report が出て、誰も見ない validator になる。
+        const optional =
+          ctx !== undefined &&
+          (config.steps[ctx.stepId]?.optionalOutputs ?? []).some((o) => o.path === target);
+        if (optional) {
+          return skipped(
+            `optional target absent: ${target}`,
+            `json-schema skipped: optional target absent (${target})`
+          );
+        }
         return failed(`${target} does not exist`, target);
       }
       let data: unknown;
@@ -114,7 +126,19 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
         const m = error instanceof Error ? error.message : String(error);
         return failed(`${target} is not valid JSON: ${m}`, target);
       }
-      const validate = compileSchema(resolveConfigRef(root, v.schema!));
+      const schemaPath = resolveConfigRef(root, v.schema!);
+      if (!existsSync(schemaPath)) {
+        // schema 不在（この変更より前に init した環境など）。宣言から挙動を導く（diff-scope と同じ）:
+        // report 宣言 → 「検査できなかった」を skipped で可視化 / halt 宣言 → 安全網の構成エラーなので停止。
+        // halt を skipped にすると current-status の検証が schema 1 ファイルの欠落で黙って外れる（不変条件4）。
+        return v.onViolation === "report"
+          ? skipped(
+              `schema file not found: ${v.schema}`,
+              `json-schema skipped: schema file not found (${v.schema})`
+            )
+          : failed(`schema file not found: ${v.schema}`, target);
+      }
+      const validate = compileSchema(schemaPath);
       const ok = validate(data);
       return ok
         ? passed(`${target} matches schema`, target)
@@ -215,6 +239,18 @@ function resolveConsumerBase(root: string, config: WorkflowConfig): { ok: true; 
   return resolved.ok ? { ok: true, base: resolved.repoRoot } : { ok: false, reason: resolved.reason };
 }
 
+/**
+ * consumer-presence が `consumerChecks[].root` の解決を**実装済み**の pathBase の集合（BL-113）。
+ *
+ * 許容値そのものの契約は `schemas/ac-manifest.schema.json` の enum が正本で、違反は
+ * json-schema validator の report として書き手に見える。ここは「解決コードを持っている基準」の
+ * 宣言であり、未知の基準は下の guard が検査せず skipped にする。**同じ列挙が 2 箇所にあるのは
+ * 複製ではなく別の故障モード（書き手向け契約 / 実行時安全網）を塞ぐため**で、ドリフトは
+ * テストが schema の enum とこの定数を機械照合して防ぐ（test 88 と同じ発想）。
+ * 新しい基準を足すときは、解決の実装・この定数・schema の enum を同時に変えないとテストが落ちる。
+ */
+export const KNOWN_PATH_BASES: readonly string[] = ["checkRepoRoot"];
+
 function runConsumerPresenceFromManifest(root: string, config: WorkflowConfig, v: ValidatorRef): RunOne {
   if (!v.manifest) return skipped("no manifest configured", "consumer-presence skipped: no manifest configured");
   const manifest = jsonFile(root, v.manifest) as {
@@ -234,7 +270,7 @@ function runConsumerPresenceFromManifest(root: string, config: WorkflowConfig, v
   // ⚠️ **知らない値なら検査せず skipped。** 別の基準で書かれた root を checkRepoRoot 起点で
   // 解決すると、存在しないパスを見て「consumer 0 件」と報告する——それは今回直した偽陽性
   // そのものなので、基準が変わったときは黙って走らずに止まる側へ倒す。
-  if (manifest.pathBase !== undefined && manifest.pathBase !== "checkRepoRoot") {
+  if (manifest.pathBase !== undefined && !KNOWN_PATH_BASES.includes(manifest.pathBase)) {
     return skipped(
       `unknown pathBase: ${manifest.pathBase}`,
       `consumer-presence skipped: unknown pathBase (${manifest.pathBase})`

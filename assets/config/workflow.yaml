@@ -55,6 +55,8 @@ versions:
     researchFindings: 1        # M1 で新設
   schemas:
     currentStatus: 1
+    acManifest: 1              # BL-113: 緩い版で新設。必須+型のみ、enum は実害枠（pathBase）だけ
+    acResult: 1                # BL-113: 同上（enum は status の三値のみ）
   # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
   skills:
     implementation: 3         # ac-* のライフサイクル（前タスク分の置き換え可）と consumerChecks の パス規約
@@ -147,6 +149,20 @@ artifacts:
         - "## Tests Run"
         - "## Test Results"
         - "## Deviations"
+
+  # implementation が書く計測の計画/実測（M3）。構造の契約は schema が持つ（BL-113 で配線）。
+  # 書式の説明の正本は skills/implementation/SKILL.md で、schema はそれを機械検査に写したもの。
+  ac-manifest:
+    path: ac-manifest.json
+    contract:
+      type: json-schema
+      schema: schemas/ac-manifest.schema.json
+
+  ac-result:
+    path: ac-result.json
+    contract:
+      type: json-schema
+      schema: schemas/ac-result.schema.json
 
   current-review:
     path: current-review.md
@@ -291,6 +307,9 @@ steps:
     outputs:
       - path: current-result.md
       - path: current-status.json
+    optionalOutputs:
+      - path: ac-manifest.json     # 計測の計画/実測(M3)。「書かない自由」はこの宣言が担保し、
+      - path: ac-result.json       # json-schema validator は不在を skipped にする(BL-113)
     validators:
       - type: file-exists
         onViolation: halt
@@ -299,6 +318,16 @@ steps:
         onViolation: halt
         target: current-status.json
         schema: schemas/current-status.schema.json
+      # BL-113: ac-* の構造検査。形式起因で fix ループを回さないため report。
+      # 不在は optionalOutputs 宣言から skipped になる(存在するのに壊れている時だけ report)。
+      - type: json-schema
+        onViolation: report
+        target: ac-manifest.json
+        schema: schemas/ac-manifest.schema.json
+      - type: json-schema
+        onViolation: report
+        target: ac-result.json
+        schema: schemas/ac-result.schema.json
       - type: artifact-contract
         onViolation: report        # 実装結果の構造欠落はレビューで扱う
         artifact: current-result
@@ -367,6 +396,9 @@ steps:
     outputs:
       - path: current-result.md
       - path: current-status.json
+    optionalOutputs:
+      - path: ac-manifest.json     # 実装フェーズのものを引き継ぐ(通常 fix は書き換えない)
+      - path: ac-result.json       # fix は ac-result を作り直す設計(fix Skill v3)。BL-113
     validators:
       - type: file-exists
         onViolation: halt
@@ -375,6 +407,10 @@ steps:
         onViolation: halt
         target: current-status.json
         schema: schemas/current-status.schema.json
+      - type: json-schema
+        onViolation: report        # BL-113: ac-manifest は実装フェーズのものを引き継ぐため fix では検査しない
+        target: ac-result.json
+        schema: schemas/ac-result.schema.json
       - type: diff-scope
         onViolation: halt          # Bounded Fixes: Fix の逸脱は即 halt
         declaredFilesFrom: current-review.md
