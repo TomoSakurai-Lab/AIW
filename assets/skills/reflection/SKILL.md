@@ -109,8 +109,21 @@ AI がやると二重処理になる。
 
 ### metrics
 
-`current-result.md` と `current-review.md` から**読み取れる値のみ**記入する。
+成果物から**読み取れる値のみ**記入する。各キーの出典と数える時点:
 
-- 該当セクションが存在しない場合は、そのキーを `null` にする
+| キー | 定義 |
+| --- | --- |
+| `acceptanceCriteria` | `current-result.md` の `## Acceptance Criteria Verification` の Status 三値の集計 |
+| `openDecisions` | **reflection 時点で未解決のもののみ数える。** 上の消し込みで「未解決のまま残った」に分類し `backlog.md` へ転記した件数。**実装中に解決済みになった Open Decisions は含めない。** 判別は `research-findings.md` の `# Open Decisions` と実装・review の記録（`current-result.md` / `current-review.md`）の突き合わせによる |
+| `manualVerificationRequired` | `current-result.md` の `## Manual Verification Required` の件数 |
+| `highRiskChanges` | `current-result.md` の `## Risk Areas` の件数 |
+
+`openDecisions` は research が挙げた総数**ではない**。総数は `aiw status --summary` が
+`research-findings.md` の `# Open Decisions` から数える（＝消し込み前の時点）。
+2つの値は時点が違うので一致しなくてよく、差分が「reflection で決着した件数」になる。
+
+- 該当セクションが存在しない場合は、そのキーを `null` にする。
+  `openDecisions` は `research-findings.md` に `# Open Decisions` セクションが無いとき `null`、
+  全件決着したとき `0`。**null（計測不能）と 0（全件決着）を混同しない**
 - **推測で数えない。** 読み取れないものは `null`
 - `notVerified` を 0 に丸めない。未検証は未検証として数える

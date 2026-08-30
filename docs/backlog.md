@@ -52,21 +52,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: U+FFFD 検査だけでは CP932 誤読後も valid UTF-8 になる文字化けを検出できない。壊れにくい明示リストまたはエスケープ表記と、生バイト確認の手順を定める。
 - Status: open
 
-## BL-072
-
-- Source: TASK-2026-08-14-hishou-undo-redo / reflection
-- Severity: Minor
-- Trigger: fix ステップの組み立てを次に変更するとき
-- Summary: fix 実行時に implementation Skill / prompt が渡された疑いがある。再現時は `aiw prompt fix` の組み立てを調査し、Fix Scope 制約が確実に結合されるようにする。
-- Status: open
-
 ## BL-078
 
 - Source: TASK-2026-08-18-m3-preflight / M3 前提の棚卸し
 - Severity: Minor
 - Trigger: reflection Skill を次に変更するとき
 - Summary: `task-metadata.json` の `openDecisions` は reflection 時点の未解決件数を表す、と Skill で定義する。json-schema だけでは時点の意味を固定できない。
-- Status: open
+- Status: **done**（2026-08-30。reflection Skill v2 で metrics 各キーの出典を表で明文化。`openDecisions` は「reflection 時点で未解決のもののみ。実装中に解決済みは含めない。判別は research-findings と実装・review の記録の突き合わせ」と定義。`aiw status --summary` の消し込み前の値との時点差も明記）
 
 ## BL-082
 

@@ -61,7 +61,7 @@ versions:
     fix: 3                     # M3: ac-result の作り直しを追加（v2: Verification Data の使用と検証の段階制）
     review: 2                  # Verification Data の記載要件
     improve-check: 1
-    reflection: 1
+    reflection: 2              # BL-078: metrics.openDecisions を「reflection 時点の未解決のみ」と定義
     research: 2                # パス規約（checkRepoRoot 相対）を明記
   instructions:
     coding-rules: 3            # e2e 規則を「最終検証」と「開発中の反復」で分離
