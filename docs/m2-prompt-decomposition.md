@@ -300,6 +300,18 @@ M2 世代の起点: `research v9` / 各 Skill v1 / `coding-rules v2` / `backlog-
 
 M2 レビューで確立した規約に従い、**指示の新規追加はここに由来を記録する**。
 
+### 2026-08-31: BL-113 — schema 配線に伴う機構の新規追加
+
+**動機**: ac-* schema の宙吊り解消（BL-113）。配線自体は承認済みの計画どおり。
+以下は**指示に無い新規追加**なので、規約に従い由来をここへ記録する。
+
+| 追加 | 分類 | 場所 | 動機 |
+| --- | --- | --- | --- |
+| `versionInfo()` が step の json-schema 宣言から schema を動的列挙 | 機構 | `src/engine/versions.ts` | `versions.schemas` へ登録だけして Event Log に乗らないのは「宣言はあるが効いていない」（KI-09）の再生産。宣言を正本に列挙する（current-status 固定の旧フィールドは互換で残置） |
+| json-schema validator: optionalOutputs 宣言の target 不在 → skipped | 機構 | `src/engine/validators.ts` | 任意成果物の不在を failed にすると、書かなかったタスク全部で report が出て誰も見ない validator になる。optionality の正本は optionalOutputs 宣言（knob を足さない） |
+| json-schema validator: schema ファイル不在 → report は skipped + 理由 / halt は failed | 機構 | 同上 | 旧環境（配線前 init）で throw クラッシュしていた。宣言から挙動を導く（diff-scope 課題4と同型）。halt 側を skipped にしないのは current-status の安全網を弱めないため |
+| `KNOWN_PATH_BASES` 定数 + test 124 の機械照合 | 機構 | `validators.ts` / `test/ac-schema.test.ts` | pathBase の許容値契約（schema enum）と「解決を実装している基準」のドリフト防止。同じ列挙が2箇所にあるのは複製ではなく別の故障モード（書き手向け契約 / 実行時安全網）を塞ぐため |
+
 ### 2026-08-14: fix の所要時間対策（実測 50 分 / うち e2e 反復 約 40 分）
 
 **動機**: `TASK-2026-08-14-hishou-undo-redo` の fix が 50 分かかった。

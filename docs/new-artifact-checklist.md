@@ -16,6 +16,9 @@
 - [ ] **生成**: どのステップが書くかを決め、Skill / プロンプトへ配線した
 - [ ] **contract**: `workflow.yaml` の `artifacts` に定義し、validator から参照した
       （契約の正本は workflow.yaml。Skill やプロンプトへ見出し一覧を再記述しない）
+      - JSON 成果物の schema は **`assets/schemas/` に置き、`aiw init` で配られることを
+        確認した**（2026-08-31 追加。runtime にだけ置くと新環境に存在せず、validator の
+        参照も無ければ壊れても誰も検知しない。BL-113 で ac-* の schema が宙吊りだった形）
 - [ ] **archive**: `postActions.ts` の `archiveArtifacts` の対象へ追加した
 - [ ] **掃除**: タスク終了時にどうするかを決めた
       - 「作業中の器」なら `restoreTemplates` + `templates/` に雛形を置く

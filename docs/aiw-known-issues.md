@@ -500,11 +500,12 @@ runtimeRoot 配下に作っていたので、runtimeRoot 起点で解決する�
 | 4 | `archiveArtifacts` の冪等ガード | 2タスク目以降を黙ってスキップ | **修正済み**（KI-02。過去分は復旧不能） |
 | 5 | `settings.contextPackage` | 型はあるがどの validator も読まない | **削除済み**（M1.5 第1部） |
 | 6 | `command-exit-code` validator | 宣言していた唯一のステップ(testing)が消え、参照ゼロ | **保留**（M7 で判断） |
-| 7 | `steps[].inputs` / `optionalOutputs` / `session` / `standalone` / `defaults` / `auditPolicy` | 型はあるがエンジンが読まない | **未修正**（KI-05） |
+| 7 | `steps[].inputs` / `optionalOutputs` / `session` / `standalone` / `defaults` / `auditPolicy` | 型はあるがエンジンが読まない | **一部解消**（`optionalOutputs` は BL-113 で json-schema validator が「不在なら skipped」の判定に読むようになった。他は未修正・KI-05） |
 | 8 | **`testing` ステップ（role: cli）** | **実行手段が無いのに遷移先として宣言されていた** | **削除済み**（下記） |
 | 9 | `config/model-policy.json` | step ごとにモデルを宣言しているが、**エンジンと executor は読まない**（読むのは旧 CLI 経路のみ） | **未修正**（M4 で判断） |
 | 10 | `ac-manifest.json` / `ac-result.json` のライフサイクル | 生成は Skill 配線済み（M3）だが **archive も削除もされない**。前タスクの残骸が次タスクへ持ち越され、Codex が「監査証跡の上書き」と解釈して停止（2026-08-25 実測） | **修正済み**（2026-09-04。BL-101。archive 対象へ追加 + `discardAcArtifacts`） |
 | 11 | `consumer-presence` の `consumerChecks[].root` | **runtimeRoot 起点で解決していた**。manifest は checkRepoRoot 相対で書かれるので本番では常に「存在しない」。`report` 宣言のため halt せず、**failed（違反あり）として review へ流れていた** | **修正済み**（2026-09-04。下記） |
+| 12 | `schemas/ac-manifest.schema.json` / `ac-result.schema.json` | runtime にのみ存在し、どの validator も参照せず、`aiw init` でも配られない。壊れても誰も検知しない | **修正済み**（2026-08-31。BL-113。緩い版へ差し替えて json-schema validator に配線・assets から配布。**実データ全件パスを配線の前提条件にした**） |
 
 ### サブパターン: 「生成だけ配線して掃除を忘れる」（3回目）
 
