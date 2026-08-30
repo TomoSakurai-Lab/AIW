@@ -98,3 +98,11 @@
 - Trigger: invalid status の halt メッセージを次に変更するとき
 - Summary: `current-status.json` の `result` が不正な場合、halt メッセージへそのステップの許可値を必ず列挙する。fix Skill / prompt にも許可値を明記する。
 - Status: open
+
+## BL-113
+
+- Source: 2026-09-04 のエンジン修正枠で判明（`pathBase` 追加時）
+- Severity: Minor
+- Trigger: `ac-manifest.json` / `ac-result.json` の形を次に変えるとき、または `aiw init` を新環境へ配るとき
+- Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
+- Status: open
