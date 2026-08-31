@@ -1,6 +1,7 @@
 # claude executor 設計（M4）
 
-**状態**: ドラフト（未承認）。承認後に実装スコープへ進む。
+**状態**: 2026-08-31 レビューで課題A〜G を承認（修正条件は本文へ反映済み）。
+未解決の論点は残り 2 件（末尾）。実装の開始条件は別表。
 
 **目的**: review / improve-check / reflection / research の手貼りを消す。
 プロンプトの組み立てから Claude の実行、成果物の回収までを `aiw exec` の中で完結させる。
@@ -148,7 +149,7 @@ aiw 自身は volta pin（20.19.0）があるので動くが、**SDK 案は「�
 | `--tools` から `Skill` / `Task` を外す | §5 実測（tools 集合が縮小する） | **同梱 skills を呼べなくする**。pin CLI は隔離 home でも組み込み skills 18 個・slash_commands 46 個を持つ（実測）——設定の隔離だけでは消えない点に注意 |
 | `--disable-slash-commands` | ヘルプ（「Disable all skills」） | 上と重ねる保険 |
 | `--no-session-persistence` | §2 実測 | transcript を残さない（fresh 固定と整合） |
-| env のサニタイズ | **この設計セッション自身の env に `ANTHROPIC_BASE_URL` / `CLAUDECODE` / `CLAUDE_CODE_*` が実在した**（Claude Code 配下で aiw が動く場合に必ず起きる） | executor は子プロセス env から `ANTHROPIC_*` / `CLAUDE_*` を除去してから `CLAUDE_CONFIG_DIR` を設定する。**親セッションの認証・接続先が子へ漏れる経路を塞ぐ** |
+| env のサニタイズ | **この設計セッション自身の env に `ANTHROPIC_BASE_URL` / `CLAUDECODE` / `CLAUDE_CODE_*` が実在した**（Claude Code 配下で aiw が動く場合に必ず起きる） | executor は子プロセス env を**許可リスト方式**（渡す変数を列挙）で構築し、そこへ `CLAUDE_CONFIG_DIR` を足す。**親セッションの認証・接続先が子へ漏れる経路を塞ぐ**（拒否リストでは知らない変数名を塞げない） |
 | `--bare` | ヘルプ（CLAUDE.md 自動探索・hooks・plugins・keychain をすべて省く最小モード） | **採らない**。認証が `ANTHROPIC_API_KEY` 限定になり（OAuth を読まない）、隔離 home での subscription login と両立しない |
 
 ## 7. モデル・構造化出力ほか（フラグ面）
@@ -223,6 +224,16 @@ codex A-3 の決定をそのまま写す:
 | バックアップリポ | `.gitignore` へ理由付きで追加: `# 認証情報を含みうるため。バックアップ対象は知識であり credentials ではない。` `/.claude-home/` |
 | 不在時 | executor は隔離 home が無ければ **permanent で起動拒否**し、login 手順を案内（codex と同文型） |
 
+### A-3. pin の運用（2026-08-31 承認で追加）
+
+- **pin を上げるときは、フラグ面の再実測を工程に含める**（M3 §4 と同じ規律）。
+  更新速度が codex の倍（1.1 日/回）なので、pin 更新の間隔が空くほど flag 面の差は溜まる。
+  再実測の対象は最低限: `--tools` の縮小挙動 / `--setting-sources ""` / `--permission-mode` の
+  選択肢 / stream-json のイベント形 / `--no-session-persistence`
+- Volta の罠（§1）は**環境固有の知識**なので `instructions/local-environment.md` へ記載する
+  （本設計セッションで実施済み。CLI は exe なので踏まないが、この環境で node スクリプトを
+  volta pin の外で動かす作業全般に効く）
+
 ## 課題B: review の修正権限を機構で強制する ← 本丸
 
 clipboard 時代「review はコードを修正しない」は人間の規律だった。executor 化で機構に変える。
@@ -253,20 +264,27 @@ clipboard 時代「review はコードを修正しない」は人間の規律だ
 ```text
 Bash(git diff:*)  Bash(git status:*)  Bash(git log:*)  Bash(git show:*)
 Bash(dotnet build:*)                          # --artifacts-path artifacts/e2e 前提(local-environment)
+Bash(dotnet run:*)                            # e2e 用 backend の事前起動(--no-build)
 Bash(./tools/nrun.cmd:*)                      # build / test / test:e2e
 Bash(curl:*)                                  # readiness 確認
 Bash(od -c:*)  Bash(certutil -dump:*)         # BL-071: 生バイト検査(候補。確定は実装時)
 ```
 
-⚠️ **未解決の実測課題**: local-environment の E2E 手順は `Start-Job` を含む複合 PowerShell
-1ブロックで、**プレフィックスパターンの許可リストに収まらない**。選択肢:
+**E2E は「実行は許可、spec の作成は禁止」**（2026-08-31 承認）。
+review の価値の実例（行高 27px→138px の実測）は E2E 実行から来ているため実行は許す。
+一方「一時 spec を書いて測る」は Write を伴うので②（Write/Edit の runtimeRoot 限定）が禁じる。
+**review が独自の計測コードを必要とする状況は、書いて測るのではなく
+NOT VERIFIED か Manual Verification Required として記録する**——Reviewer が Builder になる
+経路を塞ぐのが本質。この規律は review Skill へ追記する（実装スコープ段階1-3）。
+`dotnet build --artifacts-path` のような成果物書き込みは、出力先が ignore 済みなら
+diff-scope が黙認し、そうでなければ report が出る——そのままでよい。
 
-- (a) E2E 実行を review の許可から**外す**（review は結果検証を current-result.md の証拠と
-  git-diff で行い、E2E の再実行はしない）。**傾き: これ**。review の実測13分の内訳に
-  E2E 再実行が常在するわけではなく、必要なら fix-required にして fix（codex 側・実行権あり）へ回せる
-- (b) 複合ブロックを許すパターン（`Bash(powershell:*)` 等）を足す——**広すぎて第1網が骨抜きになる**ので却下
-- (c) E2E 実行を `aiw` 側のヘルパースクリプト（固定パス・読み取り専用引数）に切り出し、
-  そのパス1つを許可する——実装が増える。要件が実証されてから
+⚠️ **複合コマンドの実測課題**: local-environment の backend 事前起動手順は `Start-Job` を含む
+複合 PowerShell 1ブロックで、プレフィックスパターンに収まらない可能性が高い。
+`Bash(powershell:*)` のような広い許可は第1網を骨抜きにするので**却下**。進め方:
+初版は上の列挙で出し、**拒否は `permission_denials` で観測できる**ので、実運用で複合ブロックが
+拒否されたらヘルパースクリプト化（固定パス1つを許可）を導入する。
+「動かして分かる」が拒否の可視化によって成立している。
 
 **BL-071 はここで消化する**（Trigger「文字化け検査コマンドを review に追加するとき」が発火）。
 許可リストに生バイト検査コマンドを含め、手順は review Skill 側へ足す（契約の正本は workflow.yaml、
@@ -292,18 +310,25 @@ review ステップへ `diff-scope` を宣言する:
 第1網は executor 経路にしか効かない。不変条件5（clipboard へ戻せる）を維持する以上、
 **戻した先にも網が要る**——これは複製ではない。
 
-⚠️ **盲点を明記する**: baseline は implementation 開始時に取られ、**取り直さない**
-（不変条件4）。したがって review 時点の検査は「baseline → 現在」の差分を
-`context-package.md` の Modify 宣言と突き合わせる形になり、
-**implementation が正当に変更したファイルを review がさらに触っても検出できない**。
-宣言外のファイルへの変更だけが検出対象になる。第1網が主、第2網は補助。
+**baseline の挙動**（`completion.ts` の実装から確認・2026-08-31 レビューで初版の誤りを訂正）:
+capture のトリガーは「**遷移先 step が diff-scope を宣言していれば遷移確定時に
+`captureIfAbsent({step, fixAttempts})`**」というエンジン規則であり、キーは `(step, fixAttempts)`。
+review に宣言を足せば **implementation→review の遷移確定時に baseline が取り直され、
+review 中の変更だけが違反として観測される**。implementation の正当な変更は review の
+baseline に吸収されるため、誤帰属は起きない。同一 `(step, fixAttempts)` では取り直さないので、
+承認 reject→rerun の窓では初回 review の変更が rerun でも違反として持続する（意図どおり）。
 
-`onViolation` を **report** にする理由: halt にすると、implementation 自身の宣言外変更
-（implementation では report で通した逸脱）が review の段で halt に化け、
-**責任の帰属が狂う**（review が悪いように見える）。report なら
-scope-violation-report.md と同じ経路で人間の目（承認ゲート③）に届く。
-非対称の原則（implementation=report / fix=halt）に第3項を足す形:
-**review=report（自分の変更とは限らないため）**。
+⚠️ **残る盲点は1つだけ、明記する**: `declaredFilesFrom` は省略しても
+`context-package.md` に既定される（`validators.ts`）ため、review の検査でも
+**Modify 宣言済みファイルへの変更だけは違反にならない**。「宣言ゼロ」扱いにするには
+validator の変更が要り、前提3（validator は1つも変更しない）で禁止。
+review が最も触りたくなるのは正に Modify 集合内のファイルなので、
+**この穴は第1網（ツール制限）が塞ぐ**。第1網が主、第2網は補助という関係はここから来る。
+
+`onViolation` を **report** にする理由: review 中の変更が review 自身の仕業とは限らない
+（開発機では人間の VS・並走ビルドがファイルを触りうる）。halt にすると人間の並走作業が
+無人運転を止める。report なら scope-violation-report.md と同じ経路で
+人間の目（承認ゲート③）に届き、そこで帰属を判断できる。
 
 ### 拒否を成果物に残す（黙って失敗しない）
 
@@ -334,17 +359,18 @@ scope-violation-report.md と同じ経路で人間の目（承認ゲート③）
 （案: reflection 完了後、`.ai-workflow2` バックアップリポの `git diff --stat` + 知識ファイル差分を
 表示する postAction 相当の表示。バックアップリポは列挙式 .gitignore なので diff が取れる）。
 
-### research の論点（判断を委ねる）
+### research の扱い ← **含める。ただし段階3、かつ条件付き**（2026-08-31 承認）
 
 clipboard 運用の research は「人間が対話AIと検討しながら作る」ステップで、
 実測139分の大半は人間の検討時間だった。executor 化は**この対話を消す**。
 ux-decision-required で止めて人間が Open Decisions に書き込み再実行、という既存ループが
 対話の代替になるが、往復の粒度は粗くなる。
 
-- 推奨: **M4 スコープには含めるが最後**。drive の y/n（前提4）で従来運用へいつでも逃げられる形にし、
+- **improve-check と review が安定してから**着手する（段階3）
+- **着手条件**: halt 系遷移（`ux-decision-required` と、invalid-status を含む停止経路）が
+  「成果物ファイルを書いて止まる」ことを**故障注入で確認済み**であること
+- drive の y/n（前提4）で従来運用へいつでも逃げられる形にし、
   数タスク並行運用で「検討の質が落ちるか」を見てから既定を切り替える
-- 対案: research は clipboard のまま M4 を閉じる（手貼り消滅の対象から外す）——これも正当。
-  ⚠️ どちらにするかは承認時に決める
 
 ## 課題D: プロンプト組み立てと「暗黙の入力」の遮断
 
@@ -355,18 +381,25 @@ ux-decision-required で止めて人間が Open Decisions に書き込み再実�
 - system prompt は Claude Code の**既定 preset のまま**にする。
   既定 preset は pin（2.1.251）で固定され、版を上げない限り変わらない——再現性は pin が担保する。
   内容も汎用の動作指針であり、Artifact Contract の再記述にはあたらない
-- `--system-prompt` で instructions 部分を system 側へ移す案（m3-design-inputs §2 案(a)）は**採らない**:
-  - キャッシュ利得が薄い。codex 実測 93.9% は「全 assembly を user message で渡す」構造で出た値で、
-    キャッシュは1実行内の往復（ツールコールごとの再送）で効いている。分割で改善する余地は小さい
-  - custom system prompt にすると既定 preset のツール利用指針が消え、挙動の変化がモデル起因か
-    prompt 起因か切り分けられなくなる（世代比較の交絡を増やす）
-  - 判断材料が変わったら（cacheRead 比が悪化したら）そのとき再評価する
+- `--system-prompt` / `--append-system-prompt` で instructions 部分を system 側へ移す案
+  （m3-design-inputs §2 案(a)）は**段階1では採らない。ただしこれは選好ではなく
+  再検討条件付きの決定**（M3 C1 と同じ扱い・2026-08-31 承認）:
+  - 期待: codex 実測 93.9% は「全 assembly を user message で渡す」構造で出た値で、
+    キャッシュは1実行内の往復（ツールコールごとの再送）で効いている。同構造なら Claude でも効くはず
+  - **再検討条件: 認証後スモーク + 実タスク数本で `cacheRead / input` を実測し、
+    中央値が 80% を下回ったら `--append-system-prompt` 分割（安定プレフィックスを system 側へ）を
+    測って比較する**。80% は M3 の resume 再検討条件と同じ線
+  - 分割するとしても `--system-prompt`（既定 preset の全置換）ではなく `--append-system-prompt` を使う。
+    既定 preset のツール利用指針を消すと、挙動の変化がモデル起因か prompt 起因か
+    切り分けられなくなる（世代比較の交絡を増やす）
 
 ### 遮断セット（§6 の実測に基づく確定案）
 
 ```text
 CLAUDE_CONFIG_DIR=<隔離 home>          # ユーザー設定・skills・hooks・認証の分離
-env から ANTHROPIC_* / CLAUDE_* を除去   # 親セッション(Claude Code 配下で aiw が動く場合)の漏れ止め
+env は許可リスト方式で構築               # 渡す変数を列挙する(PATH / SystemRoot / TEMP 等の最小集合 +
+                                        # CLAUDE_CONFIG_DIR)。拒否リスト(ANTHROPIC_*/CLAUDE_* を除去)に
+                                        # しない——知らない変数名の漏れは拒否リストでは塞げない
 --setting-sources ""                    # プロジェクト CLAUDE.md(.claude/CLAUDE.md)・settings.json の遮断
 --strict-mcp-config                     # .mcp.json 等の MCP 混入遮断
 --tools <ステップ別集合>                 # Skill / Task を含めない = 同梱 skills も呼べない
@@ -414,12 +447,21 @@ env から ANTHROPIC_* / CLAUDE_* を除去   # 親セッション(Claude Code �
    一度も実行を制御したことがなく、モデル名も alias のまま）
 2. 実行を制御する宣言の正本は `workflow.yaml`（settings / step）という原則が既にある。
    同じ情報を別ファイルに持つと KI-01 型（同名で中身が違う）の変種になる
-3. フェーズ別モデルが現実の要件になったら、`workflow.yaml` の step 宣言
-   （例: `steps.review.model`）として設計し直す。その時はモデル比較実験の設計とセット
-   （M3 決定ログ 2026-08-19 の見送り理由をそのまま引き継ぐ）
+3. **ただし model-policy の「意図」（ステップ別モデル）は settings 側へ生き残らせる**
+   （2026-08-31 承認: 「廃止」ではなく「正本を1箇所に統合する」が正確な表現。
+   review と research で同じモデルとは限らない）
 
-M4 段階1は `settings.claudeModel` の**1モデル固定**だけを入れる（codex と同じ形）。
-旧 CLI 経路 3 箇所の参照も同コミットで整理し、known-issues の系譜 #9 を「解消」へ更新する。
+統合後の形:
+
+- `settings.claudeModel` — Claude 側ステップの既定モデル（codex の `codexModel` と対）
+- `steps.<id>.model` — ステップ別の上書き（`WorkflowStep.model` を型に追加）。
+  **claude executor が `step.model ?? settings.claudeModel` で読む配線を同一コミットで入れる**
+  （KI-05「型はあるがエンジンが参照しない」を新造しないため。テストも同コミット）
+- codex 側は `settings.codexModel` のまま（前提「codex.ts の変更はしない」）。
+  この非対称は M4.4 の比較表の1行になる
+
+旧 CLI 経路 3 箇所の model-policy 参照も同コミットで整理し、
+known-issues の系譜 #9 を「解消」へ更新する。
 
 ## 課題F: 失敗の分類とタイムアウト
 
@@ -439,9 +481,11 @@ M4 段階1は `settings.claudeModel` の**1モデル固定**だけを入れる�
 
 - **タイムアウト**: フラグが無いので executor のタイマーで `SIGTERM`。
   KI-08 の二重判定を同形で: `timedOut = timedOutFlag || signal !== null || durationMs >= timeoutMs`
-- **既定値の提案: 40 分**（`CLAUDE_DEFAULT_TIMEOUT_MS`）。根拠: review の実測中央値 13 分
-  （監査項目追加後）の 3 倍。codex の「実測中央値 × 3 弱」と同じ決め方。
-  `settings.claudeTimeoutMs` / `req.timeoutMs` で上書き可
+- **既定値: 40 分**（`CLAUDE_DEFAULT_TIMEOUT_MS`。2026-08-31 承認）。根拠: review の
+  実測中央値 13 分（監査項目追加後）の 3 倍。codex の「実測中央値 × 3 弱」と同じ決め方
+- **ステップ別に上書き可にする**（承認時の条件）: research は AI 部分の所要が未実測のため。
+  優先順は `req.timeoutMs` > `steps.<id>.timeoutMs`（`WorkflowStep.timeoutMs` を型に追加・
+  課題E の `model` と同じく**配線とテストを同一コミット**で） > `settings.claudeTimeoutMs` > 既定 40 分
 
 ## 課題G: 承認ゲートと halt 遷移
 
@@ -557,7 +601,7 @@ spawn(<pin した claude.exe の絶対パス>, [
   ...(addDir ? ["--add-dir", runtimeRoot] : [])
 ], {
   cwd: <checkRepoRoot>,
-  env: { ...(ANTHROPIC_*/CLAUDE_* を除去した process.env), CLAUDE_CONFIG_DIR: <隔離 home> },
+  env: { ...(許可リスト方式で列挙した最小 env), CLAUDE_CONFIG_DIR: <隔離 home> },
   shell: false,             // KI-08
 })
 // プロンプトは assembleStepPrompt の出力そのものを stdin へ（足さない・削らない・分割しない）
@@ -588,11 +632,15 @@ spawn(<pin した claude.exe の絶対パス>, [
 ## 段階1-3: review（本丸）
 
 - review の許可セット + diff-scope 宣言（workflow.yaml 両側）+ BL-071 / BL-114
+- review Skill へ追記: 「計測コードが必要なら書いて測らず NOT VERIFIED /
+  Manual Verification Required として記録する」（E2E 決定の規律）
 - review-audit の model-change 最小実装（課題G）
 - 故障注入 1 / 2 / 6 / 7 / 10
 
 ## 段階1-4: research + 世代記録
 
+- **着手条件**: 段階1-3 までが安定し、halt 系遷移が「成果物を書いて止まる」ことを
+  故障注入で確認済みであること（課題C の承認条件）
 - research の許可セットと並行運用開始。baseline へ M4 世代を記録（課題H）
 
 ---
@@ -606,8 +654,8 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 1 | `npm test` が全件 green | 実装着手時に確認 |
 | 2 | pin 済み（`@anthropic-ai/claude-code@2.1.251` が devDependency・--save-exact） | 未（probe はスクラッチパッドの使い捨て環境で実施。**本体へはまだ入れていない**） |
 | 3 | フラグ実測済み（pin した版で） | ✅ 本文書「調査結果」（2026-08-31・2.1.251） |
-| 4 | この設計文書が承認されている | **未**（ドラフト） |
-| 5 | 故障注入リスト（課題K・10件）が合意されている | 未 |
+| 4 | この設計文書が承認されている | **課題A〜G 承認済み**（2026-08-31・修正反映済み）。未解決 2 件（claudeModel の値 / BL-071 コマンド）は実装中に決めてよい扱い |
+| 5 | 故障注入リスト（課題K・10件）が合意されている | 未（承認レビューでは個別言及なし。着手前に確認） |
 | 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | 未 |
 | 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | 未（probe 環境は作成済み） |
 | 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB） |
@@ -621,23 +669,26 @@ spawn(<pin した claude.exe の絶対パス>, [
 
 | 日付 | 論点 | 決定 | 根拠 |
 | --- | --- | --- | --- |
-| 2026-08-31 | 実行手段 | **CLI（`claude -p` + stream-json）**。SDK は不採用（再評価条件: canUseTool 等の動的判定が要件化したとき） | 課題A の比較表。pin 1層・Node 非依存・codex と同型・ツール制限の強制力は同等（実測） |
-| 2026-08-31 | プロンプトの受け渡し | **stdin**。分割せず全 assembly を user message として渡す。system prompt は既定 preset | §4 実測 / 課題D |
-| 2026-08-31 | 隔離 | **`CLAUDE_CONFIG_DIR=.ai-workflow2/.claude-home`** + `--setting-sources ""` + env サニタイズ | §2 / §6 実測。codex A-3 の適用 |
+| 2026-08-31 | 実行手段 | **CLI（`claude -p` + stream-json）**。SDK は不採用（再評価条件: canUseTool 等の動的判定が要件化したとき）。**承認済み** | 課題A の比較表。pin 1層 vs SDK は同梱バイナリ + Node 版の2層（Volta 罠実測）。pin 更新時はフラグ再実測を工程に含める（A-3） |
+| 2026-08-31 | 三層防御（課題B） | **承認済み**。①`--tools` 縮小 ②`dontAsk`+許可リスト ③diff-scope **report**。baseline は review 入場時に取り直される（エンジン規則）。残る盲点は Modify 宣言済みファイルのみで第1網が塞ぐ | 課題B。BL-113 手順3の「別の故障モード」論理 |
+| 2026-08-31 | E2E の権限 | **実行は許可、spec の作成は禁止**。計測コードが要る状況は NOT VERIFIED / Manual Verification Required として記録（review Skill へ追記） | Reviewer が Builder になる経路を塞ぐ。行高実測の価値は E2E 実行由来 |
+| 2026-08-31 | 順序 | **improve-check → review → research（段階3・条件付き）**。research の着手条件は「halt 系遷移が成果物を書いて止まることの故障注入確認済み」。**承認済み** | 課題C |
+| 2026-08-31 | **reflection は M4 では自動化しない**（実装しない判断） | clipboard のまま。**再検討条件: M5 の無人ループで必要になったとき、知識ファイル差分を人間に見せる仕組み（バックアップリポの diff 提示）とセットでのみ入れる** | 承認ゲートが無い唯一の Claude ステップ。知識汚染のリスクに対し利得 6分/タスク |
+| 2026-08-31 | プロンプトの受け渡し | **stdin**。分割せず全 assembly を user message として渡す。system prompt は既定 preset。**再検討条件付き: 実測で `cacheRead / input` 中央値 < 80% なら `--append-system-prompt` 分割を測って比較する**（M3 C1 と同じ扱い） | §4 実測 / 課題D |
+| 2026-08-31 | 隔離 | **`CLAUDE_CONFIG_DIR=.ai-workflow2/.claude-home`** + `--setting-sources ""` + **env は許可リスト方式**（拒否リストにしない） | §2 / §6 実測。codex A-3 の適用 |
+| 2026-08-31 | session の永続化 | **`--no-session-persistence` を既定にする** | fresh 固定と整合、かつ**生 session ID の露出経路を1つ消す**（transcript ファイル名）。JSONL は runs/ に tee するので隔離 home の transcript は冗長。grep テストの対象も減る |
+| 2026-08-31 | model-policy.json | **正本を settings へ統合**（`settings.claudeModel` + `steps.<id>.model`、配線とテスト同一コミット）。model-policy.json は削除 | 課題E。KI-09 系譜 #9 の解消 |
+| 2026-08-31 | タイムアウト | **既定 40 分 + ステップ別上書き**（`steps.<id>.timeoutMs`） | review 実測 13 分 × 3。codex（17 分→30 分）と整合。research は未実測のため上書き口が要る |
+| 2026-08-31 | review-audit の model-change トリガー | **最小実装する**（前回 review の executor / model と比較して提案表示 + Event Log 記録）。**承認済み** | 課題G。「発火しない宣言」の解消。M4 世代の交絡を測る唯一の手段 |
 
 ---
 
 # 未解決の論点（判断を委ねる）
 
 ⚠️ **決めたらこの表から決定ログへ移す。**
+（2026-08-31 の承認レビューで 8 件中 6 件が決着し決定ログへ移した。残り 2 件。）
 
 | # | 論点 | 選択肢 | 私の傾き |
 | --- | --- | --- | --- |
-| 1 | research を M4 の executor 化に含めるか | 含める（最後・並行運用） / clipboard のまま | **含めるが最後**。対話性の喪失は drive の y/n で逃げ道を残して観察する（課題C） |
-| 2 | reflection を自動化しない判断の確定 | しない / 差分提示機構とセットで入れる | **しない**（M4 では）。再検討は M5 で差分提示とセット |
-| 3 | review の E2E 実行権限 | 外す / ヘルパースクリプト化して1パスだけ許す | **外す**。必要が実証されたら (c) 案（課題B） |
-| 4 | タイムアウト既定値 | 40 分（review 実測 13 分 × 3）/ 他 | **40 分** |
-| 5 | `settings.claudeModel` の pin 値 | `claude-sonnet-5` / `claude-opus-5` / 未指定 | 値の決定は人間に委ねる。ただし codex と違い**未指定でも modelObserved は残る**ため、「事後に分からない」事故は起きない |
-| 6 | review-audit model-change トリガー | 最小実装 / `alsoSuggestOn` から削除 | **最小実装**（課題G。M4 世代の交絡を測る唯一の手段） |
-| 7 | diff-scope 第2網の `onViolation` | report / halt | **report**（責任の帰属が狂う halt を避ける。課題B） |
-| 8 | BL-071 の具体コマンド | `od -c` / `certutil -dump` / PowerShell `Format-Hex` | 実装時に1つへ確定し、review Skill へ手順を書く |
+| 1 | `settings.claudeModel` の pin 値 | `claude-sonnet-5` / `claude-opus-5` / 未指定 | 値の決定は人間に委ねる。ただし codex と違い**未指定でも modelObserved は残る**ため、「事後に分からない」事故は起きない |
+| 2 | BL-071 の具体コマンド | `od -c` / `certutil -dump` / PowerShell `Format-Hex` | 実装時に1つへ確定し、review Skill へ手順を書く |
