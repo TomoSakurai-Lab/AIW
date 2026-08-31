@@ -237,7 +237,21 @@ marker 入り `CLAUDE.md`（「読んだら XYZZY-M4 を返せ」）を置いた
 codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude でも成立する**。
 成功判定に exit code を使わない規律はそのまま適用する。
 
-### 9-3. modelObserved は**複数値**になる
+### 9-3. ファイル単位の列挙と 0 バイトファイル ← **設計の締めに使った2つの実測**
+
+`Edit` の許可を **`**` ではなく完全パス1本**にして測った:
+
+| 確認 | 結果 |
+| --- | --- |
+| `Edit(//c/…/.ai-workflow2/stub.md)` で `stub.md` を編集 | **許可** |
+| 同じディレクトリの `marker.txt` を編集 | **拒否**（`permission_denials` に記録） |
+| **0 バイトの `stub.md` を Edit で埋められるか** | **埋められた**（0 → 18 bytes・指定どおりの2行） |
+
+**帰結**: 許可はディレクトリ単位である必要がなく、**成果物ファイルの列挙で足りる**。
+かつ **0 バイトのスタブを置けば Edit の「存在」要求を満たせる**ので、
+テンプレートの内容設計に依存せずに Edit-only を成立させられる（課題B の欠落ケースの解）。
+
+### 9-4. modelObserved は**複数値**になる
 
 全実行で `modelUsage` のキーが **`claude-opus-5` と `claude-haiku-4-5-20251001` の2つ**だった
 （補助モデルが併用される）。`modelObserved` は単一値ではなく**キーの配列**として記録する。
@@ -318,40 +332,71 @@ clipboard 時代「review はコードを修正しない」は人間の規律だ
 
 ### ステップ別の許可セット（提案）
 
-⚠️ **§9-2 の実測により初版から変更**: `Write` は**パス制限が効かない**ため
-**`--tools` から外す**。成果物の書き込みは `Edit` で行う（対象ファイルは
-restoreTemplates / 前ステップの出力として**既に存在する**）。
+⚠️ **§9-2 / §9-3 の実測により初版から2度変更**:
+`Write` は**パス制限が効かないので `--tools` から完全に外す**（許可ルール無しで残すのではなく、
+**ツールとして渡さない**——監視できないツールの存在自体が穴になる）。
+書き込みは `Edit` で行い、**許可はディレクトリではなく成果物ファイルの列挙**にする
+（`runtimeRoot/**` だと `state.json` / `runs/` / `config/workflow.yaml` / `skills/` まで
+編集できてしまい、**エージェントがハーネス自身を書き換えられる**。最小権限から外れる）。
 
-| ステップ | `--tools` | `--allowedTools`（要旨） | 書ける場所 |
+| ステップ | `--tools` | `--allowedTools` の Edit 対象（列挙） | Bash |
 | --- | --- | --- | --- |
-| **review** | `Read,Grep,Glob,Bash,Edit`（**Write なし**） | `Read` / `Grep` / `Glob` 無条件。`Edit(<POSIX runtimeRoot>/**)`。`Bash` は下の列挙のみ | **runtimeRoot のみ**（current-review.md / current-status.json） |
-| **improve-check** | `Read,Grep,Glob,Bash,Edit` | 同上 + `Bash` は git 読み取り系のみ | runtimeRoot のみ（current-status.json） |
-| **reflection**（M4 では自動化しない） | `Read,Grep,Glob,Edit`（**Bash / Write なし**） | `Edit(<POSIX runtimeRoot>/**)` | runtimeRoot のみ。⚠️ ただし `task-metadata.json` は postAction が**削除**するため Edit 対象が存在しない——自動化する際は下記の欠落問題を解く必要がある |
-| **research** | `Read,Grep,Glob,Bash,Edit` | `Edit` は runtimeRoot 限定。`Bash` は git 読み取り系 + 計測系（review と同じ列挙から必要分） | runtimeRoot のみ（成果物4点） |
+| **review** | `Read,Grep,Glob,Bash,Edit` | `current-review.md` / `current-status.json` の**2本のみ** | 下の列挙のみ |
+| **improve-check** | `Read,Grep,Glob,Bash,Edit` | `current-status.json` の**1本のみ** | git 読み取り系のみ |
+| **research** | `Read,Grep,Glob,Bash,Edit` | `context-package.md` / `codex-prompt.md` / `research-findings.md` / `current-status.json` の4本 | git 読み取り系 + 計測系 |
+| **reflection**（M4 では自動化しない） | `Read,Grep,Glob,Edit`（**Bash なし**） | `context.md` / `learnings.md` / `backlog.md` / `task-metadata.json` / `current-status.json`（+ `research/` は唯一グロブが要る） | — |
 
-パターンは **executor が解決済み絶対パスを POSIX へ正規化して**組み立てる
-（`C:\…` → `//c/…`。相対だと cwd 依存になり、cwd は checkRepoRoot なので runtimeRoot と一致しない）。
+- `Read` / `Grep` / `Glob` は無条件（読み取りは制限しない）
+- パスは **executor が解決済み絶対パスを POSIX へ正規化して**組み立てる
+  （`C:\…` → `//c/…`。相対だと cwd 依存になり、cwd は checkRepoRoot なので runtimeRoot と一致しない）
+- **列挙の出どころは `workflow.yaml` の `steps.<id>.outputs`**。executor が読んで組み立てるので、
+  許可リストを別に手書きしない（契約の二重管理を作らない・F-3 と同じ論理）。
+  `optionalOutputs` も含める（ac-* は codex 側なので実質 Claude 側では効かないが、規則を分けない）
 
-### ⚠️ Edit-only の前提と、その欠落ケース
+### Edit-only の「存在」要求 ← **0 バイトスタブで解く**（2026-08-31 確定）
 
-Edit は**対象ファイルが存在すること**を要求する。ステップごとの成立状況:
+Edit は対象ファイルの存在を要求する。ステップごとの成立状況:
 
 | ステップ | 出力 | 存在源 | 成立 |
 | --- | --- | --- | --- |
 | review | current-review.md | restoreTemplates | ✅ |
 | review / improve-check / research | current-status.json | 前ステップの出力が残る（improve-check Skill が「step を書き直せ」と言うのはこのため） | ✅ |
 | research | research-findings.md | restoreTemplates | ✅ |
-| research | **context-package.md / codex-prompt.md** | **restoreTemplates の対象外**。前タスクの成果物が残っていれば存在するが、**`aiw init` 直後の新環境には無い** | ⚠️ **未解決** |
+| research | **context-package.md / codex-prompt.md** | restoreTemplates の対象外。前タスクの残骸があれば存在するが、**`aiw init` 直後の新環境には無い** | ⚠️ 要対処 |
 | reflection | **task-metadata.json** | `discardTaskMetadata` が毎回削除する（意図的） | ⚠️ 自動化時に要対処 |
 
-未解決分の選択肢（**research を切り替える段階3 までに決める**。今は決めない）:
+**採用: 遷移確定時にエンジンが 0 バイトのスタブを作る**（`captureIfAbsent` と同じフック位置・
+同じ「無ければ作る」形）。Edit が要求する**存在はエンジンが保証**し、**中身の検証は
+contract / token-range が担う**という分担にする。
 
-- (a) `templates/` に context-package.md / codex-prompt.md を足し restoreTemplates の対象にする。
-  ⚠️ 「空テンプレが file-exists を素通りする」罠（`discardTaskMetadata` のコメント）に注意——
-  ただしこの2つは **token-range(min 250) と artifact-contract** が既に掛かっているので、
-  空や骨格のままでは通らない。validator の変更にはあたらない（前提3を破らない）
-- (b) research だけ `Write` を許す（第1網が research でのみ緩む）
-- (c) executor が起動前に空ファイルを作る ——**却下**。file-exists を素通りさせる典型例
+**却下した案: `templates/` へ追加して restoreTemplates に載せる。**
+理由は**実測で穴が見つかったから**——`artifact-contract` は `checkMarkdownSections` で
+**見出しの存在しか見ない**（`validators.ts`）。したがって必須見出しを備えたテンプレートは
+**契約を自力で満たす**。`codex-prompt.md` には `token-range` が無い（掛かっているのは
+`context-package.md` だけ）ので、**書かれなくても通ってしまう**。
+これは `task-metadata.json` で踏んだ形そのもの（`discardTaskMetadata` のコメントが警告している罠）。
+
+0 バイトが優れている点:
+
+| 観点 | 0 バイトスタブ | テンプレート復元 |
+| --- | --- | --- |
+| `file-exists` | 通る（どちらも同じ。**存在を作る以上これは避けられない**） | 通る |
+| `artifact-contract` | **落ちる**（見出しゼロ）→ halt | **通ってしまう**（見出しを含むため） |
+| `json-schema`（current-status.json 等） | **落ちる**（パース不能）→ halt | 内容次第 |
+| テンプレート内容への依存 | **無い** | ある（見出しを足すと穴が開く） |
+
+⚠️ **「素通り」が構造的に起きないのが要点。** どちらの案も file-exists は通してしまうが、
+0 バイトは**直後の contract で必ず止まる**。安全網が1枚減るのではなく、**担当が移る**。
+
+実装メモ:
+
+- 置き場所は `completion.ts` の遷移確定時（`captureBaselineFor` の隣）。**postActions には入れない**
+  （resume で再実行されうる。baseline と同じ理由）
+- **「無ければ作る」だけ**（`captureIfAbsent` と同型）。既存ファイルは絶対に上書きしない——
+  reject → rerun で書き上げた成果物を消さないため
+- 対象は**遷移先 step の `outputs` のうち存在しないもの**。宣言から導くので手書きリストを持たない
+- ⚠️ **`executor` は関与しない**。「executor は成果物を検証しない / 用意しない」を保つ
+- Event Log に `stub.created`（作ったファイル名）を残す。黙って作らない
 
 ### review の Bash 許可リスト（列挙の初版）
 
@@ -688,6 +733,7 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 | session の型分離と redact | | | | | | | |
 | failureKind の導出 | | | | | | | |
 | ツール制限の宣言（claude のみ？） | | | | | | | |
+| **失敗モード「正常終了だが作業なし」** | exit 0（read-only 拒否の実測） | `is_error: false` / exit 0（permission 拒否の実測） | ✅ **共通** | — | — | — | **抽象化ではなく規律として共通**: 成功判定に exit code を使わない。両 executor で必要だと実測で確定した（2026-08-31） |
 
 ⚠️ 先取りの注意: イベントの**語彙**は既に非対称（codex: `thread.started` / `item.*` /
 `turn.completed`、claude: `system:init` / `assistant` / `result`）。「意味ベースの共通イベント型」は
@@ -800,7 +846,7 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2 | pin 済み（`@anthropic-ai/claude-code@2.1.251` が devDependency・--save-exact） | ✅ 済（2026-08-31。人間が実施） |
 | 3 | フラグ実測済み（pin した版で） | ✅ 本文書「調査結果」（2026-08-31・2.1.251） |
 | 4 | この設計文書が承認されている | ✅ **承認・確定**（2026-08-31。課題A〜G 承認 + 委任判断全件決着。未解決の論点 0 件） |
-| 5 | 故障注入リスト（課題K・**11件** = 10件 + BL-071 canary）が合意されている | 未（件数を 11 件と訂正のうえ確認待ち。人間側の想定「7件」とは数え方が違うため要突き合わせ） |
+| 5 | 故障注入リスト（課題K・**11件** = 10件 + BL-071 canary）が合意されている | ✅ 済（2026-08-31。「7件」は設計プロンプト時点の初期数で、11 件が確定値） |
 | 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | ✅ 済（2026-08-31・§9） |
 | 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | ✅ 済（2026-08-31・§9-1 / §9-2）。**設計の訂正1件を伴った**（Write → Edit） |
 | 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB。**遡及注記 2026-08-31 を追記済みなので、バックアップはその後に取ること**） |
@@ -829,6 +875,8 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2026-08-31 | `settings.claudeModel` の値 | **`claude-opus-5`** | **clipboard 時代の全ステップが Opus だった**（人間の証言・baseline.md 遡及注記）。pin の初期値でモデルを変えると M3→M4 の Fix 率比較に交絡が乗る。「固定する」と「変える」は別の判断（codex pin と同じ原則）。sonnet 等への切り替えは M4 世代安定後の実験（フェーズ×モデル比較の1行）として別途 |
 | 2026-08-31 | BL-071 のコマンド | **実装時確定で承認。受け入れ条件付き**: CP932 誤読の UTF-8 valid 文字化けフィクスチャを作り、選んだコマンドが実際に検出することを確認してから review Skill に書く（故障注入 #11） | typecheck の canary と同じ方式。Claude CLI の Bash が Windows でどのシェルで動くかも確認してから選ぶ |
 | 2026-08-31 | **permission rule の記法**（§9-2 実測で初版を訂正） | **パス制限は `Edit(path)` のみ有効。`Write(path)` は無視されるので `--tools` から Write を外す**。パスは POSIX 絶対（`//c/…`）。dontAsk でも allow ルールは評価される | 4 パターンの実測。バックスラッシュ絶対パスは効かず、`Write(POSIX)` も内外とも拒否された |
+| 2026-08-31 | **Edit の許可範囲**（レビュー指摘で変更） | **ディレクトリではなく成果物ファイルの列挙**。列挙は `steps.<id>.outputs` から導く。`--tools` から Write を**完全に外す**（監視できないツールを渡さない） | `runtimeRoot/**` だと state.json / runs/ / workflow.yaml / skills/ まで編集でき、**ハーネス自身を書き換えられる**。§9-3 でファイル単位の列挙が効くことを実測 |
+| 2026-08-31 | **Edit の「存在」要求の解**（レビュー案を採用） | **遷移確定時にエンジンが 0 バイトスタブを作る**（`captureIfAbsent` と同型・無ければ作るだけ・Event Log へ `stub.created`）。templates 案は**却下** | §9-3 で 0 バイトを Edit で埋められることを実測。templates 案は `artifact-contract` が見出しの存在しか見ず、`codex-prompt.md` に `token-range` が無いため**書かれなくても通る**（task-metadata と同じ罠）。0 バイトなら contract で必ず止まる |
 | 2026-08-31 | 隔離の成立（login 後） | **確認済み**。`.credentials.json` は隔離ディレクトリ内に閉じ、ユーザー側 `~/.claude*` は login で更新されない。`/.claude-home/` は login 前に gitignore 済み | §9。codex（auth.json）と同じ性質が Claude でも成立 |
 | 2026-08-31 | CLAUDE.md 遮断 | **`--setting-sources ""` で成立を実測**（対照実験で「遮断なしなら漏れる」ことも確認済み） | §9-1 |
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
@@ -837,9 +885,10 @@ spawn(<pin した claude.exe の絶対パス>, [
 
 # 未解決の論点（判断を委ねる）
 
-経緯: 初版 8 件 → 承認レビューで 6 件決着 → 最終確定で claudeModel / BL-071 が決着 → **0 件**。
-その後、認証後スモーク（§9-2）で**新たに 1 件**が生じた。
+**残り 0 件。**
+経緯: 初版 8 件 → 承認レビューで 6 件決着 → 最終確定で claudeModel / BL-071 が決着 →
+認証後スモーク（§9-2）で Edit-only の欠落ケースが 1 件生じ → **0 バイトスタブ方式で決着**（課題B）。
 
-| # | 論点 | 選択肢 | 私の傾き |
-| --- | --- | --- | --- |
-| 1 | **Edit-only にしたとき、新環境で `context-package.md` / `codex-prompt.md` が存在しない**（課題B の欠落ケース） | (a) templates + restoreTemplates へ追加 / (b) research だけ Write を許す / (c) 空ファイル生成（却下済み） | **(a)**。この2つは token-range と artifact-contract が掛かっているので空テンプレでは通らず、「素通り」の罠を踏まない。**research を切り替える段階3 までに決めればよい**（review / improve-check には影響しない） |
+⚠️ この 1 件は「私の推奨（templates 案）が誤りで、レビューの指摘（スタブ案）が正しかった」形で
+決着している。誤りの中身は**`codex-prompt.md` に token-range が無いことを確認せずに
+『contract があるから空では通らない』と書いた**こと。経緯は課題B に残す。

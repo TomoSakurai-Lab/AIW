@@ -124,6 +124,14 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-116
+
+- Source: M4 設計セッション（Edit-only の検討中に実測で発見）/ 2026-08-31
+- Severity: Major (deferred)
+- Trigger: research の validator を次に変更するとき、または「書かれていない成果物が通った」事象が観測されたとき
+- Summary: **`templates/research-findings.md` は契約の必須8見出しを全て含むため、research が一度も書かなくても `file-exists` と `artifact-contract` を通過する**。`artifact-contract` は `checkMarkdownSections` で見出しの存在しか見ず、`research-findings.md` には `token-range` が掛かっていない（掛かっているのは `context-package.md` のみ）。KI-09 系譜「生成だけ配線して素通りを塞ぎ忘れる」/ `task-metadata.json` で踏んだ罠と同型で、**M4 が持ち込んだものではなく既存**。`aiw status --summary` の Open Decisions 件数など、この成果物を読む下流も同時に静かに壊れる。対処案: (a) `research-findings.md` にも `token-range` の下限を掛ける (b) 契約を「見出しの存在」から「見出し配下に本文があること」へ拡張する（validator 変更）。**実績の確認方法**: Event Log で `research-findings` の artifact-contract が passed でありながら中身がテンプレートと同一だったタスクを数える。
+- Status: open
+
 ## BL-115
 
 - Source: M4 設計セッション（design-claude-executor.md 課題B）/ 2026-08-31
