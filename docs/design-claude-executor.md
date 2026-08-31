@@ -190,7 +190,59 @@ clipboard 時代の運用（モデル全ステップ Opus / effort は人間が�
 `"unspecified"`）とし、実測と偽らない——`modelRequested` と同じ規律。
 ただしモデルと違い **model は modelUsage で実測できる**ので、非対称は effort 側だけに残る。
 
-## 9. Agent SDK（比較対象としての実測）
+## 9. 認証後スモーク（2026-08-31・隔離 home で login 後に実測）
+
+人間が `.ai-workflow2/.claude-home/` で `claude auth login` を完了（`--claudeai`）。
+生成物は **`.claude.json` / `.credentials.json` / `backups/`** で、
+**資格情報はファイルとして隔離ディレクトリ内に閉じた**（Windows 資格情報ストアは使われない）。
+`/.claude-home/` は login 前に `.gitignore` へ追加済みで、`git check-ignore` で無視を確認。
+ユーザー側 `~/.claude.json` は login 時刻（15:03）に更新されておらず（13:20 のまま＝別セッションの書き込み）、
+`~/.claude/settings.json` も不変。**隔離は login まで含めて成立した。**
+
+### 9-1. CLAUDE.md の遮断 ← **対照実験で成立を確認**
+
+marker 入り `CLAUDE.md`（「読んだら XYZZY-M4 を返せ」）を置いた probe リポで:
+
+| 条件 | 応答 | 判定 |
+| --- | --- | --- |
+| `--setting-sources` を**渡さない**（既定 = 全ソース読み込み） | **`XYZZY-M4`** | **漏れる**（テストに検出力があることの確認） |
+| `--setting-sources ""` + `--strict-mcp-config` + `--disable-slash-commands` | `NONE` | **遮断成立** |
+
+⚠️ 対照実験を先にやったのは「marker が出ない」が
+**遮断の成功ではなくモデルが言及しなかっただけ**である可能性を潰すため
+（KI-09 系譜 #11「テストがバグと共犯」の教訓の適用）。
+
+### 9-2. permission rule の記法 ← ⚠️ **設計の初版は誤り。実測で訂正**
+
+**初版の想定**: `--allowedTools "Write(<runtimeRoot>/**)"` で書き込み先を限定できる。
+
+**実測（4 パターン）**:
+
+| # | 与えたルール | runtimeRoot 内 | リポジトリ側 | 判定 |
+| --- | --- | --- | --- | --- |
+| 1 | `Read` のみ（Write ルールなし） | 拒否 | 拒否 | dontAsk は未許可を自動拒否する（想定どおり） |
+| 2 | `Write(C:\…\.ai-workflow2\**)`（**バックスラッシュ絶対パス**） | **拒否** | 拒否 | 記法が効いていない |
+| 3 | `Edit(//c/…/.ai-workflow2/**)`（**POSIX 絶対パス**） | **許可** | **拒否** | ✅ **これが正解** |
+| 4 | `Write(//c/…/.ai-workflow2/**)`（POSIX） | **拒否** | 拒否 | **`Write` にパスルールは効かない** |
+
+確定した仕様（公式ドキュメントとも一致）:
+
+- **`Write(path)` のパスルールは監視されない。** パス制限は **`Edit(path)` でのみ**成立する
+- **Windows のパスは POSIX へ正規化される**。`C:\Users\…` → `//c/Users/…`。
+  絶対パスのアンカーは **`//`**（`/path` は「設定ソースからの相対」という別の意味になる）
+- `--permission-mode dontAsk` でも allow ルールは正しく評価される（#3 が許可された事実がその証拠）
+- 拒否は `result.permission_denials` に**ツール名・引数・絶対パスまで**記録される（#1-#4 全件で確認）
+
+⚠️ **`is_error: false` / exit 0 でも作業は行われていない**（#1・#4 は拒否されたが正常終了）。
+codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude でも成立する**。
+成功判定に exit code を使わない規律はそのまま適用する。
+
+### 9-3. modelObserved は**複数値**になる
+
+全実行で `modelUsage` のキーが **`claude-opus-5` と `claude-haiku-4-5-20251001` の2つ**だった
+（補助モデルが併用される）。`modelObserved` は単一値ではなく**キーの配列**として記録する。
+
+## 10. Agent SDK（比較対象としての実測）
 
 | 実測 / 確認 | 結果 |
 | --- | --- |
@@ -266,15 +318,40 @@ clipboard 時代「review はコードを修正しない」は人間の規律だ
 
 ### ステップ別の許可セット（提案）
 
+⚠️ **§9-2 の実測により初版から変更**: `Write` は**パス制限が効かない**ため
+**`--tools` から外す**。成果物の書き込みは `Edit` で行う（対象ファイルは
+restoreTemplates / 前ステップの出力として**既に存在する**）。
+
 | ステップ | `--tools` | `--allowedTools`（要旨） | 書ける場所 |
 | --- | --- | --- | --- |
-| **review** | `Read,Grep,Glob,Bash,Write,Edit` | `Read` / `Grep` / `Glob` 無条件。`Write(<runtimeRoot>/**)` / `Edit(<runtimeRoot>/**)`。`Bash` は下の列挙のみ | **runtimeRoot のみ**（current-review.md / current-status.json） |
-| **improve-check** | `Read,Grep,Glob,Bash,Write` | 同上 + `Bash` は git 読み取り系のみ | runtimeRoot のみ（current-status.json） |
-| **reflection** | `Read,Grep,Glob,Write,Edit`（**Bash なし**） | `Write(<runtimeRoot>/**)` / `Edit(<runtimeRoot>/**)` | runtimeRoot のみ（知識ファイル + task-metadata.json + current-status.json）。**リポジトリ側は Bash が無い + Write/Edit が runtimeRoot 限定で構造的に不可能** |
-| **research** | `Read,Grep,Glob,Bash,Write,Edit` | Write/Edit は runtimeRoot 限定。`Bash` は git 読み取り系 + 計測系（review と同じ列挙から必要分） | runtimeRoot のみ（成果物4点） |
+| **review** | `Read,Grep,Glob,Bash,Edit`（**Write なし**） | `Read` / `Grep` / `Glob` 無条件。`Edit(<POSIX runtimeRoot>/**)`。`Bash` は下の列挙のみ | **runtimeRoot のみ**（current-review.md / current-status.json） |
+| **improve-check** | `Read,Grep,Glob,Bash,Edit` | 同上 + `Bash` は git 読み取り系のみ | runtimeRoot のみ（current-status.json） |
+| **reflection**（M4 では自動化しない） | `Read,Grep,Glob,Edit`（**Bash / Write なし**） | `Edit(<POSIX runtimeRoot>/**)` | runtimeRoot のみ。⚠️ ただし `task-metadata.json` は postAction が**削除**するため Edit 対象が存在しない——自動化する際は下記の欠落問題を解く必要がある |
+| **research** | `Read,Grep,Glob,Bash,Edit` | `Edit` は runtimeRoot 限定。`Bash` は git 読み取り系 + 計測系（review と同じ列挙から必要分） | runtimeRoot のみ（成果物4点） |
 
-`<runtimeRoot>/**` のパターンは executor が解決済み絶対パスから組み立てる
-（相対だと cwd 依存になる。cwd は checkRepoRoot なので runtimeRoot と一致しない）。
+パターンは **executor が解決済み絶対パスを POSIX へ正規化して**組み立てる
+（`C:\…` → `//c/…`。相対だと cwd 依存になり、cwd は checkRepoRoot なので runtimeRoot と一致しない）。
+
+### ⚠️ Edit-only の前提と、その欠落ケース
+
+Edit は**対象ファイルが存在すること**を要求する。ステップごとの成立状況:
+
+| ステップ | 出力 | 存在源 | 成立 |
+| --- | --- | --- | --- |
+| review | current-review.md | restoreTemplates | ✅ |
+| review / improve-check / research | current-status.json | 前ステップの出力が残る（improve-check Skill が「step を書き直せ」と言うのはこのため） | ✅ |
+| research | research-findings.md | restoreTemplates | ✅ |
+| research | **context-package.md / codex-prompt.md** | **restoreTemplates の対象外**。前タスクの成果物が残っていれば存在するが、**`aiw init` 直後の新環境には無い** | ⚠️ **未解決** |
+| reflection | **task-metadata.json** | `discardTaskMetadata` が毎回削除する（意図的） | ⚠️ 自動化時に要対処 |
+
+未解決分の選択肢（**research を切り替える段階3 までに決める**。今は決めない）:
+
+- (a) `templates/` に context-package.md / codex-prompt.md を足し restoreTemplates の対象にする。
+  ⚠️ 「空テンプレが file-exists を素通りする」罠（`discardTaskMetadata` のコメント）に注意——
+  ただしこの2つは **token-range(min 250) と artifact-contract** が既に掛かっているので、
+  空や骨格のままでは通らない。validator の変更にはあたらない（前提3を破らない）
+- (b) research だけ `Write` を許す（第1網が research でのみ緩む）
+- (c) executor が起動前に空ファイルを作る ——**却下**。file-exists を素通りさせる典型例
 
 ### review の Bash 許可リスト（列挙の初版）
 
@@ -453,7 +530,9 @@ env は許可リスト方式で構築               # 渡す変数を列挙す�
 
 - **モデルは実測値が取れる**（§3 観測2）。両方記録する:
   - `meta.modelRequested`: `settings.claudeModel` の指定値（未指定なら `"unspecified"`。三値の規律）
-  - `meta.modelObserved`: `result.modelUsage` のキー（複数なら全部）
+  - `meta.modelObserved`: `result.modelUsage` の**キーの配列**。
+    ⚠️ 実測では常に2つ（`claude-opus-5` + `claude-haiku-4-5-…`）だった——補助モデルが併用されるので
+    **単一値のフィールドにしない**（§9-3）
   - 両方あるとき食い違えば Event Log にそのまま残る（検出は目視と将来の集計。halt はしない）
 - 生 session ID: `SessionSecret` / `sessionSecret()` / `redactSession` を流用。
   **redact 対象の経路が codex より多い**（init・全メッセージ・result・transcript ファイル名。§3 観測6）。
@@ -650,8 +729,9 @@ spawn(<pin した claude.exe の絶対パス>, [
   "--strict-mcp-config",
   "--disable-slash-commands",
   "--permission-mode", "dontAsk",
-  "--tools", <ステップ別集合>,
-  "--allowedTools", <ステップ別許可リスト>,
+  "--tools", <ステップ別集合>,      // ⚠️ Write は入れない（パス制限が効かない・§9-2）
+  "--allowedTools", <ステップ別許可リスト>,  // Edit(//c/…) は POSIX 絶対パス
+  ...(effort ? ["--effort", effort] : []),
   ...(model ? ["--model", model] : []),
   ...(addDir ? ["--add-dir", runtimeRoot] : [])
 ], {
@@ -717,12 +797,12 @@ spawn(<pin した claude.exe の絶対パス>, [
 | # | 条件 | 現在 |
 | --- | --- | --- |
 | 1 | `npm test` が全件 green | 実装着手時に確認 |
-| 2 | pin 済み（`@anthropic-ai/claude-code@2.1.251` が devDependency・--save-exact） | 未（probe はスクラッチパッドの使い捨て環境で実施。**本体へはまだ入れていない**） |
+| 2 | pin 済み（`@anthropic-ai/claude-code@2.1.251` が devDependency・--save-exact） | ✅ 済（2026-08-31。人間が実施） |
 | 3 | フラグ実測済み（pin した版で） | ✅ 本文書「調査結果」（2026-08-31・2.1.251） |
 | 4 | この設計文書が承認されている | ✅ **承認・確定**（2026-08-31。課題A〜G 承認 + 委任判断全件決着。未解決の論点 0 件） |
 | 5 | 故障注入リスト（課題K・**11件** = 10件 + BL-071 canary）が合意されている | 未（件数を 11 件と訂正のうえ確認待ち。人間側の想定「7件」とは数え方が違うため要突き合わせ） |
-| 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | 未 |
-| 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | 未（probe 環境は作成済み） |
+| 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | ✅ 済（2026-08-31・§9） |
+| 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | ✅ 済（2026-08-31・§9-1 / §9-2）。**設計の訂正1件を伴った**（Write → Edit） |
 | 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB。**遡及注記 2026-08-31 を追記済みなので、バックアップはその後に取ること**） |
 | 9 | タスク境界にいる | 実装着手時に確認 |
 | 10 | effort の制御可否の実測 | ✅ 済（調査結果 §8・2026-08-31。フラグあり / observed 取れず → effortRequested で記録） |
@@ -748,13 +828,18 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2026-08-31 | review-audit の model-change トリガー | **最小実装する**（前回 review の executor / model と比較して提案表示 + Event Log 記録）。**承認済み** | 課題G。「発火しない宣言」の解消。M4 世代の交絡を測る唯一の手段 |
 | 2026-08-31 | `settings.claudeModel` の値 | **`claude-opus-5`** | **clipboard 時代の全ステップが Opus だった**（人間の証言・baseline.md 遡及注記）。pin の初期値でモデルを変えると M3→M4 の Fix 率比較に交絡が乗る。「固定する」と「変える」は別の判断（codex pin と同じ原則）。sonnet 等への切り替えは M4 世代安定後の実験（フェーズ×モデル比較の1行）として別途 |
 | 2026-08-31 | BL-071 のコマンド | **実装時確定で承認。受け入れ条件付き**: CP932 誤読の UTF-8 valid 文字化けフィクスチャを作り、選んだコマンドが実際に検出することを確認してから review Skill に書く（故障注入 #11） | typecheck の canary と同じ方式。Claude CLI の Bash が Windows でどのシェルで動くかも確認してから選ぶ |
+| 2026-08-31 | **permission rule の記法**（§9-2 実測で初版を訂正） | **パス制限は `Edit(path)` のみ有効。`Write(path)` は無視されるので `--tools` から Write を外す**。パスは POSIX 絶対（`//c/…`）。dontAsk でも allow ルールは評価される | 4 パターンの実測。バックスラッシュ絶対パスは効かず、`Write(POSIX)` も内外とも拒否された |
+| 2026-08-31 | 隔離の成立（login 後） | **確認済み**。`.credentials.json` は隔離ディレクトリ内に閉じ、ユーザー側 `~/.claude*` は login で更新されない。`/.claude-home/` は login 前に gitignore 済み | §9。codex（auth.json）と同じ性質が Claude でも成立 |
+| 2026-08-31 | CLAUDE.md 遮断 | **`--setting-sources ""` で成立を実測**（対照実験で「遮断なしなら漏れる」ことも確認済み） | §9-1 |
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 
 ---
 
 # 未解決の論点（判断を委ねる）
 
-**残り 0 件**（2026-08-31 に全件決着・決定ログへ移した）。
-経緯: 初版 8 件 → 承認レビューで 6 件決着 → 最終確定で
-claudeModel（`claude-opus-5`）と BL-071（実装時確定・canary 条件付き）が決着。
-実装中に新たな論点が出たら、M3 と同じくこの表へ足してから決める。
+経緯: 初版 8 件 → 承認レビューで 6 件決着 → 最終確定で claudeModel / BL-071 が決着 → **0 件**。
+その後、認証後スモーク（§9-2）で**新たに 1 件**が生じた。
+
+| # | 論点 | 選択肢 | 私の傾き |
+| --- | --- | --- | --- |
+| 1 | **Edit-only にしたとき、新環境で `context-package.md` / `codex-prompt.md` が存在しない**（課題B の欠落ケース） | (a) templates + restoreTemplates へ追加 / (b) research だけ Write を許す / (c) 空ファイル生成（却下済み） | **(a)**。この2つは token-range と artifact-contract が掛かっているので空テンプレでは通らず、「素通り」の罠を踏まない。**research を切り替える段階3 までに決めればよい**（review / improve-check には影響しない） |
