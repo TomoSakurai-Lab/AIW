@@ -1,7 +1,10 @@
 # claude executor 設計（M4）
 
-**状態**: 2026-08-31 レビューで課題A〜G を承認（修正条件は本文へ反映済み）。
-未解決の論点は残り 2 件（末尾）。実装の開始条件は別表。
+**状態**: **確定**（2026-08-31。課題A〜G 承認 → 委任判断・claudeModel・BL-071・effort まで
+全件決着。未解決の論点 0 件）。実装の開始条件は別表——**人間側の項目が未のため実装は未着手**。
+
+> 訂正の経緯は消さない方針（2026-08-31 承認時の指示）: 課題B の baseline 挙動と
+> report 根拠は「初版は誤り、実装確認で訂正」の形をそのまま残している。
 
 **目的**: review / improve-check / reflection / research の手貼りを消す。
 プロンプトの組み立てから Claude の実行、成果物の回収までを `aiw exec` の中で完結させる。
@@ -170,7 +173,24 @@ M4 に関係するフラグ（2.1.251 の `--help` 実測。全文は probe ロ�
 
 タイムアウトのフラグは**無い**。executor 側のタイマーで kill する（codex と同じ）。
 
-## 8. Agent SDK（比較対象としての実測）
+## 8. effort の制御と観測（2026-08-31 追補・承認レビュー後の実測）
+
+clipboard 時代の運用（モデル全ステップ Opus / effort は人間が難易度で low・high を使い分け）が
+遡及記録されたことを受け、effort を設計変数として実測した。
+
+| 実測 / 確認 | 結果 |
+| --- | --- |
+| CLI フラグ | **`--effort`（low / medium / high / xhigh / max）が存在し受理される**（2.1.251 の `--help` と実行で確認） |
+| SDK | `Options.effort`（`EffortLevel` 型）が存在 |
+| 実行時の観測 | **stream-json（init / assistant / result）のどこにも effort の実行時値は出ない**。`--effort low` での全出力を grep して、唯一の `"effort"` は slash_commands 内のコマンド名 `/effort` だった。SDK の `ModelUsage` 型にも effort フィールドは無い |
+| downgrade | SDK 型 doc に「選択モデルに応じた **silent downgrade** の後の値が hook へ渡る」と明記——**指定値と実効値は乖離しうる** |
+| env 経由の露出 | effort は hook と Bash へ **`CLAUDE_EFFORT` env var** として公開される。⚠️ この設計セッション自身の env に `CLAUDE_EFFORT=high` が実在した——**親セッションからの漏れ変数がまた1つ実証された**（§6 の許可リスト方式の必然性を補強） |
+
+**帰結**: `effortObserved` は取れない。記録は **`effortRequested`**（指定値。未指定なら
+`"unspecified"`）とし、実測と偽らない——`modelRequested` と同じ規律。
+ただしモデルと違い **model は modelUsage で実測できる**ので、非対称は effort 側だけに残る。
+
+## 9. Agent SDK（比較対象としての実測）
 
 | 実測 / 確認 | 結果 |
 | --- | --- |
@@ -211,7 +231,7 @@ M4.4 条件4（抽出しない判断の記録）と同じ形式で残す。
 - `-C` 相当は**無い**ため `cwd` オプションで渡す。値は `resolveCheckRepoRoot()`（codex A-2 の再利用。
   検査範囲と実行範囲を同じ値から導く）。runtimeRoot が外なら `--add-dir <runtimeRoot>`、
   解決不能なら起動しない（縮退規則も codex #8 と同じ）
-- env: `ANTHROPIC_*` / `CLAUDE_*` を**除去したうえで** `CLAUDE_CONFIG_DIR=<隔離 home>` を設定（§6）
+- env: **許可リスト方式**で最小集合を列挙し、そこへ `CLAUDE_CONFIG_DIR=<隔離 home>` を足す（§6）
 
 ### A-2. 隔離 home の配置
 
@@ -324,6 +344,8 @@ baseline に吸収されるため、誤帰属は起きない。同一 `(step, fi
 validator の変更が要り、前提3（validator は1つも変更しない）で禁止。
 review が最も触りたくなるのは正に Modify 集合内のファイルなので、
 **この穴は第1網（ツール制限）が塞ぐ**。第1網が主、第2網は補助という関係はここから来る。
+M4 後の改修候補として **BL-115**（diff-scope の「宣言ゼロ」モードで第2網を本物にする）を
+起票済み（2026-08-31）。
 
 `onViolation` を **report** にする理由: review 中の変更が review 自身の仕業とは限らない
 （開発機では人間の VS・並走ビルドがファイルを触りうる）。halt にすると人間の並走作業が
@@ -436,8 +458,35 @@ env は許可リスト方式で構築               # 渡す変数を列挙す�
 - 生 session ID: `SessionSecret` / `sessionSecret()` / `redactSession` を流用。
   **redact 対象の経路が codex より多い**（init・全メッセージ・result・transcript ファイル名。§3 観測6）。
   transcript は `--no-session-persistence` で作らせないので残るのは runs/ の JSONL のみ（codex と同じ扱い: 生値は一次資料にだけ残る）
-- 新設 settings: `claudeHome` / `claudeModel` / `claudeTimeoutMs`（codex の3つと対に）。
-  `claudeEffort` は `--effort` が実在するので枠だけ用意（未指定なら渡さない）
+- 新設 settings: `claudeHome` / `claudeModel` / `claudeTimeoutMs`（codex の3つと対に）+ 下記 effort
+
+### effort（2026-08-31 追加・調査結果 §8）
+
+clipboard 時代は「人間がタスク難易度で low / high を使い分け」ていた（遡及記録・課題H）。
+この動的判断は executor で再現できないため、**静的宣言に置き換える**:
+
+```yaml
+settings:
+  claudeEffort: low        # Claude 側ステップの既定
+steps:
+  review:
+    effort: high
+  research:
+    effort: high           # 常時 high（下記）
+  # improve-check / task-planning は既定の low が掛かる
+```
+
+- `steps.<id>.effort`（`WorkflowStep.effort` を型に追加）> `settings.claudeEffort` > 未指定
+  （フラグを渡さない）。**配線とテストは同一コミット**（`model` / `timeoutMs` と同じ規律）
+- **research を常時 high にする理由**: 「難しさを人間が判断して切り替える」は executor で
+  再現できない。簡単なタスクを high で走らせるコストより、難しいタスクを low で走らせて
+  research 起因の fix が回るコスト（M1 実測: fix 原因の research 起因 3/8）のほうが高い。
+  安全側に倒す。**再検討条件**: research のトークンが問題になったら、task-planning に
+  難易度を宣言させて effort を切り替える機構を検討する（今は作らない）
+- 記録は **`meta.effortRequested`**（未指定なら `"unspecified"`）。
+  `effortObserved` は取れない（§8 実測: 出力のどこにも残らない）うえ、
+  モデルによる **silent downgrade** がありうるため、指定値であることを名前で明示する
+- 世代注記（課題H）: effort の運用変化（動的 → 静的）が M4 世代の交絡の1つになる
 
 ### model-policy.json（KI-09 系譜 #9）← **削除を提案**
 
@@ -521,6 +570,11 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 - **Fix 率の比較には交絡注記**（M2 G-2 と同じ扱い）: review を executor 化すると
   review の検出力自体が変わりうるため、「M4 世代の Fix 率」と「M3 世代 25%」の差は
   実装品質の変化と検出力の変化を分離できない。注記なしで並べない
+- **交絡の中身を訂正**（2026-08-31 の遡及記録により）: clipboard 時代の Claude 側は
+  **モデル Opus で一貫**（人間の証言。`docs/baseline.md` の遡及注記 2026-08-31 として記録済み）。
+  したがって交絡は「モデル不明」ではなく、
+  **(1) 検出力（対話 → executor）と (2) effort の運用変化（人間の動的判断 → 静的宣言）**の2つ。
+  `settings.claudeModel: claude-opus-5` で pin すればモデルは M3→M4 で不変になる
 - **M3 世代の Fix 率 25%（n=20・CI ±19pt）を M4 前の基準値として固定**
 - M4 世代の初期観察項目: 手貼り回数（review / improve-check で 0 の確認）/
   claude executor 失敗率（failureKind 別）/ `permission_denials` の発生数（第1網の発火実績）/
@@ -581,6 +635,7 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 | 8 | 認証切れ（隔離 home の資格情報を退避） | `permanent` として記録し、再試行しない |
 | 9 | exit 0 + 成果物なし | executor は成功を主張せず、`file-exists` が halt（codex #9 と同じ固定点。**このテストを消すこと自体が違反**） |
 | 10 | reflection の許可セットでリポジトリ書き込みを試みる（M4 で自動化しない場合は設定のみのテスト） | Bash 不在 + Write/Edit の runtimeRoot 限定で拒否される |
+| 11 | **BL-071 canary**: CP932 誤読だが UTF-8 valid な文字化けを含むフィクスチャ | 選定した生バイト検査コマンドが**実際にそれを検出する**（typecheck の canary と同じ方式）。Windows 環境で Claude CLI の Bash が動くシェルを確認し、そこで実際に通るコマンドを選ぶ。**これが review Skill へ手順を書く受け入れ条件** |
 
 ---
 
@@ -618,6 +673,16 @@ spawn(<pin した claude.exe の絶対パス>, [
 
 # 実装スコープ（承認後）
 
+## 進め方の規律（2026-08-31 確定・M3 と同じ）
+
+- **この設計文書が正本**。段階ごとにコミットする
+- **防衛線3つ（前提7）は executor と同一コミット**
+- 故障注入（課題K・11件）は**実測報告**する
+- **設計からの逸脱と未記述の判断は完了報告で明示する**（M3 の「実装時の決定」節と同じ形式。
+  表を黙って書き換えない——「実装が設計を上回った箇所は上回ったと分かる形で残す」）
+- **段階の切り替えは drive の y/n 確認を通し、切り替え後の最初の実タスクで
+  validator の発火状況を見てから次段階へ進む**（improve-check → review → research の順は確定）
+
 ## 段階1-1: improve-check（起動と回収の疎通）
 
 - `src/engine/executors/claude.ts` をスタブから実装（`createClaudeExecutor(deps)` 形式・codex と同型）
@@ -654,12 +719,13 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 1 | `npm test` が全件 green | 実装着手時に確認 |
 | 2 | pin 済み（`@anthropic-ai/claude-code@2.1.251` が devDependency・--save-exact） | 未（probe はスクラッチパッドの使い捨て環境で実施。**本体へはまだ入れていない**） |
 | 3 | フラグ実測済み（pin した版で） | ✅ 本文書「調査結果」（2026-08-31・2.1.251） |
-| 4 | この設計文書が承認されている | **課題A〜G 承認済み**（2026-08-31・修正反映済み）。未解決 2 件（claudeModel の値 / BL-071 コマンド）は実装中に決めてよい扱い |
-| 5 | 故障注入リスト（課題K・10件）が合意されている | 未（承認レビューでは個別言及なし。着手前に確認） |
+| 4 | この設計文書が承認されている | ✅ **承認・確定**（2026-08-31。課題A〜G 承認 + 委任判断全件決着。未解決の論点 0 件） |
+| 5 | 故障注入リスト（課題K・**11件** = 10件 + BL-071 canary）が合意されている | 未（件数を 11 件と訂正のうえ確認待ち。人間側の想定「7件」とは数え方が違うため要突き合わせ） |
 | 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | 未 |
 | 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | 未（probe 環境は作成済み） |
-| 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB） |
+| 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB。**遡及注記 2026-08-31 を追記済みなので、バックアップはその後に取ること**） |
 | 9 | タスク境界にいる | 実装着手時に確認 |
+| 10 | effort の制御可否の実測 | ✅ 済（調査結果 §8・2026-08-31。フラグあり / observed 取れず → effortRequested で記録） |
 
 ---
 
@@ -680,15 +746,15 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2026-08-31 | model-policy.json | **正本を settings へ統合**（`settings.claudeModel` + `steps.<id>.model`、配線とテスト同一コミット）。model-policy.json は削除 | 課題E。KI-09 系譜 #9 の解消 |
 | 2026-08-31 | タイムアウト | **既定 40 分 + ステップ別上書き**（`steps.<id>.timeoutMs`） | review 実測 13 分 × 3。codex（17 分→30 分）と整合。research は未実測のため上書き口が要る |
 | 2026-08-31 | review-audit の model-change トリガー | **最小実装する**（前回 review の executor / model と比較して提案表示 + Event Log 記録）。**承認済み** | 課題G。「発火しない宣言」の解消。M4 世代の交絡を測る唯一の手段 |
+| 2026-08-31 | `settings.claudeModel` の値 | **`claude-opus-5`** | **clipboard 時代の全ステップが Opus だった**（人間の証言・baseline.md 遡及注記）。pin の初期値でモデルを変えると M3→M4 の Fix 率比較に交絡が乗る。「固定する」と「変える」は別の判断（codex pin と同じ原則）。sonnet 等への切り替えは M4 世代安定後の実験（フェーズ×モデル比較の1行）として別途 |
+| 2026-08-31 | BL-071 のコマンド | **実装時確定で承認。受け入れ条件付き**: CP932 誤読の UTF-8 valid 文字化けフィクスチャを作り、選んだコマンドが実際に検出することを確認してから review Skill に書く（故障注入 #11） | typecheck の canary と同じ方式。Claude CLI の Bash が Windows でどのシェルで動くかも確認してから選ぶ |
+| 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 
 ---
 
 # 未解決の論点（判断を委ねる）
 
-⚠️ **決めたらこの表から決定ログへ移す。**
-（2026-08-31 の承認レビューで 8 件中 6 件が決着し決定ログへ移した。残り 2 件。）
-
-| # | 論点 | 選択肢 | 私の傾き |
-| --- | --- | --- | --- |
-| 1 | `settings.claudeModel` の pin 値 | `claude-sonnet-5` / `claude-opus-5` / 未指定 | 値の決定は人間に委ねる。ただし codex と違い**未指定でも modelObserved は残る**ため、「事後に分からない」事故は起きない |
-| 2 | BL-071 の具体コマンド | `od -c` / `certutil -dump` / PowerShell `Format-Hex` | 実装時に1つへ確定し、review Skill へ手順を書く |
+**残り 0 件**（2026-08-31 に全件決着・決定ログへ移した）。
+経緯: 初版 8 件 → 承認レビューで 6 件決着 → 最終確定で
+claudeModel（`claude-opus-5`）と BL-071（実装時確定・canary 条件付き）が決着。
+実装中に新たな論点が出たら、M3 と同じくこの表へ足してから決める。
