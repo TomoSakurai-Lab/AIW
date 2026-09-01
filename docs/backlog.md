@@ -17,7 +17,7 @@
 エンジン改修枠を開くときに runtime 側を見て、該当分をここへ移すこと。
 「片方だけ見れば足りる」形にはなっていない。
 
-移管の形は既に固まっている（2026-09-04 時点で **12 件**が移管済み）:
+移管の形は既に固まっている（2026-09-01 時点で **12 件**が移管済み）:
 runtime 側の項目を消さず `Status: wontfix (tools/aiw/docs/backlog.md へ移管)` を残し、
 中身をこちらへ写す。**runtime 側の行を消すと「無い＝存在しない」に見える**ので消さない。
 
@@ -90,7 +90,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Severity: Major (deferred)
 - Trigger: ソーク明けの最初のエンジン改修枠、または手動退避が維持できなくなったとき
 - Summary: `ac-manifest.json` / `ac-result.json` を archive 対象と archive 後削除へ追加し、implementation Skill に前タスクの作業ファイルを確認なしで置き換えてよい旨を明記する。
-- Status: **done**（2026-09-04。`archiveArtifacts` へ追加 + `discardAcArtifacts` + implementation Skill v3。2タスク連続の退避を test で固定）
+- Status: **done**（2026-09-01。`archiveArtifacts` へ追加 + `discardAcArtifacts` + implementation Skill v3。2タスク連続の退避を test で固定）
 
 ## BL-107
 
@@ -98,7 +98,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Severity: Minor
 - Trigger: 新しい artifact をワークフローへ追加するとき
 - Summary: artifact 追加時の確認事項を、生成、contract、archive、restore-or-delete、分類表の5点チェックリストとしてテンプレート化する。
-- Status: **done**（2026-09-04。`docs/new-artifact-checklist.md`。許可リスト・パス規約・2周目のテストを足して8点にした）
+- Status: **done**（2026-09-01。`docs/new-artifact-checklist.md`。許可リスト・パス規約・2周目のテストを足して8点にした）
 
 ## BL-103
 
@@ -118,7 +118,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 
 ## BL-113
 
-- Source: 2026-09-04 のエンジン修正枠で判明（`pathBase` 追加時）
+- Source: 2026-09-01 のエンジン修正枠で判明（`pathBase` 追加時）
 - Severity: Minor
 - Trigger: `ac-manifest.json` / `ac-result.json` の形を次に変えるとき、または `aiw init` を新環境へ配るとき
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。

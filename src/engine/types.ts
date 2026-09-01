@@ -30,7 +30,7 @@ export type ValidatorRef = {
   max?: number;
   manifest?: string;
   result?: string;
-  // ⚠️⚠️ **死んでいる宣言（2026-09-04 時点）。この3つを読む関数はもう存在しない。**
+  // ⚠️⚠️ **死んでいる宣言（2026-09-01 時点）。この3つを読む関数はもう存在しない。**
   //
   // consumer-presence は ac-manifest.json の `consumerChecks[]` を読む方式へ移行済みで、
   // これらを使っていた `runConsumerPresence` は削除した（同じ root 解決バグを抱えていて、

@@ -222,7 +222,7 @@ function filesUnder(dir: string): string[] {
 }
 
 /**
- * `ac-manifest.json` の `consumerChecks[].root` を解決する基準（2026-09-04 修正）。
+ * `ac-manifest.json` の `consumerChecks[].root` を解決する基準（2026-09-01 修正）。
  *
  * ⚠️ **manifest に書かれるパスは checkRepoRoot からの相対**。runtimeRoot ではない。
  * 書き手（implementation Skill）は `Primal.Template.Web.Front/ClientApp/src` のような

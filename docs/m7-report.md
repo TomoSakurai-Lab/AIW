@@ -174,7 +174,7 @@ diff-scope 設計時の警告「常に違反を出す validator は誰も見な�
 consumer-presence が本来狙った型(1)（中核未実装）の検出力を一度も計測できないまま
 アラート疲れだけが定着する。**次のエンジン修正枠の筆頭**とする根拠はこの実測である。
 
-> **2026-09-04 追記（修正後）**: 原因は「validator が root を runtime 基準で解決している」
+> **2026-09-01 追記（修正後）**: 原因は「validator が root を runtime 基準で解決している」
 > の側だった（Codex 側のパス基準は正しい）。KI-09 系譜 #11 として修正済み。
 > 併せて全期間を数え直した——ソーク窓の 8 件は、`consumer-presence` 導入以降の
 > 偽陽性 **10 件**（2026-08-20〜08-28）の一部である。
@@ -220,7 +220,7 @@ clipboard のものは 0 件、該当期間（08-21〜23）の exec.failed も 0
 
 ### 6.2 Canonical Primitive: **未判定**（M4.4 で判定予定。本レポートでは判断しない）
 
-### 6.3 C2（MCP 事前検証）: **見送り → 2026-09-04 に「実装しない」で確定**
+### 6.3 C2（MCP 事前検証）: **見送り → 2026-09-01 に「実装しない」で確定**
 
 > 本節の推奨を人間が承認した。**「後回し」ではなく「作らない」判断**として
 > `docs/design-codex-executor.md` の決定ログへ記録済み。再検討条件も同所（下記の2条件をそのまま採用）。
@@ -262,10 +262,10 @@ C2 の定義（design-codex-executor 課題E）: `aiw_validate` 1本を stdio MC
 
 ### 7.2 次の作業キュー（優先順）
 
-1. ~~**consumer-presence の root 解決**（§5.1。偽陽性 8件・7件素通りの実測が緊急度の根拠）~~ → **2026-09-04 完了**（KI-09 系譜 #11。checkRepoRoot へ統一 + `pathBase` + 解決不能は skipped）
-2. ~~**ac-manifest / ac-result のライフサイクル**（BL-101: postActions で archive + 削除。対応まで毎タスク再発）~~ → **2026-09-04 完了**（BL-106。`archiveArtifacts` + `discardAcArtifacts` + implementation Skill v3）
-3. ~~新 artifact 追加チェックリストのテンプレ化（BL-102: 生成 / contract / archive / restore-or-delete / 分類表 / 許可リスト）~~ → **2026-09-04 完了**（BL-107。`docs/new-artifact-checklist.md`。パス規約と2周目のテストを足して8点）
-4. ~~C2 の確定判断（§6.3 の推奨を人間が承認または棄却）~~ → **2026-09-04 完了。承認（実装しない）**
+1. ~~**consumer-presence の root 解決**（§5.1。偽陽性 8件・7件素通りの実測が緊急度の根拠）~~ → **2026-09-01 完了**（KI-09 系譜 #11。checkRepoRoot へ統一 + `pathBase` + 解決不能は skipped）
+2. ~~**ac-manifest / ac-result のライフサイクル**（BL-101: postActions で archive + 削除。対応まで毎タスク再発）~~ → **2026-09-01 完了**（BL-106。`archiveArtifacts` + `discardAcArtifacts` + implementation Skill v3）
+3. ~~新 artifact 追加チェックリストのテンプレ化（BL-102: 生成 / contract / archive / restore-or-delete / 分類表 / 許可リスト）~~ → **2026-09-01 完了**（BL-107。`docs/new-artifact-checklist.md`。パス規約と2周目のテストを足して8点）
+4. ~~C2 の確定判断（§6.3 の推奨を人間が承認または棄却）~~ → **2026-09-01 完了。承認（実装しない）**
 5. M4（Claude executor）の要否——research / review の手貼りは残るが、壁時計の支配項だった
    implementation / fix は自動化済み。往復中央値 32 への増加傾向と合わせて費用対効果を再見積もり
 6. 外れ値調査: 66往復 / 10.3M の1本（M3 期）と cacheRead 72.7% の1本（ソーク）

@@ -31,7 +31,7 @@ test("measurement-completeness: missing and duplicate AC results are reported", 
   assert.match(outcome.results[0].message, /AC-02/);
 });
 
-// ⚠️ **このテストは 2026-09-04 まで壊れた挙動を固定していた。**
+// ⚠️ **このテストは 2026-09-01 まで壊れた挙動を固定していた。**
 // consumer root を runtimeRoot 配下（`<root>/src`）に作っており、validator が
 // runtimeRoot 起点で解決していたから通っていた。本番の manifest は
 // `Primal.Template.Web.Front/ClientApp/src` のような **checkRepoRoot 相対**を書くので、
