@@ -9,15 +9,15 @@ Implementation
 
 ## Read
 
-- `.ai-workflow2/codex-system.md`
-- `.ai-workflow2/context-package.md`
-- `.ai-workflow2/codex-prompt.md`
+- `.ai-workflow/codex-system.md`
+- `.ai-workflow/context-package.md`
+- `.ai-workflow/codex-prompt.md`
 
 ## Output
 
 - ソース変更（`codex-prompt.md` の `# Scope Boundaries` / `# Required Changes` の範囲内のみ）
-- `.ai-workflow2/current-result.md` — Artifact Contract `current-result` に従う
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/current-result.md` — Artifact Contract `current-result` に従う
+- `.ai-workflow/current-status.json`
 
 ### current-status.json
 

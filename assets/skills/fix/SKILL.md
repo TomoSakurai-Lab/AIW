@@ -5,7 +5,7 @@ fix ステップで毎回同じように行う手順。
 
 ## 手順
 
-1. `.ai-workflow2/codex-system.md` / `context-package.md` / `current-review.md` を読む。
+1. `.ai-workflow/codex-system.md` / `context-package.md` / `current-review.md` を読む。
    `test-report.md` があれば併せて読む（verify-local が失敗したときだけ生成される）
 2. `current-review.md` の **`## Fix Scope` のみ**を対象に、Critical / Major を修正する
 3. `current-result.md` を**検証パッケージとして作り直す**（下記）
@@ -48,7 +48,7 @@ implementation と同じ Artifact Contract を使う。必須見出しとその�
 
 ### ac-result.json も作り直す
 
-`current-result.md` と同様に、`.ai-workflow2/ac-result.json` も**前回の内容を残さず作り直す**。
+`current-result.md` と同様に、`.ai-workflow/ac-result.json` も**前回の内容を残さず作り直す**。
 再確認した AC は新しい観測値で、再確認していない AC は `"status": "skipped"` +
 `"reason"` で記録する。レコードの欠落は measurement-completeness validator が
 review へ report する（`ac-manifest.json` は実装フェーズが書いたものを引き継ぎ、

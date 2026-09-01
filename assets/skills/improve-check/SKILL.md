@@ -5,14 +5,14 @@ improve-check ステップの判断手順。**このステップは成果物を�
 
 ## 手順
 
-1. `.ai-workflow2/current-review.md` の `## Critical` を1件ずつ取り出す
-2. 各件について `.ai-workflow2/current-result.md` と `git-diff` で**実際に解消されたか**を確かめる。
+1. `.ai-workflow/current-review.md` の `## Critical` を1件ずつ取り出す
+2. 各件について `.ai-workflow/current-result.md` と `git-diff` で**実際に解消されたか**を確かめる。
    「直したと書いてある」ではなく、差分に対応する変更があるかを見る
 3. 未解消の Critical が1件でもあれば `fix-incomplete`、全解消なら `ready-for-reflection`
 
 ## `NOT VERIFIED` の扱い
 
-判断材料として `.ai-workflow2/current-result.md` の `## Acceptance Criteria Verification` を見るとき、
+判断材料として `.ai-workflow/current-result.md` の `## Acceptance Criteria Verification` を見るとき、
 **`NOT VERIFIED` は「検証済み」ではない**。
 
 ただし未検証の AC が残っていても、それが Critical でなければ `ready-for-reflection` でよい。

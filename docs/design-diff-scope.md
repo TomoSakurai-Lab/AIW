@@ -29,11 +29,11 @@ HEAD と単純比較する実装では「常に違反を出す validator」に�
 
 1. 明示引数（CLI `--root`）
 2. **環境変数 `AIW_ROOT`**（既に実装済み）
-3. cwd から上位へ探索。各階層で `<dir>/.ai-workflow2/config/workflow.yaml`
+3. cwd から上位へ探索。各階層で `<dir>/.ai-workflow/config/workflow.yaml`
    または `<dir>/config/workflow.yaml` を探す
-4. 見つからなければ `<cwd>/.ai-workflow2` へフォールバック
+4. 見つからなければ `<cwd>/.ai-workflow` へフォールバック
 
-つまり resolveRoot() が返すのは**ランタイムルート（.ai-workflow2 の場所）だけ**であり、
+つまり resolveRoot() が返すのは**ランタイムルート（.ai-workflow の場所）だけ**であり、
 「検査対象リポジトリのルート」という概念はエンジンのどこにも存在しない。
 前回レビューの指摘どおり、diff-scope が初めてその概念を持ち込む。
 
@@ -54,14 +54,14 @@ untracked 22 件はタスクと無関係な作業中コンポーネント群
 （`adminUser/` `login/` ほか）と `.claude/` `AGENTS.md` 等。
 **「タスク開始前から dirty が多数」は仮定ではなく現在の実態**である。
 
-## 3. .ai-workflow2 の扱い
+## 3. .ai-workflow の扱い
 
-- 親の `.gitignore:349` に `/.ai-workflow2/` があり **ignore されている**
-- `git ls-files .ai-workflow2` は 0 件（追跡なし）
-- 独立リポジトリでもない: `.ai-workflow2/` 内で `git rev-parse --show-toplevel`
+- 親の `.gitignore:349` に `/.ai-workflow/` があり **ignore されている**
+- `git ls-files .ai-workflow` は 0 件（追跡なし）
+- 独立リポジトリでもない: `.ai-workflow/` 内で `git rev-parse --show-toplevel`
   → `<client-repo>`（親）
 
-したがって **.ai-workflow2 配下の変更は親の git status に一切現れない**。
+したがって **.ai-workflow 配下の変更は親の git status に一切現れない**。
 Codex が current-result.md 等を書いても diff には出ない（検査対象外として正しい挙動が
 git 側で無料で手に入る）。
 
@@ -78,10 +78,10 @@ git 側で無料で手に入る）。
 
 | 実行場所 | 結果 |
 | --- | --- |
-| `.ai-workflow2/` | `<client-repo>`（親） |
+| `.ai-workflow/` | `<client-repo>`（親） |
 | `tools/aiw/` | `<client-repo>/tools/aiw`（自身） |
 
-`--show-toplevel` は「最も近い囲みリポジトリ」を返す。.ai-workflow2 は親の中にあるので、
+`--show-toplevel` は「最も近い囲みリポジトリ」を返す。.ai-workflow は親の中にあるので、
 **ランタイムルートの親ディレクトリから引けば検査対象リポジトリが得られる**（既定値として使える）。
 
 ## 追加実測・所見
@@ -89,7 +89,7 @@ git 側で無料で手に入る）。
 - `git stash create` は親リポで成功し dangling commit SHA を返した。ただし
   **untracked を含まない**（含めるには `stash push -u` が必要で、作業ツリーを変更してしまう）。
   実行時に CRLF 変換警告が 8 件出た（autocrlf 環境）。
-- **`.ai-workflow2/templates/context-package.md` は存在しない**（templates/ にあるのは
+- **`.ai-workflow/templates/context-package.md` は存在しない**（templates/ にあるのは
   current-* と research-findings, user-task のみ）。宣言源は research が生成する
   成果物 `context-package.md` の実物であり、`# Files` / `## Modify` の構造は
   workflow.yaml の artifact contract（`artifacts.context-package`）が halt 付きで保証している。
@@ -110,7 +110,7 @@ git 側で無料で手に入る）。
 
 | 概念 | 内容 | 解決手段 |
 | --- | --- | --- |
-| **runtimeRoot** | `.ai-workflow2` の場所。state / config / artifacts | 既存 `resolveRoot()`（--root → AIW_ROOT → 上位探索） |
+| **runtimeRoot** | `.ai-workflow` の場所。state / config / artifacts | 既存 `resolveRoot()`（--root → AIW_ROOT → 上位探索） |
 | **checkRepoRoot** | diff-scope が git コマンドを実行するリポジトリ | 本設計で新設 |
 
 ### checkRepoRoot の解決順（提案）
@@ -346,7 +346,7 @@ skipped + 可視化が正確で、第1部の仕組みがそのまま使える。
 - 末尾 `/` の項目はディレクトリ prefix として配下すべてを許可
 - **glob は v1 では不採用**。宣言を書くのは research（Claude）であり、書式を強制できる。
   glob 展開の実装ミスは偽陰性（見逃し）に直結するため、必要が実証されるまで入れない
-- runtimeRoot 配下のパス（`.ai-workflow2/...`）が宣言に混ざっていても無害
+- runtimeRoot 配下のパス（`.ai-workflow/...`）が宣言に混ざっていても無害
   （ignore 済みで status に現れず、許可集合に余分があっても偽陰性にはならない）
 
 ### 見出し欠落・空セクション

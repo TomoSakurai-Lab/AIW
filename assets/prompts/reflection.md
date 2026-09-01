@@ -7,22 +7,22 @@ Reflection
 
 ## Input
 
-- `.ai-workflow2/current-task.md` — 今回のタスク定義
-- `.ai-workflow2/current-result.md` — 実装結果
-- `.ai-workflow2/current-review.md` — レビュー結果（`## Backlog` を含む）
-- `.ai-workflow2/research-findings.md` — research の調査結果（`# Open Decisions` / `# Risk Areas` の消し込み対象）
-- `.ai-workflow2/context-package.md` — 実装へ渡した宣言
-- `.ai-workflow2/context.md` — プロジェクト長期コンテキスト（更新対象）
-- `.ai-workflow2/learnings.md` — 教訓（更新対象）
-- `.ai-workflow2/backlog.md` — 未着手項目（更新対象）
-- `.ai-workflow2/feature.md` — feature 定義と Phase list（存在する場合）
-- `.ai-workflow2/research/` — 調査メモ（更新対象）
+- `.ai-workflow/current-task.md` — 今回のタスク定義
+- `.ai-workflow/current-result.md` — 実装結果
+- `.ai-workflow/current-review.md` — レビュー結果（`## Backlog` を含む）
+- `.ai-workflow/research-findings.md` — research の調査結果（`# Open Decisions` / `# Risk Areas` の消し込み対象）
+- `.ai-workflow/context-package.md` — 実装へ渡した宣言
+- `.ai-workflow/context.md` — プロジェクト長期コンテキスト（更新対象）
+- `.ai-workflow/learnings.md` — 教訓（更新対象）
+- `.ai-workflow/backlog.md` — 未着手項目（更新対象）
+- `.ai-workflow/feature.md` — feature 定義と Phase list（存在する場合）
+- `.ai-workflow/research/` — 調査メモ（更新対象）
 
 ## Output
 
-- `.ai-workflow2/context.md` / `learnings.md` / `backlog.md` / `research/`（更新）
-- `.ai-workflow2/task-metadata.json`
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/context.md` / `learnings.md` / `backlog.md` / `research/`（更新）
+- `.ai-workflow/task-metadata.json`
+- `.ai-workflow/current-status.json`
 
 ### current-status.json
 

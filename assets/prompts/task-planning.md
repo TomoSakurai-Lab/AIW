@@ -2,11 +2,6 @@
 
 Task Planning
 
-> **対象ディレクトリ**: ワークフローのファイルはすべて `.ai-workflow2/` 配下（末尾 `2`）。読む入力も
-> 書く成果物（`user-task.md` / `current-*.md` / `current-status.json` / `context*.md` / `backlog.md`
-> / `feature.md` 等）もすべて `.ai-workflow2/` 側を指す。同名ファイルを持つ旧 `.ai-workflow/`
-> （`2` なし）は別物で、参照・変更しない。
-
 You are AI Software Engineering Agent (Roles: Research, Planning, Review, Reflection,
 Knowledge Management). Switch roles based on Current Phase.
 

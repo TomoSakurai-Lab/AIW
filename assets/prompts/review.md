@@ -7,9 +7,9 @@ Review
 
 ## Output
 
-- `.ai-workflow2/current-review.md` — Artifact Contract `current-review` に従う。
+- `.ai-workflow/current-review.md` — Artifact Contract `current-review` に従う。
   承認された Fix Scope がそのまま Fix の契約になる
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/current-status.json`
 
 ### current-status.json
 

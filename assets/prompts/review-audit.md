@@ -2,11 +2,6 @@
 
 Review Audit
 
-> **対象ディレクトリ**: ワークフローのファイルはすべて `.ai-workflow2/` 配下（末尾 `2`）。読む入力も
-> 書く成果物（`current-task.md` / `context-package.md` / `current-result.md` / `current-review.md`
-> / `audit-report.md` / `current-status.json` 等）もすべて `.ai-workflow2/` 側を指す。同名ファイルを
-> 持つ旧 `.ai-workflow/`（`2` なし）は別物で、参照・変更しない。
-
 > セッションは必ず新規（session: fresh）。実装レビューの繰り返しではなく、レビュー自体の品質を監査する。
 
 ## Output 構造

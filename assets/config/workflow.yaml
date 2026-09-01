@@ -40,14 +40,14 @@ defaults:
 versions:
   workflow: 5
   prompts:
-    taskPlanning: 3
-    research: 9                # M2 Stage3: 手順を Skill、環境固有手順を local-environment へ分離
-    implementation: 2          # M2 Stage3: 手順を Skill、恒久規則を Instructions へ分解
-    review: 7                  # M2 Stage3: 監査手順を Skill、Backlog 基準を Instructions へ分解
-    fix: 2                     # M2 Stage3: 手順を Skill、恒久規則を Instructions へ分解
-    reviewAudit: 1
-    improveCheck: 5            # M2 Stage3: 判断手順を Skill へ分解
-    reflection: 7              # M2 Stage3: 手順を Skill、backlog/知識ファイルの規則を Instructions へ分解
+    taskPlanning: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    research: 10              # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    implementation: 3         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    review: 8                 # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    fix: 3                    # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    reviewAudit: 2            # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    improveCheck: 6           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    reflection: 8             # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
   templates:
     currentTask: 2
     currentResult: 2           # M1: 検証パッケージ化
@@ -59,14 +59,14 @@ versions:
     acResult: 1                # BL-113: 同上（enum は status の三値のみ）
   # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
   skills:
-    implementation: 3         # ac-* のライフサイクル（前タスク分の置き換え可）と consumerChecks の パス規約
-    fix: 3                     # M3: ac-result の作り直しを追加（v2: Verification Data の使用と検証の段階制）
+    implementation: 4         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    fix: 4                    # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     review: 2                  # Verification Data の記載要件
-    improve-check: 1
-    reflection: 2              # BL-078: metrics.openDecisions を「reflection 時点の未解決のみ」と定義
-    research: 2                # パス規約（checkRepoRoot 相対）を明記
+    improve-check: 2          # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    reflection: 3             # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    research: 3               # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
   instructions:
-    coding-rules: 3            # e2e 規則を「最終検証」と「開発中の反復」で分離
+    coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)
     backlog-rules: 2           # M2 Stage3: backlog.md の書式と語彙を reflection から集約
     knowledge-files: 1

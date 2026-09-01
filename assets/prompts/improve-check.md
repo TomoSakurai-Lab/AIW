@@ -16,7 +16,7 @@ Improve Check
 
 ## Output
 
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/current-status.json`
 
 `reason` は必須。3 フィールドすべて出力する。
 **`result` の許可値は上表の2つだけ**（`ready-for-reflection` / `fix-incomplete`）。

@@ -8,12 +8,12 @@ Local Environment（いずれも存在すれば上に結合済み）にある。
 
 ## Output
 
-- `.ai-workflow2/context-package.md` — Artifact Contract `context-package` に従う。
+- `.ai-workflow/context-package.md` — Artifact Contract `context-package` に従う。
   **Codex 入力**。token-range 検証あり（設定値は workflow.yaml が正本）
-- `.ai-workflow2/research-findings.md` — Artifact Contract `research-findings` に従う。
+- `.ai-workflow/research-findings.md` — Artifact Contract `research-findings` に従う。
   **人間とレビュアー向け**。トークン制約なし
-- `.ai-workflow2/codex-prompt.md` — Artifact Contract `codex-prompt` に従う
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/codex-prompt.md` — Artifact Contract `codex-prompt` に従う
+- `.ai-workflow/current-status.json`
 
 ### current-status.json
 

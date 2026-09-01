@@ -5,15 +5,15 @@ implementation ステップで毎回同じように行う手順。
 
 ## 手順
 
-1. `.ai-workflow2/codex-system.md` / `context-package.md` / `codex-prompt.md` を読む
+1. `.ai-workflow/codex-system.md` / `context-package.md` / `codex-prompt.md` を読む
 2. **実装計画を立てる。このとき `# Acceptance Criteria Matrix` の全行を、AC ごとの
-   検証タスクとして1項目ずつ計画に含め、`.ai-workflow2/ac-manifest.json` に書き出す**（下記）。
+   検証タスクとして1項目ずつ計画に含め、`.ai-workflow/ac-manifest.json` に書き出す**（下記）。
    実装方式だけの計画は不完全で、ここで計測を落とすと以降のどの工程でも戻らない
 3. `codex-prompt.md` に書かれたタスクを実装する。変更範囲・対象ファイル・受入条件・
    必要テストは**その時々の `codex-prompt.md`（および `context-package.md` の Files）に従う**。
    **過去タスクの内容を引き継がない**
 4. `context-package.md` を最小コンテキストとして使い、計画した検証タスクを実行する。
-   **AC を1つ検証するごとに `.ai-workflow2/ac-result.json` へ1レコード追記する**（下記）
+   **AC を1つ検証するごとに `.ai-workflow/ac-result.json` へ1レコード追記する**（下記）
 5. `current-result.md` を**検証パッケージ**として書く（下記）
 6. `current-status.json` を書く
 
@@ -46,11 +46,11 @@ implementation ステップで毎回同じように行う手順。
   consumer 0 件の「implemented」は consumer-presence validator が違反として review へ渡す
   （実測: API 新設・フロント呼び出し元 0 件のまま完了宣言し Critical になった）
 - **`consumerChecks[].root` は checkRepoRoot（検査対象リポジトリのルート）からの相対で書く。**
-  `.ai-workflow2/` からの相対ではない。上の例のように、リポジトリのルートから見た
+  `.ai-workflow/` からの相対ではない。上の例のように、リポジトリのルートから見た
   `Primal.Template.Web.Front/ClientApp/src` の形になる。`pathBase` はその自己申告で、
   現在の許容値は `checkRepoRoot` のみ（省略時も同じ扱い）。基準が変わったときに
   「古い manifest が黙って別の場所を検査する」ことを防ぐために書く
-  （2026-09-04 まで validator 側が `.ai-workflow2/` 起点で解決しており、
+  （かつて validator 側が **runtimeRoot 起点**で解決しており、
   正しく書かれた manifest が全件「root does not exist」になっていた。実測 8 件の偽陽性）
 - 計測しないと決めた AC も**行を消さず** `"notApplicable": true` と `"reason"` で残す
 

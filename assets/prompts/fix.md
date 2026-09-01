@@ -9,16 +9,16 @@ Fix
 
 ## Read
 
-- `.ai-workflow2/codex-system.md`
-- `.ai-workflow2/context-package.md`
-- `.ai-workflow2/current-review.md`
-- `.ai-workflow2/test-report.md`（存在する場合のみ = verify-local が失敗したとき）
+- `.ai-workflow/codex-system.md`
+- `.ai-workflow/context-package.md`
+- `.ai-workflow/current-review.md`
+- `.ai-workflow/test-report.md`（存在する場合のみ = verify-local が失敗したとき）
 
 ## Output
 
 - ソース変更（`current-review.md` の `## Fix Scope` > `### Files To Modify` のみ。**逸脱は即 halt**）
-- `.ai-workflow2/current-result.md` — Artifact Contract `current-result` に従い、作り直す
-- `.ai-workflow2/current-status.json`
+- `.ai-workflow/current-result.md` — Artifact Contract `current-result` に従い、作り直す
+- `.ai-workflow/current-status.json`
 
 ### current-status.json
 

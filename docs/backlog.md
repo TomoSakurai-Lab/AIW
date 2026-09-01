@@ -1,11 +1,11 @@
 # aiw バックログ
 
 **ここは `tools/aiw`（ワークフローエンジン自身）の課題を置く場所。**
-アプリ本体の課題は `.ai-workflow2/backlog.md`（runtime 側）にある。
+アプリ本体の課題は `.ai-workflow/backlog.md`（runtime 側）にある。
 
 ## 2つある理由と、どちらに書くか
 
-| | このファイル | `.ai-workflow2/backlog.md` |
+| | このファイル | `.ai-workflow/backlog.md` |
 | --- | --- | --- |
 | 対象 | エンジン・validator・Skill・プロンプト・aiw の文書 | アプリの機能・画面・仕様判断 |
 | 置き場 | `tools/aiw`（**独立リポジトリ**。親では gitignore） | 親リポジトリの runtime（**親では gitignore**） |

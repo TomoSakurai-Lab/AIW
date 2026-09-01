@@ -192,7 +192,7 @@ clipboard 時代の運用（モデル全ステップ Opus / effort は人間が�
 
 ## 9. 認証後スモーク（2026-08-31・隔離 home で login 後に実測）
 
-人間が `.ai-workflow2/.claude-home/` で `claude auth login` を完了（`--claudeai`）。
+人間が `.ai-workflow/.claude-home/` で `claude auth login` を完了（`--claudeai`）。
 生成物は **`.claude.json` / `.credentials.json` / `backups/`** で、
 **資格情報はファイルとして隔離ディレクトリ内に閉じた**（Windows 資格情報ストアは使われない）。
 `/.claude-home/` は login 前に `.gitignore` へ追加済みで、`git check-ignore` で無視を確認。
@@ -221,9 +221,9 @@ marker 入り `CLAUDE.md`（「読んだら XYZZY-M4 を返せ」）を置いた
 | # | 与えたルール | runtimeRoot 内 | リポジトリ側 | 判定 |
 | --- | --- | --- | --- | --- |
 | 1 | `Read` のみ（Write ルールなし） | 拒否 | 拒否 | dontAsk は未許可を自動拒否する（想定どおり） |
-| 2 | `Write(C:\…\.ai-workflow2\**)`（**バックスラッシュ絶対パス**） | **拒否** | 拒否 | 記法が効いていない |
-| 3 | `Edit(//c/…/.ai-workflow2/**)`（**POSIX 絶対パス**） | **許可** | **拒否** | ✅ **これが正解** |
-| 4 | `Write(//c/…/.ai-workflow2/**)`（POSIX） | **拒否** | 拒否 | **`Write` にパスルールは効かない** |
+| 2 | `Write(C:\…\.ai-workflow\**)`（**バックスラッシュ絶対パス**） | **拒否** | 拒否 | 記法が効いていない |
+| 3 | `Edit(//c/…/.ai-workflow/**)`（**POSIX 絶対パス**） | **許可** | **拒否** | ✅ **これが正解** |
+| 4 | `Write(//c/…/.ai-workflow/**)`（POSIX） | **拒否** | 拒否 | **`Write` にパスルールは効かない** |
 
 確定した仕様（公式ドキュメントとも一致）:
 
@@ -243,7 +243,7 @@ codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude で�
 
 | 確認 | 結果 |
 | --- | --- |
-| `Edit(//c/…/.ai-workflow2/stub.md)` で `stub.md` を編集 | **許可** |
+| `Edit(//c/…/.ai-workflow/stub.md)` で `stub.md` を編集 | **許可** |
 | 同じディレクトリの `marker.txt` を編集 | **拒否**（`permission_denials` に記録） |
 | **0 バイトの `stub.md` を Edit で埋められるか** | **埋められた**（0 → 18 bytes・指定どおりの2行） |
 
@@ -305,7 +305,7 @@ codex A-3 の決定をそのまま写す:
 
 | 項目 | 決定案 |
 | --- | --- |
-| 配置 | **`.ai-workflow2/.claude-home/`**（`settings.claudeHome`、既定は runtime root 相対 `.claude-home`） |
+| 配置 | **`.ai-workflow/.claude-home/`**（`settings.claudeHome`、既定は runtime root 相対 `.claude-home`） |
 | 認証 | **隔離 home で `claude auth login` を人間が1回**。credentials の複製はしない（KI-01 の認証版を作らない） |
 | バックアップリポ | `.gitignore` へ理由付きで追加: `# 認証情報を含みうるため。バックアップ対象は知識であり credentials ではない。` `/.claude-home/` |
 | 不在時 | executor は隔離 home が無ければ **permanent で起動拒否**し、login 手順を案内（codex と同文型） |
@@ -500,7 +500,7 @@ M4 後の改修候補として **BL-115**（diff-scope の「宣言ゼロ」モ�
 
 **再検討条件**: M5（aiw auto）で無人ループに入れる必要が出たとき。
 その場合は**知識ファイルの差分を人間に見せる軽い仕組みとセット**で入れる
-（案: reflection 完了後、`.ai-workflow2` バックアップリポの `git diff --stat` + 知識ファイル差分を
+（案: reflection 完了後、`.ai-workflow` バックアップリポの `git diff --stat` + 知識ファイル差分を
 表示する postAction 相当の表示。バックアップリポは列挙式 .gitignore なので diff が取れる）。
 
 ### research の扱い ← **含める。ただし段階3、かつ条件付き**（2026-08-31 承認）
@@ -847,7 +847,7 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 3 | フラグ実測済み（pin した版で） | ✅ 本文書「調査結果」（2026-08-31・2.1.251） |
 | 4 | この設計文書が承認されている | ✅ **承認・確定**（2026-08-31。課題A〜G 承認 + 委任判断全件決着。未解決の論点 0 件） |
 | 5 | 故障注入リスト（課題K・**11件** = 10件 + BL-071 canary）が合意されている | ✅ 済（2026-08-31。「7件」は設計プロンプト時点の初期数で、11 件が確定値） |
-| 6 | 隔離 home（`.ai-workflow2/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | ✅ 済（2026-08-31・§9） |
+| 6 | 隔離 home（`.ai-workflow/.claude-home/`）で `claude auth login` 済み（**人間が実施**）。login 後、資格情報が隔離内に閉じ、デスクトップアプリ側の認証・設定が不変であることを確認 | ✅ 済（2026-08-31・§9） |
 | 7 | 認証後スモーク: marker 方式の CLAUDE.md 混入なし確認 + allowedTools の実地強制確認（拒否が permission_denials に載る） | ✅ 済（2026-08-31・§9-1 / §9-2）。**設計の訂正1件を伴った**（Write → Edit） |
 | 8 | `docs/baseline.md` のバックアップ済み（人間。親リポ未コミットの単一コピー） | 未（実在は確認済み・46KB。**遡及注記 2026-08-31 を追記済みなので、バックアップはその後に取ること**） |
 | 9 | タスク境界にいる | 実装着手時に確認 |
@@ -867,7 +867,7 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2026-08-31 | 順序 | **improve-check → review → research（段階3・条件付き）**。research の着手条件は「halt 系遷移が成果物を書いて止まることの故障注入確認済み」。**承認済み** | 課題C |
 | 2026-08-31 | **reflection は M4 では自動化しない**（実装しない判断） | clipboard のまま。**再検討条件: M5 の無人ループで必要になったとき、知識ファイル差分を人間に見せる仕組み（バックアップリポの diff 提示）とセットでのみ入れる** | 承認ゲートが無い唯一の Claude ステップ。知識汚染のリスクに対し利得 6分/タスク |
 | 2026-08-31 | プロンプトの受け渡し | **stdin**。分割せず全 assembly を user message として渡す。system prompt は既定 preset。**再検討条件付き: 実測で `cacheRead / input` 中央値 < 80% なら `--append-system-prompt` 分割を測って比較する**（M3 C1 と同じ扱い） | §4 実測 / 課題D |
-| 2026-08-31 | 隔離 | **`CLAUDE_CONFIG_DIR=.ai-workflow2/.claude-home`** + `--setting-sources ""` + **env は許可リスト方式**（拒否リストにしない） | §2 / §6 実測。codex A-3 の適用 |
+| 2026-08-31 | 隔離 | **`CLAUDE_CONFIG_DIR=.ai-workflow/.claude-home`** + `--setting-sources ""` + **env は許可リスト方式**（拒否リストにしない） | §2 / §6 実測。codex A-3 の適用 |
 | 2026-08-31 | session の永続化 | **`--no-session-persistence` を既定にする** | fresh 固定と整合、かつ**生 session ID の露出経路を1つ消す**（transcript ファイル名）。JSONL は runs/ に tee するので隔離 home の transcript は冗長。grep テストの対象も減る |
 | 2026-08-31 | model-policy.json | **正本を settings へ統合**（`settings.claudeModel` + `steps.<id>.model`、配線とテスト同一コミット）。model-policy.json は削除 | 課題E。KI-09 系譜 #9 の解消 |
 | 2026-08-31 | タイムアウト | **既定 40 分 + ステップ別上書き**（`steps.<id>.timeoutMs`） | review 実測 13 分 × 3。codex（17 分→30 分）と整合。research は未実測のため上書き口が要る |

@@ -34,8 +34,8 @@ AI がやると二重処理になる。
 2. `current-review.md` の `## Backlog` を `backlog.md` へ転記する（書式は Project Instructions）
 3. **`research-findings.md` を消し込む**（下記・必須）
 4. `research/` に後続タスクで参照される調査メモがあれば更新する。なければ触らない
-5. `.ai-workflow2/task-metadata.json` を書く（下記）
-6. `.ai-workflow2/current-status.json` を書く
+5. `.ai-workflow/task-metadata.json` を書く（下記）
+6. `.ai-workflow/current-status.json` を書く
 
 ## research-findings.md の消し込み ← 必須
 
@@ -73,7 +73,7 @@ AI がやると二重処理になる。
 
 ## task-metadata.json
 
-`.ai-workflow2/task-metadata.json` に出力する。CLI が archive へ退避する。
+`.ai-workflow/task-metadata.json` に出力する。CLI が archive へ退避する。
 
 ```json
 {
