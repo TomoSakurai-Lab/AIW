@@ -4,26 +4,6 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { Command } from "commander";
 import {
-  getWorkflowContext,
-  readWorkflowFileIfExists,
-  REQUIRED_STATUS_FILES,
-  warnMissingWorkflowFile,
-  workflowFileExists
-} from "./files.js";
-import { runHeartbeat } from "./heartbeat.js";
-import { phaseForStep, readModelPolicy } from "./policy.js";
-import {
-  CODEX_PROMPT,
-  FIX_PROMPT,
-  IMPROVE_CHECK_PROMPT,
-  REFLECT_PROMPT,
-  RESEARCH_DEFAULT_PROMPT,
-  REVIEW_PROMPT,
-  loadTemplateOrDefault,
-  outputPrompt
-} from "./prompt.js";
-import { readState, updateState } from "./state.js";
-import {
   approve as engineApprove,
   execStep as engineExecStep,
   initRoot,
@@ -38,7 +18,7 @@ import {
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, visibleOnScreen } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
 import { findRunFile, formatRunLog, readRunLog } from "./engine/codexLog.js";
-import { resolveRoot, rootPaths } from "./engine/paths.js";
+import { resolveRoot, rootPaths, RUNTIME_DIR_NAME } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
 import { deleteBaseline, readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
 import { buildObserved } from "./engine/observed.js";
@@ -53,7 +33,7 @@ program
   .name("aiw")
   .description("AI workflow engine CLI (config-driven, stateful; design rev.5)")
   .version("0.3.0")
-  .option("--root <dir>", "workflow root (default: resolve .ai-workflow2 or AIW_ROOT)");
+  .option("--root <dir>", `workflow root (default: resolve ${RUNTIME_DIR_NAME} or AIW_ROOT)`);
 
 function engineRoot(): string {
   return resolveRoot(program.opts().root as string | undefined);
@@ -328,7 +308,9 @@ program
   .description("Scaffold a new workflow root (mirrors design §12)")
   .option("--force", "overwrite existing config")
   .action((dir: string | undefined, opts: { force?: boolean }) => {
-    const root = resolveRoot(dir ?? (program.opts().root as string | undefined) ?? ".ai-workflow2");
+    // ⚠️ 既定名をここへ書かない。resolveRoot のフォールバック（= RUNTIME_DIR_NAME）へ委ねる。
+    // 直書きすると migration guard を迂回し、改名前の環境で空のランタイムを作ってしまう。
+    const root = resolveRoot(dir ?? (program.opts().root as string | undefined));
     initRoot(root, Boolean(opts.force));
     console.log(`initialized workflow root: ${root}`);
   });
@@ -432,19 +414,6 @@ program
   .description('Reset to a fresh Task Planning start (clears user-task.md + current-* to templates)')
   .action(() => engineNewTaskCmd());
 
-program.command("legacy-status").description("[legacy] Show .ai-workflow state and required file status").action(runStatus);
-program.command("legacy-next").description("[legacy] Run the next .ai-workflow prompt command").action(runNext);
-program.command("heartbeat").description("Generate a heartbeat prompt").action(runHeartbeatCommand);
-program.command("research").description("Generate a research prompt").action(runResearch);
-program.command("codex").description("Generate a Codex implementation prompt").action(runCodex);
-program.command("review").description("Generate a review prompt").action(runReview);
-program.command("fix").description("Generate a Fix Scope prompt").action(runFix);
-program
-  .command("improve-check")
-  .description("Generate an improve-check prompt after fixes")
-  .action(runImproveCheck);
-program.command("reflect").description("Generate a reflection prompt").action(runReflect);
-program.command("policy").description("Show recommended model and effort for each phase").action(runPolicy);
 program.command("shell").description("Start an interactive REPL that accepts workflow commands").action(runShell);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
@@ -453,256 +422,10 @@ program.parseAsync(process.argv).catch((error: unknown) => {
   process.exitCode = 1;
 });
 
-async function runStatus(): Promise<void> {
-  const ctx = getWorkflowContext();
-  const state = await readState(ctx);
-
-  console.log("AI Workflow Status");
-  console.log(`root: ${ctx.rootDir}`);
-  console.log("");
-  console.log("state:");
-  for (const [key, value] of Object.entries(state)) {
-    console.log(`  ${key}: ${value === null ? "null" : String(value)}`);
-  }
-
-  console.log("");
-  console.log("files:");
-  for (const file of REQUIRED_STATUS_FILES) {
-    const mark = workflowFileExists(ctx, file) ? "ok" : "missing";
-    console.log(`  ${mark.padEnd(7)} .ai-workflow/${file}`);
-  }
-
-  const policy = await readModelPolicy(ctx);
-  const phase = phaseForStep(String(state.currentStep));
-  const entry = phase ? policy[phase] : undefined;
-
-  console.log("");
-  console.log(`Current Step: ${state.currentStep}`);
-  console.log("");
-  if (entry) {
-    console.log("Recommended:");
-    console.log(`- Model: ${entry.model}`);
-    console.log(`- Effort: ${entry.effort}`);
-    console.log(`- Reason: ${entry.reason}`);
-  } else {
-    console.log("Recommended: (no model policy defined for this step)");
-  }
-}
-
-async function runNext(): Promise<void> {
-  const decision = await resolveNextCommand();
-
-  if (decision.command) {
-    console.error(`next: aiw ${decision.command}`);
-    console.error(`reason: ${decision.reason}`);
-    await runWorkflowCommand(decision.command);
-    return;
-  }
-
-  console.log("Next command suggestion");
-  if (decision.currentStep) {
-    console.log(`currentStep: ${decision.currentStep}`);
-  }
-  if (decision.ready) {
-    console.log(`reviewReady: ${decision.ready}`);
-  }
-  console.log("");
-  printNext(decision.label, decision.reason);
-}
-
-async function resolveNextCommand(): Promise<NextDecision> {
-  const ctx = getWorkflowContext();
-  const state = await readState(ctx);
-  const hasResult = workflowFileExists(ctx, "current-result.md");
-  const hasReview = workflowFileExists(ctx, "current-review.md");
-  const reviewText = hasReview ? await readWorkflowFileIfExists(ctx, "current-review.md") : null;
-  const ready = parseReady(reviewText);
-
-  switch (state.currentStep) {
-    case "idle":
-      return nextCommand("research", "Prepare research output, context-package.md, and codex-prompt.md.", state.currentStep, ready);
-    case "research":
-      return nextCommand("codex", "Send the implementation prompt to a task-scoped Codex session.", state.currentStep, ready);
-    case "codex-running":
-      if (hasResult) {
-        return nextCommand("review", "current-result.md exists, so review can start.", state.currentStep, ready);
-      }
-      return nextCommand("heartbeat", "Codex is still running; send a heartbeat prompt.", state.currentStep, ready);
-    case "review":
-      if (!hasReview) {
-        return nextCommand("review", "current-review.md is not available yet.", state.currentStep, ready);
-      }
-      if (ready === "READY FOR FIX") {
-        return nextCommand("fix", "The review says Critical/Major fixes are required.", state.currentStep, ready);
-      }
-      if (ready === "READY FOR REFLECTION") {
-        return nextCommand("reflect", "The review is ready for reflection.", state.currentStep, ready);
-      }
-      return nextSuggestion("aiw fix or aiw reflect", "Check current-review.md Ready and Fix Scope sections.", state.currentStep, ready);
-    case "fix":
-      return nextCommand("improve-check", "After fixes, verify that Critical items are resolved.", state.currentStep, ready);
-    case "improve-check":
-      if (ready === "READY FOR REFLECTION") {
-        return nextCommand("reflect", "Improve Check indicates reflection can start.", state.currentStep, ready);
-      }
-      return nextCommand("improve-check", "Run Improve Check again, or run aiw fix manually if Critical remains.", state.currentStep, ready);
-    case "reflection":
-    case "done":
-      return nextSuggestion("done", "Workflow is complete.", state.currentStep, ready);
-    default:
-      return nextSuggestion("aiw status", "currentStep is unknown; inspect state before continuing.", String(state.currentStep), ready);
-  }
-}
-
-async function runWorkflowCommand(command: NextRunnableCommand): Promise<void> {
-  switch (command) {
-    case "heartbeat":
-      await runHeartbeatCommand();
-      break;
-    case "research":
-      await runResearch();
-      break;
-    case "codex":
-      await runCodex();
-      break;
-    case "review":
-      await runReview();
-      break;
-    case "fix":
-      await runFix();
-      break;
-    case "improve-check":
-      await runImproveCheck();
-      break;
-    case "reflect":
-      await runReflect();
-      break;
-  }
-}
-
-async function runHeartbeatCommand(): Promise<void> {
-  const ctx = getWorkflowContext();
-  const prompt = await runHeartbeat(ctx);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "implementation");
-}
-
-async function runResearch(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "current-task.md");
-  const prompt = await loadTemplateOrDefault(ctx, "research.md", RESEARCH_DEFAULT_PROMPT);
-  await updateState(ctx, { currentStep: "research" });
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "research");
-}
-
-async function runCodex(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "codex-system.md");
-  warnMissingWorkflowFile(ctx, "context-package.md");
-  warnMissingWorkflowFile(ctx, "codex-prompt.md");
-  await updateState(ctx, {
-    currentStep: "codex-running",
-    codexRunning: true
-  });
-  const prompt = await loadTemplateOrDefault(ctx, "coding.md", CODEX_PROMPT);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "implementation");
-}
-
-async function runReview(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "context.md");
-  warnMissingWorkflowFile(ctx, "current-task.md");
-  warnMissingWorkflowFile(ctx, "context-package.md");
-  warnMissingWorkflowFile(ctx, "codex-prompt.md");
-  warnMissingWorkflowFile(ctx, "current-result.md");
-  await updateState(ctx, {
-    currentStep: "review",
-    codexRunning: false
-  });
-  const prompt = await loadTemplateOrDefault(ctx, "review.md", REVIEW_PROMPT);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "review");
-}
-
-async function runFix(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "codex-system.md");
-  warnMissingWorkflowFile(ctx, "context-package.md");
-  warnMissingWorkflowFile(ctx, "current-review.md");
-  await updateState(ctx, {
-    currentStep: "fix",
-    codexRunning: true
-  });
-  const prompt = await loadTemplateOrDefault(ctx, "improve.md", FIX_PROMPT);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "fix");
-}
-
-async function runImproveCheck(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "current-review.md");
-  warnMissingWorkflowFile(ctx, "current-result.md");
-  await updateState(ctx, {
-    currentStep: "improve-check",
-    codexRunning: false
-  });
-  const prompt = await loadTemplateOrDefault(ctx, "improve-check.md", IMPROVE_CHECK_PROMPT);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "improve-check");
-}
-
-async function runReflect(): Promise<void> {
-  const ctx = getWorkflowContext();
-  warnMissingWorkflowFile(ctx, "context.md");
-  warnMissingWorkflowFile(ctx, "current-task.md");
-  warnMissingWorkflowFile(ctx, "context-package.md");
-  warnMissingWorkflowFile(ctx, "current-result.md");
-  warnMissingWorkflowFile(ctx, "current-review.md");
-  warnMissingWorkflowFile(ctx, "learnings.md");
-  await updateState(ctx, {
-    currentStep: "reflection",
-    codexRunning: false
-  });
-  const prompt = await loadTemplateOrDefault(ctx, "reflection.md", REFLECT_PROMPT);
-  await outputPrompt(prompt);
-  await printRecommendation(ctx, "reflection");
-}
-
-async function printRecommendation(ctx: ReturnType<typeof getWorkflowContext>, phase: string): Promise<void> {
-  const policy = await readModelPolicy(ctx);
-  const entry = policy[phase];
-  if (!entry) {
-    return;
-  }
-
-  console.log("");
-  console.log("Recommended:");
-  console.log(`- Model: ${entry.model}`);
-  console.log(`- Effort: ${entry.effort}`);
-  console.log(`- Reason: ${entry.reason}`);
-}
-
-async function runPolicy(): Promise<void> {
-  const ctx = getWorkflowContext();
-  const policy = await readModelPolicy(ctx);
-
-  console.log("Model Policy (recommended model and effort per phase)");
-  console.log("");
-  for (const [phase, entry] of Object.entries(policy)) {
-    console.log(`${phase}:`);
-    console.log(`- Model: ${entry.model}`);
-    console.log(`- Effort: ${entry.effort}`);
-    console.log(`- Reason: ${entry.reason}`);
-    console.log("");
-  }
-}
-
 // REPL dispatch. Engine commands (rev.5) are first-class; legacy prompt helpers stay reachable.
 async function runShellCommand(command: string, args: string[]): Promise<void> {
   switch (command) {
-    // ---- engine (design rev.5, .ai-workflow2/) ----
+    // ---- engine (design rev.5) ----
     case "status": {
       printStatus(args.includes("--summary"), args.includes("--json"));
       return;
@@ -754,37 +477,6 @@ async function runShellCommand(command: string, args: string[]): Promise<void> {
       return;
     case "drive":
       console.log("`drive` は shell 外で `aiw drive` として実行してください（対話ループのため）。");
-      return;
-    // ---- legacy prompt helpers (.ai-workflow/) ----
-    case "legacy-status":
-      await runStatus();
-      return;
-    case "legacy-next":
-      await runNext();
-      return;
-    case "heartbeat":
-      await runHeartbeatCommand();
-      return;
-    case "research":
-      await runResearch();
-      return;
-    case "codex":
-      await runCodex();
-      return;
-    case "review":
-      await runReview();
-      return;
-    case "fix":
-      await runFix();
-      return;
-    case "improve-check":
-      await runImproveCheck();
-      return;
-    case "reflect":
-      await runReflect();
-      return;
-    case "policy":
-      await runPolicy();
       return;
     default:
       console.log('Unknown command. Type "help" for available commands.');
@@ -991,7 +683,7 @@ async function runShell(): Promise<void> {
 }
 
 function printShellHelp(): void {
-  console.log("Engine commands (design rev.5, .ai-workflow2/):");
+  console.log(`Engine commands (design rev.5, ${RUNTIME_DIR_NAME}/):`);
   console.log("  status [--summary] [--json]");
   console.log("                    Engine state. --summary adds Open Decisions / Manual Verification / High Risk / AC");
   console.log("  next              Suggest the next engine action");
@@ -1004,86 +696,6 @@ function printShellHelp(): void {
   console.log("  new-task          Reset to a fresh Task Planning start (clears user-task.md + current-*)");
   console.log("  (drive)           Interactive y/n driver — run as `aiw drive` outside the shell");
   console.log("");
-  console.log("Legacy prompt helpers (.ai-workflow/):");
-  console.log("  legacy-status     [legacy] Show .ai-workflow state and required file status");
-  console.log("  legacy-next       [legacy] Run the next .ai-workflow prompt command");
-  console.log("  heartbeat         Generate a heartbeat prompt");
-  console.log("  research          Generate a research prompt");
-  console.log("  codex             Generate a Codex implementation prompt");
-  console.log("  review            Generate a review prompt");
-  console.log("  fix               Generate a Fix Scope prompt");
-  console.log("  improve-check     Generate an improve-check prompt after fixes");
-  console.log("  reflect           Generate a reflection prompt");
-  console.log("  policy            Show recommended model and effort for each phase");
-  console.log("");
   console.log("  help              Show this help message");
   console.log("  exit | quit       Exit the REPL");
-}
-
-function parseReady(reviewText: string | null): "READY FOR FIX" | "READY FOR REFLECTION" | null {
-  if (!reviewText) {
-    return null;
-  }
-
-  if (reviewText.includes("READY FOR FIX")) {
-    return "READY FOR FIX";
-  }
-
-  if (reviewText.includes("READY FOR REFLECTION")) {
-    return "READY FOR REFLECTION";
-  }
-
-  return null;
-}
-
-type NextRunnableCommand =
-  | "heartbeat"
-  | "research"
-  | "codex"
-  | "review"
-  | "fix"
-  | "improve-check"
-  | "reflect";
-
-type NextDecision = {
-  command: NextRunnableCommand | null;
-  label: string;
-  reason: string;
-  currentStep?: string;
-  ready?: "READY FOR FIX" | "READY FOR REFLECTION" | null;
-};
-
-function nextCommand(
-  command: NextRunnableCommand,
-  reason: string,
-  currentStep?: string,
-  ready?: "READY FOR FIX" | "READY FOR REFLECTION" | null
-): NextDecision {
-  return {
-    command,
-    label: `aiw ${command}`,
-    reason,
-    currentStep,
-    ready
-  };
-}
-
-function nextSuggestion(
-  label: string,
-  reason: string,
-  currentStep?: string,
-  ready?: "READY FOR FIX" | "READY FOR REFLECTION" | null
-): NextDecision {
-  return {
-    command: null,
-    label,
-    reason,
-    currentStep,
-    ready
-  };
-}
-
-function printNext(command: string, reason: string): void {
-  console.log(`next: ${command}`);
-  console.log(`reason: ${reason}`);
 }

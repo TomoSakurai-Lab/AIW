@@ -20,4 +20,5 @@ import "./codex-executor.test.js";
 import "./codex-integration.test.js";
 import "./codex-log.test.js";
 import "./ac-lifecycle.test.js";
+import "./runtime-dir-name.test.js";
 import "./ac-schema.test.js";

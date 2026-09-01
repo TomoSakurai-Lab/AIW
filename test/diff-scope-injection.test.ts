@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { runStep } from "../src/engine/engine.js";
 import { captureIfAbsent, readBaseline } from "../src/engine/gitScope.js";
+import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import { runValidators, type ValidationOutcome } from "../src/engine/validators.js";
 import { makeRoot, setStep, validResult, writeIn, writeStatus } from "./helpers.js";
 
@@ -39,7 +40,7 @@ const PKG = (modify: string[]): string =>
     "## Reference",
     "- x",
     "## Ignore",
-    "- .ai-workflow2/",
+    `- ${RUNTIME_DIR_NAME}/`,
     "# Acceptance Criteria Matrix",
     "| ID | Expected Behavior | Verification | Evidence Required |",
     "|---|---|---|---|",
@@ -206,7 +207,7 @@ test("64 (#6): a commit during the task is a note, not a violation", () => {
 // #8 ビルド生成物 / ignore 済み → 違反にしない
 test("65 (#8): ignored build output is never a violation", () => {
   const ctx = arrangeImplementation();
-  put(ctx.repoRoot, ".gitignore", [".ai-workflow2/", "dist/", "node_modules/", ""].join("\n"));
+  put(ctx.repoRoot, ".gitignore", [`${RUNTIME_DIR_NAME}/`, "dist/", "node_modules/", ""].join("\n"));
   git(ctx.repoRoot, "add", "-A");
   git(ctx.repoRoot, "commit", "-qm", "ignore build output");
   capture(ctx, "implementation", 0);

@@ -8,6 +8,7 @@ import { estimateTokens } from "../src/engine/tokens.js";
 import { buildSummary, formatSummary } from "../src/engine/summary.js";
 import { versionInfo } from "../src/engine/versions.js";
 import { runValidators } from "../src/engine/validators.js";
+import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import {
   makeRoot,
   setStep,
@@ -93,7 +94,7 @@ IME 変換中の挙動は現状を維持する。
 ## Reference
 - docs/現状仕様.md
 ## Ignore
-- .ai-workflow2/ 配下すべて（context-package.md / codex-prompt.md / research-findings.md /
+- ${RUNTIME_DIR_NAME}/ 配下すべて（context-package.md / codex-prompt.md / research-findings.md /
   current-task.md / current-review.md / state.json）
 
 # Acceptance Criteria Matrix

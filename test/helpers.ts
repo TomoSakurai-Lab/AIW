@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { initRoot, loadConfig } from "../src/engine/engine.js";
+import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import { updateState } from "../src/engine/state.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
 
@@ -19,11 +20,11 @@ export function makeRoot(): { root: string; config: WorkflowConfig; repoRoot: st
   g("config", "user.email", "t@example.com");
   g("config", "user.name", "t");
   g("config", "commit.gpgsign", "false");
-  writeFileSync(path.join(repoRoot, ".gitignore"), [".ai-workflow2/", ""].join("\n"), "utf8");
+  writeFileSync(path.join(repoRoot, ".gitignore"), [`${RUNTIME_DIR_NAME}/`, ""].join("\n"), "utf8");
   g("add", "-A");
   g("commit", "-qm", "init");
 
-  const root = path.join(repoRoot, ".ai-workflow2");
+  const root = path.join(repoRoot, RUNTIME_DIR_NAME);
   initRoot(root);
   return { root, config: loadConfig(root), repoRoot };
 }
