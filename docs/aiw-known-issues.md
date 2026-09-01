@@ -26,7 +26,7 @@
 > ⚠️ **2026-09-02: ランタイムを `.ai-workflow2/` → `.ai-workflow/` へ改名した。**
 > 本文書の記録に出てくる `.ai-workflow2` は現 `.ai-workflow` を指す。
 > 系譜表・実害の記述は**当時の記録なので書き換えていない**。
-> 同時に v0.2 レガシー `.ai-workflow/`（別物）を撤去した。
+> 同時に v0.2 レガシー `.ai-workflow/`（別物）を撤去した（本文書末尾に記録）。
 
 ## KI-01: assets と runtime で同じバージョン番号なのに中身が違う
 
@@ -682,3 +682,63 @@ rev.5 以前の設計では fix 用のプロンプトを別ファイルへ切り
 
 **書式例には実在しない値を使う。** 同種の残骸を探すときは、
 プロンプト内の ID・パス・ファイル名が実在物を指していないかを見る。
+
+---
+
+## v0.2 レガシー `.ai-workflow/` の撤去（2026-09-02）
+
+### 何を消したか
+
+| 対象 | 規模 |
+| --- | --- |
+| ディレクトリ `.ai-workflow/`（v0.2 の成果物・知識ファイル） | 355 ファイル / 3.0 MB |
+| レガシー CLI のコード（`src/files.ts` / `heartbeat.ts` / `policy.ts` / `prompt.ts` / `state.ts`） | 406 行 |
+| レガシー CLI コマンド 11 件 | `legacy-status` / `legacy-next` / `heartbeat` / `research` / `codex` / `review` / `fix` / `improve-check` / `reflect` / `policy` |
+
+### バックアップの所在（復元可能）
+
+`C:\Users\tomo.sakurai\aiw-backup\20260901-rename\`
+
+| ファイル | 中身 |
+| --- | --- |
+| `legacy-ai-workflow-v02.tar.gz` | 削除したレガシー 355 ファイル全量 |
+| `ai-workflow2-runtime.bundle` | 退避リポの全履歴（改名直前） |
+| `ai-workflow2-runtime-full.tar.gz` | runtime 全体（Event Log / archive 込み） |
+| `SHA256SUMS.txt` / `README.md` | チェックサムと復元手順 |
+
+復元確認は取得時に全件実施済み（bundle は clone して追跡36ファイルを1件ずつ diff、
+レガシーは展開して `diff -r` で差分ゼロ、runtime full は Event Log のバイト一致）。
+
+⚠️ **資格情報（`.codex-home` / `.claude-home`）は意図的に除外**している。
+バックアップ対象は知識であって credentials ではない。失っても再ログインで戻る。
+
+⚠️ **同一ディスク上のコピー**なので、ディスク障害には耐えない。
+
+### なぜ撤去したか
+
+レガシー CLI は `.ai-workflow/` を**ハードコード**していた。改名すると
+これらが**新しい runtime を指す**という衝突が起きる:
+
+- `policy.ts` が `model-policy.json` を新 runtime に**作る**（課題E で廃止と決めたファイル）
+- `state.ts` が新 runtime の `state.json` を**旧スキーマで**読み書きする
+- `review` / `fix` / `improve-check` が**エンジンのステップ名と同名**で、
+  打ち間違いで旧契約のプロンプトが出る
+
+この撤去により **KI-09 系譜 #9（`model-policy.json` は旧 CLI 経路しか読まない）は
+読む側ごと消えて解消**した。
+
+### 削除前に確認したこと
+
+- レガシー側で 2026-07-21 以降に更新されたファイルは **1 件のみ**
+  （`current-result.md`・2026-09-01 18:03）。それ以外は 7 月で凍結
+- その 1 件は **v0.2 の契約**（`# Summary` / `# Background` / `# Implementation` /
+  `# Files Changed`）で書かれており、自身の `Files Changed` に
+  `.ai-workflow/current-result.md` を挙げている。v2 のワークフローの産物ではない
+- 内容の話題（元積引用ボタン）は v2 側の `archive/` に **96 箇所**現れており、
+  レガシー側にしか無い知識ではない
+- 親リポでの追跡 0 件・gitignore 済み
+
+⚠️ **ただし「誰が 9/1 に書いたか」は特定できていない。**
+実行中のエージェントがパスを取り違えた可能性と、人間が旧プロンプトで
+Codex を回した可能性の両方が残る。**前者なら、免責ブロックは効いていなかった**
+ことになる——これがリネームの動機の一つだった。
