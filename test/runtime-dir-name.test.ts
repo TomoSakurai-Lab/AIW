@@ -90,10 +90,13 @@ test("runtime dir name: an explicit root bypasses the guard", () => {
   );
 });
 
-// 段階2の状態を固定する: 定数はまだ改名前の名前。
-// ⚠️ この assertion は**段階3で落ちるのが正しい**。落ちたら定数を切り替えた合図として
-// この期待値を `.ai-workflow` へ直す（テストを消すのではなく期待値を動かす）。
-test("runtime dir name: stage 2 keeps the constant at the pre-rename value", () => {
-  assert.equal(RUNTIME_DIR_NAME, ".ai-workflow2", "段階2ではまだ改名しない（既存環境が動き続ける）");
-  assert.equal(PRE_RENAME_DIR_NAME, ".ai-workflow2", "移行元の名前は固定");
+// 段階3を固定する: 定数は改名後の名前、移行元の名前は据え置き。
+// ⚠️ **2つが同じ値に戻ったら移行ガードは沈黙する**（resolveRoot が
+// runtimeDirName !== preRenameDirName でしかガードを走らせないため）。
+// PRE_RENAME_DIR_NAME を「今の名前」へ更新したくなったら、それはガードを
+// 無効化する変更だと理解した上でやること。
+test("runtime dir name: stage 3 switched the constant and kept the guard armed", () => {
+  assert.equal(RUNTIME_DIR_NAME, ".ai-workflow", "段階3で改名済み");
+  assert.equal(PRE_RENAME_DIR_NAME, ".ai-workflow2", "移行元の名前は固定（古い環境からの復元を検知する）");
+  assert.notEqual(RUNTIME_DIR_NAME, PRE_RENAME_DIR_NAME, "同値になるとガードが沈黙する");
 });

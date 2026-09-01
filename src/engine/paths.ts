@@ -15,7 +15,7 @@ export const CONFIG_MARKER = path.join("config", "workflow.yaml");
  * すべてここを参照する。増やすと「片方だけ直して片方が古い名前を見る」形になり、
  * 検査が黙って空振りする（KI-09 系譜 #11 と同じ壊れ方）。
  */
-export const RUNTIME_DIR_NAME = ".ai-workflow2";
+export const RUNTIME_DIR_NAME = ".ai-workflow";
 
 /**
  * リネーム移行の検知用。**`RUNTIME_DIR_NAME` とは独立に固定する。**
