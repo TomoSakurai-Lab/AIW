@@ -36,6 +36,16 @@ reflection が `current-review.md` の `## Backlog` を**出典タスク ID 付�
 ただし **`Trigger:`（着手条件）が書かれていない項目は転記しない**。
 上の基準を満たしていないため、`## Minor` として archive に残すだけでよい。
 
+⚠️ **この「転記しない」は review の `## Backlog` に限る。**
+fix が見送った Fix Scope の Major（`current-result.md` に理由が記録され、
+improve-check を通過したもの）は**別扱い**で、Trigger が無くても捨てない——
+reflection が着手条件を補って転記する。
+
+理由: 前者は「基準を満たさなかったので上げない」だが、後者は
+**「後でやると決めて通過させた」項目**である。捨てると
+「improve-check を通過したのに誰も拾わない」になり、見送りを通過扱いにする
+設計そのものが崩れる。
+
 ```md
 ## BL-001
 

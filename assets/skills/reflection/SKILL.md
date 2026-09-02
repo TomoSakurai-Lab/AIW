@@ -32,10 +32,29 @@ AI がやると二重処理になる。
 
 1. `context.md` / `learnings.md` を更新する（判定基準は Project Instructions）
 2. `current-review.md` の `## Backlog` を `backlog.md` へ転記する（書式は Project Instructions）
+2b. **fix が見送った Fix Scope の Major を `backlog.md` へ積む**（下記）
 3. **`research-findings.md` を消し込む**（下記・必須）
 4. `research/` に後続タスクで参照される調査メモがあれば更新する。なければ触らない
 5. `.ai-workflow/task-metadata.json` を書く（下記）
 6. `.ai-workflow/current-status.json` を書く
+
+## fix が見送った Major の転記
+
+⚠️ **`## Backlog` だけを見ていると漏れる。** `current-review.md` は fix より**前**に
+書かれるので、fix が「Scope 外へ波及するため見送る」と判断した Major は
+そこには載っていない。載っているのは `current-result.md` の方である。
+
+`current-result.md` に記録された**見送りの理由**を1件ずつ見て、`backlog.md` へ転記する:
+
+- `Source:` は出典タスク ID + `current-result.md`（`current-review.md` ではない）
+- `Severity:` は元の指摘に従う（Fix Scope の Major なので通常 `Major`）
+- `Trigger:` は fix が書いた着手条件。無ければここで補う。
+  **書けないなら転記しない**のではなく、書けるまで考える——
+  improve-check を通過した見送りは「後でやる」と決めた項目であり、
+  Trigger 無しで捨てると「通過したのに誰も拾わない」になる
+
+> **この経路が無いと、見送りは improve-check を通過した時点で消える。**
+> 見送りを通過扱いにする設計は、backlog へ積む担当がいて初めて成立する。
 
 ## research-findings.md の消し込み ← 必須
 

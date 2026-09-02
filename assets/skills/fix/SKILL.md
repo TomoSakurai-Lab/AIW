@@ -20,6 +20,18 @@ fix ステップで毎回同じように行う手順。
 実測: 想定値（`quantity=2` / `amount=202`）で検証して実値（`608.490` / `61,457`）と
 食い違い、手戻りが発生した。**実値は `## Verification Data` に書かれていた。**
 
+## Major を意図的に直さないとき ← **記録が無いと差し戻される**
+
+Fix Scope の Major を修正しないと判断した場合、`current-result.md` に
+**対象と理由を明記する**（例: 修正が Scope 外へ波及するため見送り、backlog 起票を提案）。
+
+**記録の無い未解消は improve-check で `fix-incomplete` になる。**
+見送りが正しい判断である場合はあるが、それは**書いてあって初めて判断として扱われる**。
+黙って残すと「直し忘れ」と区別が付かない。
+
+見送った Major は reflection が backlog へ積む。`Trigger:`（着手条件）まで書いておくと
+そのまま転記できる（書式は Project Instructions）。
+
 ## Fix Scope の読み方
 
 - `### Files To Modify` が変更してよいファイルの全体。**ここから外れたら halt する**

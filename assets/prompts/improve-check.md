@@ -7,12 +7,14 @@ Improve Check
 
 ## Goal
 
-ブロッキングなレビュー指摘（Critical）が解消されたことを検証する。2 値判定を返す。
+**Fix Scope の契約が閉じたことを検証する。** 2 値判定を返す。
 
 | result | 基準 |
 |--------|------|
-| `ready-for-reflection` | Critical 全解消 → reflection へ進む |
-| `fix-incomplete` | 未解消の Critical が残存 → Fix へ差し戻し |
+| `ready-for-reflection` | Critical 全解消、かつ Fix Scope の Major が全件「解消」または「理由付き見送り」 |
+| `fix-incomplete` | 未解消の Critical が残存、**または理由の記録が無いまま未解消の Major がある** |
+
+理由付き見送りは通過側。判定の手順と見送りの認定基準は Skill にある。
 
 ## Output
 
@@ -29,3 +31,6 @@ Improve Check
 ```json
 { "step": "improve-check", "result": "ready-for-reflection", "reason": "<短い人間向け説明>" }
 ```
+
+見送りがある場合は `reason` に件数を含める
+（例: `Critical 2件解消 / Fix Scope の Major 3件中1件は理由付き見送り`）。

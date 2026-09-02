@@ -53,7 +53,7 @@ versions:
     review: 8                 # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     fix: 3                    # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     reviewAudit: 2            # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
-    improveCheck: 6           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    improveCheck: 7           # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 8             # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
   templates:
     currentTask: 2
@@ -67,15 +67,15 @@ versions:
   # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
   skills:
     implementation: 4         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
-    fix: 4                    # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    fix: 5                    # improve-check の判定範囲へ Fix Scope の Major を追加
     review: 2                  # Verification Data の記載要件
-    improve-check: 2          # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
-    reflection: 3             # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
+    reflection: 4             # improve-check の判定範囲へ Fix Scope の Major を追加
     research: 3               # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)
-    backlog-rules: 2           # M2 Stage3: backlog.md の書式と語彙を reflection から集約
+    backlog-rules: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     knowledge-files: 1
 
 # --------------------------------------------------------

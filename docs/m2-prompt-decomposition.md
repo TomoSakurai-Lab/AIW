@@ -83,6 +83,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | Prohibited: Minor 修正 / スコープ拡大 | 禁止事項 | Skill（Fix Scope の読み方）+ Instructions | ✅ |
 | Prohibited: `fix-package.md` を作らない | **死んでいる** | 🗑 削除 | 🗑 |
 | **(M3 追加)** ac-result.json を作り直す（ガードレール配線） | 手順 | Skill | ✅ |
+| **(2026-09-02 追加)** Major を意図的に直さないときは対象と理由を current-result.md に明記する | **新規追加** | fix Skill | ✅ |
 | Read の `test-report.md` を「Testing 失敗経由」と説明 | **死んでいる** | 🗑 verify-local 失敗時へ修正 | 🗑 |
 
 ### review.md
@@ -109,6 +110,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | `step` を書き直すこと（実測事故） | 手順 | Skill | ✅ |
 | 許可値2つ・verify-local が検証を担う旨 | 遷移条件 | **Step に残す** | ✅ |
 | 対象ディレクトリ | 恒久規則 | 🗑 削除（Skill / Step が `.ai-workflow2/` 付きの絶対表記で書く） | 🗑 |
+| **(2026-09-02 追加)** 判定範囲に Fix Scope の Major を含める（解消 / 理由付き見送り / 黙って未解消の三分岐） | **新規追加** | improve-check Skill（基準は Step の表にも1行） | ✅ |
 
 ### reflection.md
 
@@ -123,6 +125,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | 許可値2つ・nextPhaseId 必須 | 遷移条件 | **Step に残す** | ✅ |
 | backlog 書式例の見出しが `## BL-046`（実 ID） | **死んでいる** | 🗑 `## BL-001` へ | 🗑 |
 | 対象ディレクトリ | 恒久規則 | 🗑 削除（Input/Output を `.ai-workflow2/` 付きで書く） | 🗑 |
+| **(2026-09-02 追加)** fix が見送った Fix Scope の Major を backlog へ転記する | **新規追加** | reflection Skill（Trigger の例外は backlog-rules） | ✅ |
 
 ### codex-system.md
 
@@ -388,3 +391,41 @@ fix Skill だけに書くと**半分しか塞げない**。
 
 対象ディレクトリの宣言そのものは恒久規則として有効なので、
 `coding-rules.md` の 1 行だけ残した。**識別の但し書きだけを落とした**、という区別。
+
+## improve-check の判定範囲拡大（2026-09-02）
+
+### 追加した指示（**新規追加**。元のプロンプトには無い）
+
+| 追加先 | 内容 |
+| --- | --- |
+| improve-check Skill | 判定対象へ `## Fix Scope` の `### Major` を追加。解消 / 理由付き見送り / 黙って未解消の三分岐 |
+| improve-check Step | Goal と result 表に基準を1行（許可値は**変えない**） |
+| fix Skill | 見送るなら対象と理由を `current-result.md` に明記する |
+| reflection Skill | 見送られた Major を `backlog.md` へ転記する経路（**存在しなかった**） |
+| backlog-rules | Trigger 無しを転記しない規則の**適用範囲を review の `## Backlog` に限定**する例外 |
+
+### 由来
+
+improve-check Skill は「このステップが判定するのは **Critical が解消されたか**だけ」と
+明記していた。fix の後に review は再走しないので、**fix が Fix Scope の Major を
+直し損ねても誰も止めない**構造だった。直近タスクではレビューセッションが Skill の要求を
+超えて自主的に差分確認したが、それは手順として保証されていない。
+
+Fix Scope は fix の契約なので、「契約どおり閉じたか」を improve-check が機械的に見る形にした。
+
+### なぜ許可値を増やさなかったか
+
+「見送り付き通過」を第3の値にすると遷移表と validator に波及する（エンジン変更になる）。
+通過側の値のまま、**成果物に見送り一覧を明記する**形で表現した。
+判定の粒度は上がるが、状態機械は不変。
+
+### 連鎖して必要になったもの（設計の穴）
+
+reflection には**見送られた Major を backlog へ積む経路が無かった**。
+`## Backlog` は fix より**前**に書かれる `current-review.md` にあり、
+fix の見送り判断は `current-result.md` にしか無いため。
+経路を足さないと、見送りは improve-check を通過した時点で消える。
+
+さらに backlog-rules の「Trigger 無しは転記しない」と衝突した。
+前者は「基準を満たさないので上げない」、後者は「後でやると決めて通過させた」で
+性質が違うため、**適用範囲を明示して分けた**。
