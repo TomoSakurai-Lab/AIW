@@ -93,6 +93,11 @@ export type WorkflowStep = {
   instructions?: string[];
   /** M2: 環境固有の instructions/<name>.md。不在は正常だが、省略は出力に明記する */
   optionalInstructions?: string[];
+  /** このステップの総上限（ミリ秒）。未指定なら settings.codexTimeoutMs → 既定 1 時間。
+   *  ⚠️ **エンジンが解決して ExecutorRequest.timeoutMs へ渡す。** executor は
+   *  workflow.yaml を読み直さない（executor ごとに解決規則が分岐するのを防ぐ）。
+   *  fix は実測の中央値 6 分なので、既定より短い値を置く用途を想定している。 */
+  timeoutMs?: number;
   validators?: ValidatorRef[];
   retryPolicy?: RetryPolicy;
   postActions?: string[];
@@ -144,8 +149,14 @@ export type WorkflowConfig = {
      *  共有すると (1) アプリの config.toml が実行のたびに汚れる（実測）
      *  (2) アプリ側の設定変更が実行へ混入する。詳細は docs/design-codex-executor.md 課題 A-3 */
     codexHome?: string;
-    /** codex exec のタイムアウト（ミリ秒）。未指定なら CODEX_DEFAULT_TIMEOUT_MS */
+    /** 総上限（ミリ秒）。未指定なら DEFAULT_TOTAL_TIMEOUT_MS。
+     *  steps.<id>.timeoutMs が指定されていればそちらが優先される。 */
     codexTimeoutMs?: number;
+    /** 無進行タイムアウト（ミリ秒）。進行イベントがこの時間途絶えたら中断する。
+     *  未指定なら DEFAULT_IDLE_TIMEOUT_MS。**総上限とは別の見張り**で、
+     *  総上限を延ばしても stall の発見が遅れないようにするためのもの。
+     *  閾値の根拠は engine/watchdog.ts の冒頭コメント（実測から出している）。 */
+    codexIdleTimeoutMs?: number;
     /** codex exec に渡すモデル（`-m`）。未指定なら渡さず、codex の既定に委ねる。
      *  ⚠️ 委ねた場合、**どのモデルで走ったかはどこにも記録されない**
      *  （JSONL にモデル名は無く、`codex doctor` の表示も `<default>` のまま）。

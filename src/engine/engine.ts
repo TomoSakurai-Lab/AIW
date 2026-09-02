@@ -10,6 +10,14 @@ import {
 import { appendEvent } from "./eventLog.js";
 import { getExecutor } from "./executors/index.js";
 import type { ExecutorRequest, ExecutorResult, StepExecutor } from "./executors/types.js";
+import {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  DEFAULT_TOTAL_TIMEOUT_MS,
+  classifyTimeout,
+  createWatchdog,
+  type TimeoutKind,
+  type Watchdog
+} from "./watchdog.js";
 import { getStep, loadWorkflow } from "./loader.js";
 import { ASSETS_DIR, rootPaths } from "./paths.js";
 import { readState, updateState, writeState } from "./state.js";
@@ -132,6 +140,42 @@ function tokenFields(result: ExecutorResult): Record<string, unknown> {
   };
 }
 
+/** 設定値が数値として使えるときだけ返す。文字列や NaN は「未指定」と同じ扱いにする。 */
+function numberSetting(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** exec.failed（例外経路）でも、どちらの見張りが撃ったかを残す。 */
+function timeoutMeta(watchdog: Watchdog, startedAt: number, totalTimeoutMs: number): Record<string, unknown> {
+  const kind = classifyTimeout(watchdog.firedKind(), Date.now() - startedAt, totalTimeoutMs);
+  return kind ? { timeoutKind: kind } : {};
+}
+
+/**
+ * executor の結果へタイムアウトの種別を書き足す。
+ *
+ * ⚠️ **executor の判定を覆さない。** ok / failureKind はそのまま。足すのは種別と、
+ * 人間が読む理由文字列だけ。executor は「タイムアウトした」までは正しく言えている。
+ * エンジンが知っているのは「総上限か、無進行か」の一段だけ細かい情報。
+ */
+function decorateTimeout(
+  result: ExecutorResult,
+  kind: TimeoutKind,
+  totalTimeoutMs: number,
+  idleTimeoutMs: number
+): ExecutorResult {
+  const limitS = Math.round((kind === "idle" ? idleTimeoutMs : totalTimeoutMs) / 1000);
+  const reason =
+    kind === "idle"
+      ? `無進行タイムアウト: 進行イベントが ${limitS}s 途絶えたため中断した`
+      : `総上限タイムアウト: ${limitS}s を超えたため中断した`;
+  return {
+    ...result,
+    error: result.error ? `${reason}（executor: ${result.error}）` : reason,
+    meta: { ...(result.meta ?? {}), timeoutKind: kind, totalTimeoutMs, idleTimeoutMs }
+  };
+}
+
 // `aiw exec <step>`: resolve the step's executor and call it. Produces artifacts only —
 // NO validation, NO transition, NO state.json write (§設計原則1). `aiw run` still owns all of that.
 export async function execStep(
@@ -153,27 +197,55 @@ export async function execStep(
     executor: executor.name,
     ...versionInfo(root, config, stepId)
   };
-  appendEvent(root, "exec.started", logBase);
+  // 総上限と無進行の二段構え（engine/watchdog.ts）。**executor の外に置く**ので、
+  // codex でも claude でも同じ機構が効く。executor 側は signal を見るだけでよい。
+  const totalTimeoutMs =
+    numberSetting(step.timeoutMs) ?? numberSetting(config.settings.codexTimeoutMs) ?? DEFAULT_TOTAL_TIMEOUT_MS;
+  const idleTimeoutMs = numberSetting(config.settings.codexIdleTimeoutMs) ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const watchdog = createWatchdog({ totalTimeoutMs, idleTimeoutMs, externalSignal: opts.signal });
+
+  appendEvent(root, "exec.started", { ...logBase, meta: { totalTimeoutMs, idleTimeoutMs } });
+  const startedAt = Date.now();
   let result: ExecutorResult;
   try {
-    result = await executor.execute({ root, config, step, onProgress: opts.onProgress, signal: opts.signal });
+    result = await executor.execute({
+      root,
+      config,
+      step,
+      // 進行イベントは無進行タイマーの餌でもある。**中継の前に notify する**
+      // （表示側が例外を投げても見張りが止まらないように）。
+      onProgress: (e) => {
+        watchdog.notify();
+        opts.onProgress?.(e);
+      },
+      signal: watchdog.signal,
+      timeoutMs: totalTimeoutMs
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    appendEvent(root, "exec.failed", { ...logBase, message });
+    appendEvent(root, "exec.failed", { ...logBase, message, meta: timeoutMeta(watchdog, startedAt, totalTimeoutMs) });
     throw error;
+  } finally {
+    watchdog.dispose();
   }
   // M3: executor が測ったトークンを Event Log の既存フィールドへ写す。
   // これが「token 系が全件 null」の解消点。executor が測れなかった場合は null のまま
   // （0 に丸めない。「測れなかった」と「0 だった」を混ぜない）。
-  appendEvent(root, result.ok ? "exec.completed" : "exec.failed", {
+  // ⚠️ **どちらの見張りが撃ったかを潰さない。** executor 側は「タイムアウトした」しか
+  // 言えない（abort されると SIGTERM で終わるので総上限と区別が付かない）。
+  // 理由を知っているのはエンジンだけなので、ここで meta と error に書き分ける。
+  const timeoutKind = classifyTimeout(watchdog.firedKind(), Date.now() - startedAt, totalTimeoutMs);
+  const decorated = timeoutKind ? decorateTimeout(result, timeoutKind, totalTimeoutMs, idleTimeoutMs) : result;
+
+  appendEvent(root, decorated.ok ? "exec.completed" : "exec.failed", {
     ...logBase,
-    ...tokenFields(result),
-    outputs: result.outputs,
-    failureKind: result.failureKind ?? null,
-    message: result.error ?? null,
-    meta: result.meta ?? null
+    ...tokenFields(decorated),
+    outputs: decorated.outputs,
+    failureKind: decorated.failureKind ?? null,
+    message: decorated.error ?? null,
+    meta: decorated.meta ?? null
   });
-  return result;
+  return decorated;
 }
 
 export function runStep(root: string, config: WorkflowConfig, stepId: string, opts: CompletionOptions = {}): PipelineOutcome {

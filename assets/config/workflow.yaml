@@ -10,7 +10,14 @@ settings:
   # 使う前に、このディレクトリで一度だけ `codex login` を実行すること(人間が実施)。
   # 認証は $CODEX_HOME/auth.json に属し、空だと 401 になる(実測)。
   codexHome: .codex-home
-  # codexTimeoutMs: 1800000   # 既定 30 分。実測の implementation 中央値 17 分に対して 3 倍弱
+  # --- タイムアウトの二段構え（engine/watchdog.ts）---
+  # 総上限だけを延ばすと本物の stall の発見が遅くなるので、無進行を別に見張る。
+  # codexTimeoutMs:     3600000   # 総上限。既定 1 時間
+  # codexIdleTimeoutMs:  900000   # 無進行。進行イベントがこの時間途絶えたら中断。既定 15 分
+  # ⚠️ **無進行の閾値を勘で下げないこと。** 実測された「働いている最中の沈黙」の最大は
+  # 412s（E2E 実行中に打ち切られた実行の値なので、真の所要はさらに長い）。
+  # 300s にすると、その実行を誤って kill する。根拠は engine/watchdog.ts の冒頭コメント。
+  # ステップ個別の総上限は steps.<id>.timeoutMs（エンジンが解決して executor へ渡す）。
   # 使うモデルを固定する。値は環境依存なので runtime 側で設定すること。
   # ⚠️ **未指定だと、どのモデルで走ったかが事後に一切分からない。**
   # codex はモデル名を JSONL にもログにも残さず、codex doctor も `<default>` としか言わない
