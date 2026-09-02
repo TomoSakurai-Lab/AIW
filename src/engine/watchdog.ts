@@ -67,6 +67,22 @@ export type WatchdogOptions = {
   clearTimer?: (handle: unknown) => void;
 };
 
+/**
+ * 沈黙の実測。**閾値を次に見直すときの一次資料**。
+ *
+ * ⚠️ これが無いと、閾値の根拠は永久に代理指標（コマンドの所要時間）のままになる。
+ * JSONL に時刻が無いのは codex 側の都合で直せないが、**エンジンは onProgress の
+ * 到達時刻を既に見ている**ので、そこから測れる（known-issues の「計測の限界」参照）。
+ */
+export type IdleObservation = {
+  /** 観測された最大の沈黙（ms）。末尾の沈黙（最後のイベント→終了）も含む */
+  maxIdleMs: number;
+  /** 受け取った進行イベント数。0 なら「一度も進まなかった」 */
+  progressEvents: number;
+  /** 大きい順の沈黙（最大5件）。分布の裾を見るため。max だけだと1点しか分からない */
+  topIdleMs: number[];
+};
+
 export type Watchdog = {
   /** executor へ渡す signal。総上限・無進行・外部中断のいずれでも abort する */
   signal: AbortSignal;
@@ -74,6 +90,8 @@ export type Watchdog = {
   notify: () => void;
   /** 撃った見張りの種類。まだ撃っていなければ null */
   firedKind: () => TimeoutKind | null;
+  /** 沈黙の実測。**実行の終わりに1回読む**（末尾の沈黙が確定するのは終了時なので） */
+  observe: () => IdleObservation;
   /** タイマーを片付ける。**必ず finally で呼ぶこと** */
   dispose: () => void;
 };
@@ -94,6 +112,16 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
   let idleHandle: unknown = null;
   let totalHandle: unknown = null;
   let disposed = false;
+
+  // 沈黙の実測。起点は「実行の開始」——最初のイベントまでの間も沈黙として数える
+  // （起動が遅い実行を見落とさないため）。
+  let lastEventAt = Date.now();
+  let progressEvents = 0;
+  const gaps: number[] = [];
+  const recordGap = (at: number): void => {
+    gaps.push(at - lastEventAt);
+    lastEventAt = at;
+  };
 
   const fire = (kind: TimeoutKind): void => {
     if (fired !== null || disposed) {
@@ -128,10 +156,33 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
     controller.abort();
   }
 
+  // ⚠️ **armIdle と notify を分ける。** armIdle は構築時にも呼ぶので、
+  // そこでイベントを数えると「1件も来ていない実行」が 1 件に見える。
+  const notify = (): void => {
+    if (disposed) {
+      return;
+    }
+    recordGap(Date.now());
+    progressEvents++;
+    armIdle();
+  };
+
   return {
     signal: controller.signal,
-    notify: armIdle,
+    notify,
     firedKind: () => fired,
+    observe: () => {
+      // 末尾の沈黙（最後のイベント → 今）を含めて返す。**ここを落とすと
+      // 「最後のコマンドが長かった」実行の沈黙が丸ごと記録から消える**——
+      // 実測 412.3s はまさにその形だった。
+      const all = [...gaps, Date.now() - lastEventAt];
+      const sorted = [...all].sort((a, b) => b - a);
+      return {
+        maxIdleMs: sorted[0] ?? 0,
+        progressEvents,
+        topIdleMs: sorted.slice(0, 5)
+      };
+    },
     dispose: () => {
       disposed = true;
       if (idleHandle !== null) {

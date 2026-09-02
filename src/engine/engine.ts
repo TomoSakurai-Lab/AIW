@@ -148,7 +148,20 @@ function numberSetting(v: unknown): number | undefined {
 /** exec.failed（例外経路）でも、どちらの見張りが撃ったかを残す。 */
 function timeoutMeta(watchdog: Watchdog, startedAt: number, totalTimeoutMs: number): Record<string, unknown> {
   const kind = classifyTimeout(watchdog.firedKind(), Date.now() - startedAt, totalTimeoutMs);
-  return kind ? { timeoutKind: kind } : {};
+  return { ...idleMeta(watchdog), ...(kind ? { timeoutKind: kind } : {}) };
+}
+
+/**
+ * 沈黙の実測を Event Log へ落とす（**成功した実行でも**）。
+ *
+ * ⚠️ 失敗時だけ記録すると、**分布の本体が取れない**。「働いている実行はどこまで
+ * 黙るのか」を知りたいのだから、記録すべきは成功した実行の方である。
+ * これが無いと、次に閾値を見直すときも代理指標（コマンドの所要時間）に戻ることになる
+ * ——それを恒久化しないための1フィールド。
+ */
+function idleMeta(watchdog: Watchdog): Record<string, unknown> {
+  const o = watchdog.observe();
+  return { maxIdleMs: o.maxIdleMs, progressEvents: o.progressEvents, topIdleMs: o.topIdleMs };
 }
 
 /**
@@ -243,7 +256,7 @@ export async function execStep(
     outputs: decorated.outputs,
     failureKind: decorated.failureKind ?? null,
     message: decorated.error ?? null,
-    meta: decorated.meta ?? null
+    meta: { ...(decorated.meta ?? {}), ...idleMeta(watchdog) }
   });
   return decorated;
 }

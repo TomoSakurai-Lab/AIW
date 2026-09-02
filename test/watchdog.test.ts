@@ -17,7 +17,7 @@ import path from "node:path";
 import { execStep } from "../src/engine/engine.js";
 import { readEventLog } from "../src/engine/observed.js";
 import type { ExecutorRequest, ExecutorResult, StepExecutor } from "../src/engine/executors/types.js";
-import { classifyTimeout, createWatchdog } from "../src/engine/watchdog.js";
+import { DEFAULT_TOTAL_TIMEOUT_MS, classifyTimeout, createWatchdog } from "../src/engine/watchdog.js";
 import { makeRoot, setStep } from "./helpers.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -207,4 +207,119 @@ test("watchdog: classifyTimeout also trusts the measured duration (KI-08)", () =
   assert.equal(classifyTimeout(null, 999, 1000), null, "撃っておらず時間内なら null");
   assert.equal(classifyTimeout(null, 1000, 1000), "total", "タイマーが撃たなくても実測が超えていれば total");
   assert.equal(classifyTimeout("idle", 5, 1000), "idle", "撃った理由が優先される");
+});
+
+// ── 追加分（レビュー指摘への対応）───────────────────────────────
+
+// ⚠️ **codex.ts の 30 分フォールバックが「死んでいると証明された既定」であること。**
+// codex.ts は不変の縛りがあるため CODEX_DEFAULT_TIMEOUT_MS を消せない。
+// 消せない代わりに、**エンジン経由なら必ず timeoutMs が埋まる**ことを固定する。
+// これが無いと「本番では使われない」は宣言でしかなく、KI-09 の系譜になる。
+test("watchdog: the engine always fills request.timeoutMs (the executor default is unreachable)", async () => {
+  const { root, config: base } = makeRoot();
+  setStep(root, "implementation");
+
+  const seen: (number | undefined)[] = [];
+  const probe: StepExecutor = {
+    name: "codex",
+    async execute(req) {
+      seen.push(req.timeoutMs);
+      return { ok: true, outputs: [] };
+    }
+  };
+
+  // (1) settings も step も未指定 → エンジンの既定が入る（executor 側の既定には落ちない）
+  const bare = { ...base, settings: { ...base.settings, codexTimeoutMs: undefined, codexIdleTimeoutMs: undefined } };
+  await execStep(root, bare, "implementation", { executor: probe });
+  // (2) settings 指定
+  await execStep(root, configWith(base, { codexTimeoutMs: 1234 }), "implementation", { executor: probe });
+  // (3) step 指定（settings より優先）
+  await execStep(root, configWith(base, { codexTimeoutMs: 1234 }, { timeoutMs: 999 }), "implementation", { executor: probe });
+
+  assert.deepEqual(seen, [DEFAULT_TOTAL_TIMEOUT_MS, 1234, 999]);
+  assert.ok(
+    seen.every((v) => typeof v === "number"),
+    "**どの経路でも undefined を渡さない**（渡すと executor の既定に落ちる）"
+  );
+});
+
+// ⚠️ **理由の混線が無いこと**（レビュー指摘 3）。
+// kill 遅延を含む durationMs は総上限を超えうるが、**撃った理由が優先される**。
+test("watchdog: an idle kill stays 'idle' even when the measured duration exceeds the total cap", () => {
+  // 単体: idle で撃ったあと、実測が総上限を超えていても total へ倒れない
+  assert.equal(classifyTimeout("idle", 5000, 1000), "idle", "実測が総上限超でも撃った理由が勝つ");
+  assert.equal(classifyTimeout("idle", 1000, 1000), "idle", "境界でも同じ");
+  assert.equal(classifyTimeout("total", 5000, 1000), "total");
+});
+
+test("watchdog: an idle kill reports only the idle reason end to end", async () => {
+  const { root, config: base } = makeRoot();
+  setStep(root, "implementation");
+  // 総上限を極端に短くし、**idle が先に撃ったあと居座る**状況を作る。
+  // 居座り中に実測時間は総上限を超える（実運用の SIGTERM 遅延 237s と同じ形）。
+  const config = configWith(base, { codexTimeoutMs: 900, codexIdleTimeoutMs: 200 });
+  const lingering: StepExecutor = {
+    name: "codex",
+    async execute(req) {
+      req.onProgress?.({ kind: "message", text: "start" });
+      while (!req.signal?.aborted) await sleep(20); // 200ms 沈黙 → idle が撃つ
+      await sleep(900); // **撃たれてから居座る**。実測は総上限 900ms を超える
+      return { ok: false, outputs: [], error: "codex executor: タイムアウト", failureKind: "transient" };
+    }
+  };
+
+  const started = Date.now();
+  const result = await execStep(root, config, "implementation", { executor: lingering });
+  const elapsed = Date.now() - started;
+
+  assert.ok(elapsed >= 900, `居座りで実測が総上限を超えている（実測 ${elapsed}ms）`);
+  assert.equal((result.meta as { timeoutKind?: string }).timeoutKind, "idle", "**total へ誤分類しない**");
+  assert.match(result.error ?? "", /無進行タイムアウト/);
+  assert.doesNotMatch(result.error ?? "", /総上限/, "理由文字列が混線しない");
+});
+
+// 沈黙の実測が Event Log に載ること（次に閾値を見直すときの一次資料）。
+test("watchdog: idle observations are recorded even for successful runs", async () => {
+  const { root, config: base } = makeRoot();
+  setStep(root, "implementation");
+  const config = configWith(base, { codexTimeoutMs: 10_000, codexIdleTimeoutMs: 5_000 });
+
+  const withPause: StepExecutor = {
+    name: "codex",
+    async execute(req) {
+      req.onProgress?.({ kind: "message", text: "a" });
+      await sleep(250); // ここが最大の沈黙になる
+      req.onProgress?.({ kind: "message", text: "b" });
+      return { ok: true, outputs: [] };
+    }
+  };
+  await execStep(root, config, "implementation", { executor: withPause });
+
+  const ev = lastExecEvent(root);
+  assert.equal(ev?.event, "exec.completed", "**成功した実行でも記録する**（分布の本体はこちら）");
+  const meta = ev?.meta as { maxIdleMs?: number; progressEvents?: number; topIdleMs?: number[] };
+  assert.equal(meta.progressEvents, 2);
+  assert.ok((meta.maxIdleMs ?? 0) >= 200, `観測した最大沈黙が載る（${meta.maxIdleMs}ms）`);
+  assert.ok(Array.isArray(meta.topIdleMs) && meta.topIdleMs.length > 0, "裾を見るための上位も載る");
+  assert.equal(meta.topIdleMs?.[0], meta.maxIdleMs, "topIdleMs の先頭は maxIdleMs と一致する");
+});
+
+// 一度も進まなかった実行を「1件来た」と誤らない（armIdle と notify を分けた理由）。
+test("watchdog: a run that never progressed records zero events", async () => {
+  const { root, config: base } = makeRoot();
+  setStep(root, "implementation");
+  const config = configWith(base, { codexTimeoutMs: 10_000, codexIdleTimeoutMs: 200 });
+  const silent: StepExecutor = {
+    name: "codex",
+    async execute(req) {
+      while (!req.signal?.aborted) await sleep(20);
+      return { ok: false, outputs: [], error: "timeout", failureKind: "transient" };
+    }
+  };
+  await execStep(root, config, "implementation", { executor: silent });
+
+  const meta = lastExecEvent(root)?.meta as { progressEvents?: number; maxIdleMs?: number; timeoutKind?: string };
+  assert.equal(meta.progressEvents, 0, "**構築時の arm をイベントとして数えない**");
+  assert.equal(meta.timeoutKind, "idle");
+  assert.ok((meta.maxIdleMs ?? 0) >= 200, "起動から最初のイベントまでの沈黙も数える");
 });
