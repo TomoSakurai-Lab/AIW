@@ -40,6 +40,14 @@
 // 「検査できなかった」を「違反があった」に潰す consumer-presence の失敗の、時間版になる。
 // build 系が未測定である以上、真の最大は不明なので保守側に置く。測れたら締めてよい。
 
+// ## M5 の予算との関係
+//
+// M5.1 のループは `budgetExceeded` で止まる。**総上限はその内側**にある:
+// 総上限は「1 回の exec がどこまで走ってよいか」、M5 の予算は「タスク全体
+// （複数 exec + fix ループ）がどこまで使ってよいか」。前者が後者を超えることはない。
+// ⚠️ 総上限を上げるときは M5 の予算も見ること——1 回で予算を使い切ると、
+// ループは「1 ステップ走って停止」になり、無人運転が成立しなくなる。
+
 /** 総上限の既定。実測の implementation 中央値 ~15 分に対し 4 倍。裾（34 分の実績）を殺さない */
 export const DEFAULT_TOTAL_TIMEOUT_MS = 3_600_000;
 
@@ -54,8 +62,6 @@ export type WatchdogOptions = {
   idleTimeoutMs: number;
   /** 外から渡された中断シグナル。撃たれたら watchdog も一緒に止まる */
   externalSignal?: AbortSignal;
-  /** テスト用の時計。既定は Date.now */
-  now?: () => number;
   /** テスト用のタイマー。既定は setTimeout / clearTimeout */
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -80,7 +86,6 @@ export type Watchdog = {
  * 「idle 900s で撃つ」は「900s + α で終わる」であって、900s で終わるではない。
  */
 export function createWatchdog(opts: WatchdogOptions): Watchdog {
-  const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
 
