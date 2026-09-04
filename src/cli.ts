@@ -176,6 +176,18 @@ function engineLogCmd(stepArg: string | undefined, opts: { raw?: boolean; json?:
   if (!file) {
     console.error(`no codex run recorded for step "${step}" (looked in ${path.join(rootPaths(root).runsDir, "codex")}).`);
     console.error(`runs are written by the codex executor — steps driven through clipboard leave none.`);
+    // ⚠️ claude executor（M4）の JSONL は `runs/claude/` へ tee されるが、この整形は
+    // codex のイベント語彙（item.* / thread.started）専用で読めない。
+    // **「記録が無い」と言って終わらせない**のが要点で、存在するなら場所を教える。
+    // claude 側の整形は BL-116（M4 後）。
+    const claudeDir = path.join(rootPaths(root).runsDir, "claude");
+    const claudeRuns = existsSync(claudeDir)
+      ? readdirSync(claudeDir).filter((f) => f.endsWith(`-${step}.jsonl`)).sort()
+      : [];
+    if (claudeRuns.length > 0) {
+      console.error(`→ claude の実行はあります: ${path.join(claudeDir, claudeRuns[claudeRuns.length - 1])}`);
+      console.error(`  （この整形は codex のイベント語彙専用なので、今は JSONL を直接読んでください）`);
+    }
     process.exitCode = 1;
     return;
   }

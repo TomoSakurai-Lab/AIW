@@ -124,6 +124,14 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-117
+
+- Source: M4 段階1-1 の実装中に判明（claude executor の JSONL 回収）/ 2026-09-04
+- Severity: Minor
+- Trigger: `aiw log` を次に触るとき、または claude 実行の詳細を後から追う必要が出たとき
+- Summary: **`aiw log` が読めるのは `runs/codex/` だけ**で、claude executor が tee する `runs/claude/` の JSONL は整形できない。`codexLog.ts` の整形は codex のイベント語彙（`item.*` / `thread.started` / `turn.completed`）専用で、claude の語彙（`system:init` / `assistant` / `result`）とは別物のため。段階1-1 では「記録が無い」と言って終わらせないための最小対応として、claude の実行があればそのファイルパスを案内するようにした（`cli.ts`）。本対応は claude 側の整形（`summarize` と同じ対応表を読み取り側にも持つ）だが、**M4.4 の「イベント語彙を共通化するか」の判定と同じ論点**なので、判定の前に片側だけ実装しない。
+- Status: open
+
 ## BL-116
 
 - Source: M4 設計セッション（Edit-only の検討中に実測で発見）/ 2026-08-31
