@@ -877,6 +877,103 @@ spawn(<pin した claude.exe の絶対パス>, [
 
 ---
 
+# 実装時の実測（M4 段階1-1・2026-09-04）
+
+実装して初めて分かったこと。**設計の表を黙って書き換えず、ここに差分として残す。**
+使い捨て git リポジトリ + 隔離 home（認証済み）での実行。
+
+## 1. permission rule のパスは **OS の正式表記**でなければ効かない ← 設計の追記
+
+§9-2 で「POSIX 絶対（`//c/…`）」までは確定していたが、**表記の正規化までは書いていなかった**。
+
+| 渡したルール | 結果 |
+| --- | --- |
+| `Edit(//c/Users/TOMO~1.SAK/…/current-status.json)`（Windows 8.3 短縮名） | **拒否** |
+| `Edit(//c/Users/tomo.sakurai/…/current-status.json)`（長い名前） | **許可**（0 → 実内容を書き込み成功） |
+
+照合は文字列比較なので、Claude 側が解決した長い名前と一致しない。
+実装は `realpathSync.native` で正式表記へ直してから組み立てる。
+⚠️ 気付けたのは `permission_denials` に残ったからで、**無ければ「書けないのに exit 0」で終わっていた**
+——課題B の「拒否を成果物に残す」がそのまま効いた事例。
+`--add-dir` の要否判定（runtimeRoot が cwd の内か外か）も同じ理由で両辺を正規化する
+（`git rev-parse` は長い名前を返し、runtimeRoot は呼び出し側の表記のまま）。
+⚠️ **codex.ts は未修正**（前提「codex.ts は変更しない」）。M4.4 の比較表の1行。
+
+## 2. 複合コマンドは **各部が評価される** ← 課題B の ⚠️ が解決
+
+設計は「複合 PowerShell 1ブロックはプレフィックスパターンに収まらない可能性が高い」と
+懸念していた。実測はもっと良い形だった:
+
+| 与えた許可 | 実行しようとしたコマンド | 結果 |
+| --- | --- | --- |
+| `Bash(uname:*)` のみ | `uname -a; echo "EXIT=$?"` | **拒否**（`echo` が未許可） |
+| `Bash(uname:*)` + `Bash(echo:*)` | 同上 | **許可** |
+| `Bash(od:*)` + `Bash(head:*)` | `od -c bad.txt \| head -3` | **許可** |
+
+**帰結**: `Bash(powershell:*)` のような広い許可は要らない。要るのは
+**パイプ・`;`・`&&` に現れる全コマンドを列挙すること**。
+⚠️ モデルは `; echo "EXIT=$?"` を**習慣的に付け足す**ので、`echo` は実質必須。
+
+## 3. ⚠️ **読み取り専用の組み込みコマンドは allowlist 外でも通る** ← 新発見
+
+`ls -la` と `cat …` が、`bashAllow` に無く `permission_denials` にも載らずに**実行された**。
+dontAsk でも安全な読み取り系は自動的に許可される。
+
+- 安全性は損なわれない（**Bash 経由の書き込みは拒否される**。`cat > current-status.json <<'EOF'` を実測で確認）
+- しかし **「Bash はステップごとの許可リスト」は文字どおりではない**。許可リストは
+  組み込みの読み取り集合への**追加**であって、網羅的な白リストではない
+- 設計の意図（読み取りは制限しない / 書き込みと実行系だけ絞る）とは整合している。
+  **表現だけが実態より強かった**ので、ここに訂正として残す
+
+## 4. Claude CLI の Bash は **MINGW64 / Msys**（Git Bash）
+
+`uname -a` の実測: `MINGW64_NT-10.0-26200 … x86_64 Msys`。
+PowerShell ではない。BL-071 の検査コマンドは POSIX 前提で選んでよい。
+
+## 5. BL-071 canary ← **コマンド確定**（review Skill へ書く受け入れ条件を満たした）
+
+フィクスチャ: UTF-8 の日本語を CP932 で誤読しても **U+FFFD が出ない**語だけを集めた `bad.txt`
+（`更新` → `譖ｴ譁ｰ` 等 10 行）と、正常な日本語 `ok.txt`。
+
+| 検査 | bad.txt | ok.txt | 判定 |
+| --- | --- | --- | --- |
+| U+FFFD のみ（`grep -cP '(*UTF)\x{FFFD}'`） | **0 / 10** | 0 | **見逃す** ← BL-071 の主張を実測で確認 |
+| 半角カナ域のみ（`[\x{FF61}-\x{FF9F}]`） | 6 / 10 | 0 | 取りこぼす |
+| **半角カナ域 + 化け漢字シグネチャ** | **10 / 10** | **0** | ✅ 採用 |
+
+採用コマンド（Claude CLI の Bash 上で実行し、上表の値を得た）:
+
+```text
+grep -cP '(*UTF)[\x{FF61}-\x{FF9F}]|[縺繧繝蜀蜈蟄譁隲鬮髴闖蝓豼讀荳陦蠑霑蟾逕豁螟蜷蜑逋蟇邨譖蜊蟶蜉隕隱]' <file>
+```
+
+- ⚠️ **`(*UTF)` が要る。** 付けないと `grep: character value in \x{} or \o{} is too large` で exit 2
+- ⚠️ **リテラルの範囲指定 `[｡-ﾟ]` は使わない。** ロケール未設定の GNU grep 3.0 では
+  バイト単位で照合し、**正常な日本語に 3 件ヒットした**（偽陽性）
+- 偽陽性の実測: `ok.txt` 0 件 + リポジトリの実在する日本語ドキュメント **2,999 行で 0 件**
+  （backlog.md / aiw-known-issues.md / design-claude-executor.md / baseline.md / AGENTS.md）
+- 別途 Python で 688 件の文字化けサンプルに対し **検出率 100% / 偽陽性 0 件（2,025 件の正常文字列）**
+- 許可リストに要るのは `Bash(grep:*)`（+ `echo` / `head` を併用するなら各々）
+
+## 6. 故障注入 #6（CLAUDE.md の混入）← **対照実験つきで成立**
+
+probe リポに marker 入り `CLAUDE.md` と `.claude/CLAUDE.md` を置き、
+「プロジェクト指示があれば secret token を、無ければ NONE を出せ」で測った:
+
+| 条件 | 応答 |
+| --- | --- |
+| 遮断フラグなし（既定 = 全ソース読み込み） | **`XYZZY-M4`** ← テストに検出力がある |
+| 出荷する遮断セット（`--setting-sources ""` + `--strict-mcp-config` + `--disable-slash-commands`） | `NONE` |
+| **executor 経由の実行**（同じ probe リポ・実プロンプト） | JSONL 全文で `XYZZY` **0 件** |
+
+## 7. キャッシュ比 ← 分割は不要
+
+`cacheRead / (input + cacheRead)` = **99.98%**（input 12 / cacheRead 64,892）。
+課題D の再検討条件（中央値 < 80% なら `--append-system-prompt` 分割を測る）には遠い。
+**段階1 の「分割しない」判断を実測が支持した。**
+
+---
+
 # 決定ログ
 
 **決めたことはここへ追記する**（codex 設計文書と同じ運用）。
@@ -901,6 +998,10 @@ spawn(<pin した claude.exe の絶対パス>, [
 | 2026-08-31 | **Edit の「存在」要求の解**（レビュー案を採用） | **遷移確定時にエンジンが 0 バイトスタブを作る**（`captureIfAbsent` と同型・無ければ作るだけ・Event Log へ `stub.created`）。templates 案は**却下** | §9-3 で 0 バイトを Edit で埋められることを実測。templates 案は `artifact-contract` が見出しの存在しか見ず、`codex-prompt.md` に `token-range` が無いため**書かれなくても通る**（task-metadata と同じ罠）。0 バイトなら contract で必ず止まる |
 | 2026-08-31 | 隔離の成立（login 後） | **確認済み**。`.credentials.json` は隔離ディレクトリ内に閉じ、ユーザー側 `~/.claude*` は login で更新されない。`/.claude-home/` は login 前に gitignore 済み | §9。codex（auth.json）と同じ性質が Claude でも成立 |
 | 2026-08-31 | CLAUDE.md 遮断 | **`--setting-sources ""` で成立を実測**（対照実験で「遮断なしなら漏れる」ことも確認済み） | §9-1 |
+| 2026-09-04 | permission rule のパス表記 | **`realpathSync.native` で OS の正式表記へ直してから渡す**（8.3 短縮名のままでは拒否される） | 実装時の実測1。照合は文字列比較なので `//c/…` へ直すだけでは足りなかった。気付けたのは permission_denials があったから |
+| 2026-09-04 | Bash 許可リストの置き場所 | **`steps.<id>.bashAllow` を新設**し、`--tools` の Bash 有無もこの宣言から導く（設計は置き場所を未記述だった） | 課題B の表を実装へ写経しない。宣言から表を再現できる形にする（契約の二重管理を作らない） |
+| 2026-09-04 | 自動更新対策（A-3 の未決2案） | **両方採用**: `DISABLE_AUTOUPDATER=1` を env 許可リストへ + 起動前に実体の実在を確認し `claude.exe.old.*` があれば復旧を案内 | どちらも数行で、塞ぐ故障モードが別（予防と検知） |
+| 2026-09-04 | BL-071 の検査コマンド | **確定**（実装時の実測5）。`(*UTF)` 必須。リテラル範囲は偽陽性のため不可 | 検出 10/10・偽陽性 0（実ドキュメント 2,999 行）。U+FFFD のみでは 0/10 で見逃す。Claude の Bash は MINGW64 と確認済み |
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 
 ---

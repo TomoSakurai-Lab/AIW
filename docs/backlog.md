@@ -50,7 +50,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Severity: Minor
 - Trigger: 文字化け検査コマンドを prompt または review に追加するとき
 - Summary: U+FFFD 検査だけでは CP932 誤読後も valid UTF-8 になる文字化けを検出できない。壊れにくい明示リストまたはエスケープ表記と、生バイト確認の手順を定める。
-- Status: open
+- Status: **検査コマンド確定**（2026-09-04・M4 段階1-2 の事前計測。canary で受け入れ条件を満たした）。**残りは review Skill への手順追記のみ**（段階1-2）。実測は `docs/design-claude-executor.md`「実装時の実測」§5: U+FFFD のみの検査は 10 行の文字化けを **0 件しか検出しない**（主張の実証）。採用は「半角カナ域 + 化け漢字シグネチャ」の PCRE で、検出 10/10・偽陽性 0（`ok.txt` + 実ドキュメント 2,999 行）。⚠️ `(*UTF)` を付けないと exit 2、リテラル範囲 `[｡-ﾟ]` はロケール未設定の GNU grep 3.0 で**正常な日本語に誤ヒット**する。Claude CLI の Bash は MINGW64/Msys（PowerShell ではない）。
 
 ## BL-078
 
