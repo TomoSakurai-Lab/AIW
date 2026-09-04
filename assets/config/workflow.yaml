@@ -439,6 +439,12 @@ steps:
   improve-check:
     role: claude
     skill: improve-check
+    # ⚠️ **executor は宣言しない = clipboard のまま**（M4 段階1-1）。
+    # runtime（この環境の .ai-workflow/config/workflow.yaml）では `executor: claude` へ
+    # 切り替えてあるが、assets は `aiw init` で**他の環境へ配られる雛形**なので、
+    # 隔離 home（.claude-home）の作成と `claude auth login` が済んでいない環境では
+    # 起動できない。出荷する既定は「動く方」にする。
+    # 切り替えたい環境は、隔離 home を用意してから 1 行足す。
     inputs:
       - path: current-review.md
       - path: current-result.md

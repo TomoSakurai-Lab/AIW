@@ -22,4 +22,6 @@ import "./codex-log.test.js";
 import "./ac-lifecycle.test.js";
 import "./runtime-dir-name.test.js";
 import "./watchdog.test.js";
+import "./claude-executor.test.js";
+import "./claude-integration.test.js";
 import "./ac-schema.test.js";

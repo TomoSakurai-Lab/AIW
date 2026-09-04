@@ -118,12 +118,14 @@ test("17: exec refuses when halted, awaiting approval, or off the current step",
   await assert.rejects(() => execStep(root, config, "task-planning"), (e: Error) => e instanceof EngineError && /workflow is halted/.test(e.message));
 });
 
-// Test 18 — レジストリの解決と、未実装 executor の定型応答。
+// Test 18 — レジストリの解決と、隔離 home が無い環境での拒否。
 //
-// codex は M3 段階1で実装済みになったのでこのテストの対象から外れた。
-// **claude（M4）だけが未実装**であり、その定型応答をここで固定する。
-// codex の失敗経路は codex-executor.test.ts が個別に見る。
-test("18: the registry resolves every executor and claude reports not-implemented", async () => {
+// **M4 で claude も実装済みになった**ので「未実装の定型応答」はもう無い（`notImplemented` ごと削除）。
+// 代わりにここで固定するのは、3 実装が同じ入口から解決されることと、
+// **一時ルートには隔離 home が無いので claude が permanent で起動を拒む**こと
+// ——黙って ~/.claude へフォールバックしないのが要点。
+// 個別の失敗経路は codex-executor / claude-executor のテストが見る。
+test("18: the registry resolves every executor and claude refuses without an isolated home", async () => {
   const { root, config } = makeRoot();
   const step = config.steps["implementation"];
 
@@ -131,11 +133,13 @@ test("18: the registry resolves every executor and claude reports not-implemente
   assert.equal(getExecutor("codex"), codexExecutor);
   assert.equal(getExecutor("claude"), claudeExecutor);
   assert.equal(codexExecutor.name, "codex");
+  assert.equal(claudeExecutor.name, "claude");
 
   const result = await claudeExecutor.execute({ root, config, step });
   assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "permanent");
   assert.deepEqual(result.outputs, []);
-  assert.match(result.error ?? "", /M3 で実装予定/);
+  assert.match(result.error ?? "", /claude auth login/);
 });
 
 // Test 19 — 失敗した executor は exec.failed として記録されるが、state は変えない。
@@ -162,6 +166,30 @@ test("19: exec logs a failing executor without mutating state", async () => {
   assert.ok(kinds.includes("exec.started"), "exec.started must be logged");
   assert.ok(kinds.includes("exec.failed"), "exec.failed must be logged");
   assert.equal(events.find((e) => e.event === "exec.started")?.executor, "codex");
+
+  writeFileSync(workflowYaml, raw, "utf8");
+});
+
+// Test 142 — steps[].effort（M4）。未知の値は**ロード時**に落とす。
+//
+// executor 名と同じ規律: 実行して CLI に「そんな effort は無い」と言われるより、
+// config を読んだ瞬間に分かるほうがいい。
+// ⚠️ 型を足すだけで誰も読まない形にしない（KI-05）。実行時に読まれることは
+// claude-executor.test.ts の Test 133 が見ている。
+test("142: loader accepts a declared effort and rejects an unknown one at load time", () => {
+  const { root } = makeRoot();
+  const { workflowYaml } = rootPaths(root);
+  const raw = readFileSync(workflowYaml, "utf8");
+  const anchor = "  improve-check:\n    role: claude";
+
+  // 未宣言はキーごと落とす（「未指定」を undefined ではなく不在で表す）
+  assert.equal("effort" in loadWorkflow(root).steps["improve-check"], false);
+
+  writeFileSync(workflowYaml, raw.replace(anchor, `${anchor}\n    effort: high`), "utf8");
+  assert.equal(loadWorkflow(root).steps["improve-check"].effort, "high");
+
+  writeFileSync(workflowYaml, raw.replace(anchor, `${anchor}\n    effort: extreme`), "utf8");
+  assert.throws(() => loadWorkflow(root), /unknown effort "extreme"/);
 
   writeFileSync(workflowYaml, raw, "utf8");
 });

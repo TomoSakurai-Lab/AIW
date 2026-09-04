@@ -75,12 +75,11 @@ export interface StepExecutor {
   execute(req: ExecutorRequest): Promise<ExecutorResult>;
 }
 
-/** 未実装 executor（M2 / M3 で実装）が返す定型の結果。 */
-export function notImplemented(name: ExecutorName, milestone: string): ExecutorResult {
-  return {
-    ok: false,
-    outputs: [],
-    error: `executor "${name}" は未実装です（${milestone} で実装予定）。workflow.yaml の executor を "clipboard" に戻すか、手動で成果物を作成してください。`,
-    meta: { executor: name, implemented: false }
-  };
-}
+/** 未実装 executor の定型応答（M0.4〜M3）は **削除した**。
+ *
+ * clipboard / codex / claude の 3 実装が揃い、最後の利用者だった claude が M4 で実装された。
+ * 「宣言はあるが誰も参照しない」を残さないのはこのコードベースの規律
+ * （`ValidatorRef` の死んだ宣言 3 つに付いている警告と同じ理由）。
+ * 未実装の executor をまた作るなら、そのときに同じものを書けばよい——8 行なので、
+ * 残しておく価値より「使われていないものが公開面にある」害のほうが大きい。
+ */

@@ -74,6 +74,11 @@ export const EXECUTOR_NAMES = ["clipboard", "codex", "claude"] as const;
 export type ExecutorName = (typeof EXECUTOR_NAMES)[number];
 export const DEFAULT_EXECUTOR: ExecutorName = "clipboard";
 
+// claude の `--effort`（2.1.251 実測）。未知の値はロード時に落とす——executor 名と同じ規律で、
+// 実行して初めて「そんな effort は無い」と言われるより config を読んだ瞬間に分かるほうがいい。
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
 export type WorkflowStep = {
   id: string; // ローダーが steps マップキーから注入(§7.1)
   // `cli` は testing ステップ専用だったが、testing ごと削除した（2026-08-07）。
@@ -98,6 +103,16 @@ export type WorkflowStep = {
    *  workflow.yaml を読み直さない（executor ごとに解決規則が分岐するのを防ぐ）。
    *  fix は実測の中央値 6 分なので、既定より短い値を置く用途を想定している。 */
   timeoutMs?: number;
+  /** M4: このステップで使うモデル。未指定なら settings.claudeModel。
+   *  ⚠️ **claude executor が実行時に読む。** 型だけ足して誰も参照しない形にしない（KI-05）。 */
+  model?: string;
+  /** M4: このステップの effort。未指定なら settings.claudeEffort。
+   *  clipboard 時代の「人間が難易度で low / high を使い分ける」を静的宣言へ置き換えたもの。 */
+  effort?: EffortLevel;
+  /** M4: このステップで許す Bash コマンドのパターン（`Bash(<pattern>)` の中身）。
+   *  ⚠️ **宣言が無ければ Bash はツール集合ごと渡らない**（設計 課題B の表を宣言から導く）。
+   *  未許可のコマンドは dontAsk が自動拒否し、result.permission_denials に残る。 */
+  bashAllow?: string[];
   validators?: ValidatorRef[];
   retryPolicy?: RetryPolicy;
   postActions?: string[];
@@ -162,6 +177,25 @@ export type WorkflowConfig = {
      *  （JSONL にモデル名は無く、`codex doctor` の表示も `<default>` のまま）。
      *  計測を世代間で比較するなら明示すること。詳細は docs/design-codex-executor.md の決定ログ。 */
     codexModel?: string;
+    /** claude executor（M4）。runtimeRoot からの相対、または絶対パス。
+     *  ⚠️ 隔離した CLAUDE_CONFIG_DIR を指す。デスクトップアプリの ~/.claude とは別物にすること。
+     *  隔離しないと (1) ユーザーの設定・skills・hooks・CLAUDE.md が実行へ混入し
+     *  (2) プロジェクト登録簿（~/.claude.json）が実行のたびに汚れる。
+     *  詳細は docs/design-claude-executor.md 課題 A-2 */
+    claudeHome?: string;
+    /** claude に渡すモデル（`--model`）。未指定なら渡さず CLI の既定に委ねる。
+     *  ⚠️ codex と違い**実際に使われたモデルは記録できる**（result.modelUsage）。
+     *  それでも指定値は指定値として残す（modelRequested / modelObserved の対）。
+     *  変更したら docs/baseline.md へ日付と理由を記録すること。 */
+    claudeModel?: string;
+    /** claude に渡す effort（`--effort`）の既定。steps.<id>.effort が優先される。
+     *  ⚠️ **実行時の値は観測できない**（出力のどこにも出ない・設計 §8 実測）うえ、
+     *  モデルによる silent downgrade がありうる。記録は effortRequested（指定値）のみ。 */
+    claudeEffort?: string;
+    /** claude 側ステップの総上限（ミリ秒）のフォールバック。
+     *  ⚠️ 通常は engine が steps.<id>.timeoutMs から解決して渡すので、これが効くのは
+     *  executor を直接呼ぶ場合だけ。既定は CLAUDE_DEFAULT_TIMEOUT_MS（40 分）。 */
+    claudeTimeoutMs?: number;
     [key: string]: unknown;
   };
   defaults?: Record<string, unknown>;
