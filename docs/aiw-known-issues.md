@@ -507,7 +507,7 @@ runtimeRoot 配下に作っていたので、runtimeRoot 起点で解決する�
 | 6 | `command-exit-code` validator | 宣言していた唯一のステップ(testing)が消え、参照ゼロ | **保留**（M7 で判断） |
 | 7 | `steps[].inputs` / `optionalOutputs` / `session` / `standalone` / `defaults` / `auditPolicy` | 型はあるがエンジンが読まない | **一部解消**（`optionalOutputs` は BL-113 で json-schema validator が「不在なら skipped」の判定に読むようになった。他は未修正・KI-05） |
 | 8 | **`testing` ステップ（role: cli）** | **実行手段が無いのに遷移先として宣言されていた** | **削除済み**（下記） |
-| 9 | `config/model-policy.json` | step ごとにモデルを宣言しているが、**エンジンと executor は読まない**（読むのは旧 CLI 経路のみ） | **未修正**（M4 で判断） |
+| 9 | `config/model-policy.json` | step ごとにモデルを宣言しているが、**エンジンと executor は読まない**（読むのは旧 CLI 経路のみ） | **解消**（2026-09-04。M4 でファイルごと削除し、正本を `workflow.yaml` の `settings.claudeModel` / `settings.codexModel` + `steps.<id>.model` へ統合。下記） |
 | 10 | `ac-manifest.json` / `ac-result.json` のライフサイクル | 生成は Skill 配線済み（M3）だが **archive も削除もされない**。前タスクの残骸が次タスクへ持ち越され、Codex が「監査証跡の上書き」と解釈して停止（2026-08-25 実測） | **修正済み**（2026-09-01。BL-101。archive 対象へ追加 + `discardAcArtifacts`） |
 | 11 | `consumer-presence` の `consumerChecks[].root` | **runtimeRoot 起点で解決していた**。manifest は checkRepoRoot 相対で書かれるので本番では常に「存在しない」。`report` 宣言のため halt せず、**failed（違反あり）として review へ流れていた** | **修正済み**（2026-09-01。下記） |
 | 12 | `schemas/ac-manifest.schema.json` / `ac-result.schema.json` | runtime にのみ存在し、どの validator も参照せず、`aiw init` でも配られない。壊れても誰も検知しない | **修正済み**（2026-08-31。BL-113。緩い版へ差し替えて json-schema validator に配線・assets から配布。**実データ全件パスを配線の前提条件にした**） |
@@ -638,6 +638,23 @@ CLI のバージョンは pin したのに、結果を最も左右する変数�
 `meta.modelRequested` として Event Log に記録するようにした（指定値であることを名前で明示）。
 **`model-policy.json` 自体は触っていない。** フェーズ別モデルの割り当ては
 M4（モデル比較実験の設計）と絡むため、そこで判断する。
+
+**M4 での決着（2026-09-04）**: `model-policy.json` を**削除**した（assets / runtime とも）。
+読む側（旧 CLI 経路）は改名時の撤去で既に消えており、残っていたのは
+「誰も読まない宣言ファイル」だけだったため。フェーズ別モデルの意図は捨てず、
+正本を `workflow.yaml` へ統合した:
+
+| 旧 | 新 |
+| --- | --- |
+| `model-policy.json` の claude 系 3 行 | `settings.claudeModel`（既定）+ `steps.<id>.model`（上書き） |
+| `model-policy.json` の codex 系 2 行 | `settings.codexModel`（M3 で新設済み） |
+| `model-policy.json` の `effort` | `settings.claudeEffort` + `steps.<id>.effort` |
+
+⚠️ **「型を足して誰も読まない」を新造しないため、`steps.<id>.model` / `.effort` は
+claude executor が実行時に読む配線とテストを同一コミットで入れてある**
+（Test 133 が実行時参照を、Test 142 がロード時の値検証を固定する）。
+⚠️ 削除した値そのものは現実と乖離していた（`claude-sonnet` / `claude-opus` の alias 表記のまま、
+一度も実行を制御していない）。移植したのは**意図**であって値ではない。
 
 ### このクラスへの構造的な対処（M1.5 で入れたもの）
 

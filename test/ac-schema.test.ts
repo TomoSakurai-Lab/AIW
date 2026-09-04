@@ -226,3 +226,38 @@ test("125: versionInfo enumerates every declared schema with version and hash", 
   assert.equal(schemaVersionKey("schemas/ac-manifest.schema.json"), "acManifest");
   assert.equal(schemaVersionKey("schemas/current-status.schema.json"), "currentStatus");
 });
+
+// Test 143 — **BL-114: AC 証跡の validator が出荷側にも配線されている。**
+//
+// M3 では runtime にだけ宣言があり、`aiw init` で配られる assets には無かった
+// （grep 0 件）。新環境では「検査していない」が **skipped ですらなく、宣言ごと存在しない**
+// 形になっていた——気付ける経路が無いのが問題で、値の当否ではない。
+//
+// ⚠️ consumer-presence は implementation のみ、measurement-completeness は
+// implementation と fix の両方。この非対称は意図（consumer の実在は実装の話で、
+// fix で新たに増えない / fix は ac-result を作り直す）なので、テストで固定する。
+test("143: the shipped workflow.yaml wires the AC evidence validators, and only where intended", () => {
+  const { config } = makeRoot();
+  const types = (stepId: string): string[] => (config.steps[stepId].validators ?? []).map((v: any) => v.type);
+  const declared = (stepId: string, type: string) =>
+    (config.steps[stepId].validators ?? []).filter((v: any) => v.type === type) as any[];
+
+  assert.ok(types("implementation").includes("consumer-presence"), "implementation に consumer-presence");
+  assert.ok(types("implementation").includes("measurement-completeness"), "implementation に measurement-completeness");
+  assert.ok(types("fix").includes("measurement-completeness"), "fix にも measurement-completeness");
+  assert.equal(types("fix").includes("consumer-presence"), false, "fix には置かない（意図的な非対称）");
+
+  // どちらも report。**halt にしない**——検査できなかった状況で無人運転を止めない
+  // （安全網を弱めているのではなく、弱い方の網として置いてある）。
+  for (const [stepId, type] of [
+    ["implementation", "consumer-presence"],
+    ["implementation", "measurement-completeness"],
+    ["fix", "measurement-completeness"]
+  ] as const) {
+    for (const v of declared(stepId, type)) {
+      assert.equal(v.onViolation, "report", `${stepId}/${type} は report`);
+      assert.equal(v.manifest, "ac-manifest.json");
+      assert.equal(v.result, "ac-result.json");
+    }
+  }
+});

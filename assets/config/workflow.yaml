@@ -344,6 +344,17 @@ steps:
       - type: verify-local
         onViolation: report        # 失敗は test-report.md として review へ渡し fix ループに乗せる
         command: typecheck
+      # AC の証跡を検査する 2 つ（BL-114 で runtime から移植・2026-09-04）。
+      # どちらも ac-manifest.json / ac-result.json が無ければ skipped になり、
+      # 「検査していない」が Event Log と status --summary に残る（passed へ丸めない）。
+      - type: consumer-presence
+        onViolation: report
+        manifest: ac-manifest.json
+        result: ac-result.json
+      - type: measurement-completeness
+        onViolation: report
+        manifest: ac-manifest.json
+        result: ac-result.json
     postActions:
       - snapshotResult             # attempts/result-<n>.md へ複製
     transitions:
@@ -424,6 +435,13 @@ steps:
       - type: verify-local
         onViolation: report        # halt にすると flaky 1本で無人運転が止まる
         command: typecheck
+      # fix は ac-result を作り直す設計（fix Skill v3・BL-113）なので、
+      # 測り残しの検査は fix 側にも要る。consumer-presence は implementation 側だけ
+      # （consumer の実在は実装の話で、fix で新たに増えないため）。
+      - type: measurement-completeness
+        onViolation: report
+        manifest: ac-manifest.json
+        result: ac-result.json
     retryPolicy:
       counter: fixAttempts
       maxRetries: 2              # 上限判定は maxRetries + 1(§7.6)

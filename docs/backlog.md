@@ -154,4 +154,4 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Severity: Minor
 - Trigger: `aiw init` を新環境へ配るとき、または assets↔runtime の宣言差分を次に棚卸しするとき
 - Summary: M3 で runtime に配線した `consumer-presence` / `measurement-completeness` validator の宣言が `assets/config/workflow.yaml` に無く、`aiw init` で配られない（grep 0 件）。ac-* の `optionalOutputs` と `artifacts` 定義は BL-113 で assets へ移植済みなので、残る差分はこの validator 2 宣言（`executor: codex` のような環境依存の意図的差分は除く）。意図的な差分と移植漏れを仕分けし、移植するものは test 88 系のテストで固定する。
-- Status: open
+- Status: **done**（2026-09-04。M4 のついで枠。implementation へ consumer-presence + measurement-completeness、fix へ measurement-completeness を `onViolation: report` で移植。**非対称は意図**（consumer の実在は実装の話で fix で増えない / fix は ac-result を作り直す）なので Test 143 で「fix に consumer-presence を置かない」ことまで固定した。仕分けの結果、移植しなかった runtime 固有の宣言は `executor` / `codexHome` / `codexModel` / `verifyLocal` / `knownFailurePatternsFile` / タイムアウト値 / `steps.improve-check.executor` = **いずれも環境依存**）
