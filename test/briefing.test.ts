@@ -8,9 +8,11 @@
 // 再検証された。「古い成果物」はどの validator も見ていない——だからここで出す。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { buildBriefing, formatBriefing, REQUEST_FILE } from "../src/engine/briefing.js";
+import { resetForNewTask, runStep } from "../src/engine/engine.js";
+import { readState } from "../src/engine/state.js";
 import { rootPaths } from "../src/engine/paths.js";
 import { makeRoot, writeIn, writeStatus } from "./helpers.js";
 
@@ -110,4 +112,36 @@ test("145: building the briefing writes nothing", () => {
   buildBriefing(root, config, "review");
 
   assert.equal(readFileSync(stateFile, "utf8"), before, "state.json を書かない");
+});
+
+// Test 146 — **`aiw new-task` は current-status.json を削除する。** テンプレートで埋めない。
+//
+// 実測（2026-09-04）: 前タスクの宣言が残ったまま新しい依頼を書いて run したところ、
+// 残骸がたまたま `"step": "task-planning"` だったので preflight の一致検査を素通りし、
+// **古い計画が承認ゲートまで到達した**。task-metadata.json と同じ扱い（削除）にして、
+// 「まだ誰も宣言していない」を**不在**で表す。空テンプレートでは step が一致すれば通ってしまう。
+test("146: a new task discards the previous status declaration instead of restoring a template", () => {
+  const { root, config } = makeRoot();
+  writeStatus(root, { step: "task-planning", result: "planned", reason: "前タスクの残骸" });
+  writeIn(root, "scope-violation-report.md", "old report");
+  writeIn(root, "current-task.md", "# Task\n\n前タスクの計画\n");
+
+  const { restored, discarded } = resetForNewTask(root, config);
+
+  assert.equal(existsSync(path.join(root, "current-status.json")), false, "**残さない**（消す）");
+  assert.ok(discarded.includes("current-status.json"), "消したことを黙らせない（呼び出し側が表示する）");
+  assert.ok(discarded.includes("scope-violation-report.md"));
+  // 作業ドキュメントのほうは従来どおりテンプレートへ戻す
+  assert.ok(restored.includes("current-task.md"));
+  assert.equal(readFileSync(path.join(root, "current-task.md"), "utf8").includes("前タスクの計画"), false);
+
+  // 状態は task-planning の ready へ戻っている（**halt を起こす前に見る**）
+  assert.equal(readState(root).currentStep, "task-planning");
+  assert.equal(readState(root).status, "ready");
+
+  // ⚠️ 消した後は file-exists が **ファイル名を挙げて** 止める＝原因が読める形の失敗になる。
+  // （宣言が残っていれば preflight は step 一致だけで通ってしまう。だから消す）
+  const outcome = runStep(root, config, "task-planning");
+  assert.equal(outcome.kind, "halted");
+  assert.match(String((outcome as any).message ?? ""), /current-status\.json/);
 });

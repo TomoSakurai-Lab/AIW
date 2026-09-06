@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   processCompletion,
@@ -18,6 +18,7 @@ import {
   type TimeoutKind,
   type Watchdog
 } from "./watchdog.js";
+import { deleteBaseline } from "./gitScope.js";
 import { getStep, loadWorkflow } from "./loader.js";
 import { ASSETS_DIR, rootPaths } from "./paths.js";
 import { readState, updateState, writeState } from "./state.js";
@@ -61,6 +62,48 @@ export function initRoot(root: string, force = false): void {
     writeFileSync(p.eventLog, "", "utf8");
   }
   writeState(root, { ...DEFAULT_ENGINE_STATE });
+}
+
+/**
+ * 次のタスクへ向けてランタイムを戻す（`aiw new-task` の実体）。
+ *
+ * **CLI ではなくエンジンに置く。** state と成果物を書き換える操作であり、表示ではないため
+ * （CLI は結果を出すだけ、という既存の分離）。テストが CLI を起動せずに固定できる利点もある。
+ *
+ * ⚠️ `current-status.json` は**テンプレートへ戻すのではなく削除する**（`task-metadata.json` と
+ * 同じ扱い・同じ理由）。実測 2026-09-04: 前タスクの宣言が残ったまま新しい依頼を書いて
+ * `aiw run task-planning` したところ、**残骸がたまたま `"step": "task-planning"` だったので
+ * preflight の一致検査を素通りし、古い計画が承認ゲートまで到達した**。
+ * 空テンプレートを置く案も同じ穴を残す（step さえ一致すれば通る）ので、**無い状態**にして
+ * 「まだ誰も宣言していない」を表現する。不在なら file-exists がファイル名を挙げて止まる。
+ *
+ * @returns 戻したファイル（root 相対）と、削除した宣言ファイル名
+ */
+export function resetForNewTask(root: string, config: WorkflowConfig): { restored: string[]; discarded: string[] } {
+  const { templatesDir } = rootPaths(root);
+  const abs = path.resolve(root);
+  const restored: string[] = [];
+  for (const f of ["user-task.md", "current-task.md", "current-result.md", "current-review.md"]) {
+    const tmpl = path.join(templatesDir, f);
+    if (existsSync(tmpl)) {
+      copyFileSync(tmpl, path.join(abs, f));
+      restored.push(f);
+    }
+  }
+  // 前タスクの baseline と違反レポートが次タスクの検査を汚さないように消す。
+  deleteBaseline(root);
+  const statusFile = String(config.settings.statusFile ?? "current-status.json");
+  const discarded: string[] = [];
+  for (const f of ["scope-violation-report.md", statusFile]) {
+    const target = path.join(abs, f);
+    if (existsSync(target)) {
+      discarded.push(f);
+    }
+    rmSync(target, { force: true });
+  }
+  const prev = readState(root);
+  writeState(root, { ...DEFAULT_ENGINE_STATE, cleanReviewStreak: prev.cleanReviewStreak });
+  return { restored, discarded };
 }
 
 export function loadConfig(root: string): WorkflowConfig {

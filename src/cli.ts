@@ -13,19 +13,19 @@ import {
   resume as engineResume,
   runStep as engineRunStep,
   statusView,
-  EngineError
+  EngineError,
+  resetForNewTask
 } from "./engine/engine.js";
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, visibleOnScreen } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
 import { findRunFile, formatRunLog, readRunLog } from "./engine/codexLog.js";
 import { resolveRoot, rootPaths, RUNTIME_DIR_NAME } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
-import { deleteBaseline, readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
+import { readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
 import { buildObserved } from "./engine/observed.js";
 import { buildSummary, formatSummary } from "./engine/summary.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
-import { readState as readEngineState, writeState as writeEngineState } from "./engine/state.js";
-import { DEFAULT_ENGINE_STATE } from "./engine/types.js";
+import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
 
 const program = new Command();
@@ -305,20 +305,12 @@ async function baselineCaptureCmd(): Promise<void> {
 // cleanReviewStreak is preserved (audit cadence spans tasks).
 function engineNewTaskCmd(): void {
   const root = engineRoot();
-  const { templatesDir } = rootPaths(root);
-  const abs = path.resolve(root);
-  for (const f of ["user-task.md", "current-task.md", "current-result.md", "current-review.md"]) {
-    const tmpl = path.join(templatesDir, f);
-    if (existsSync(tmpl)) {
-      copyFileSync(tmpl, path.join(abs, f));
-    }
-  }
-  // 前タスクの baseline と違反レポートが次タスクの検査を汚さないように消す。
-  deleteBaseline(root);
-  rmSync(path.join(path.resolve(root), "scope-violation-report.md"), { force: true });
-  const prev = readEngineState(root);
-  writeEngineState(root, { ...DEFAULT_ENGINE_STATE, cleanReviewStreak: prev.cleanReviewStreak });
-  console.log('new task ready: state reset to "task-planning"; user-task.md and current-* cleared.');
+  const { restored, discarded } = resetForNewTask(root, loadConfig(root));
+  console.log(`new task ready: state reset to "task-planning".`);
+  console.log(`  戻した: ${restored.join(", ") || "(なし)"}`);
+  // ⚠️ **削除したものを黙らせない。** 特に current-status.json は「テンプレートへ戻す」ではなく
+  // 「消す」扱いなので、消えたことが見えないと次の halt の理由が読めなくなる。
+  console.log(`  消した: ${discarded.join(", ") || "(なし)"}`);
   console.log("→ write the request into user-task.md, then run `aiw drive` (or produce task-planning outputs and `aiw run task-planning`).");
 }
 
