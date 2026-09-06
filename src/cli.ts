@@ -23,6 +23,7 @@ import { appendEvent } from "./engine/eventLog.js";
 import { deleteBaseline, readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
 import { buildObserved } from "./engine/observed.js";
 import { buildSummary, formatSummary } from "./engine/summary.js";
+import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState, writeState as writeEngineState } from "./engine/state.js";
 import { DEFAULT_ENGINE_STATE } from "./engine/types.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
@@ -133,6 +134,13 @@ function printStatus(withSummary: boolean, asJson: boolean): void {
   }
   console.log("");
   console.log(formatSummary(summary, observed));
+  // 承認待ちのときだけ、そのゲート固有の判断材料を足す（2026-09-06）。
+  // ⚠️ **表示だけ。** 集計も判定も変えない。承認は人間が判断する行為であり、
+  // その材料が画面に無いことが問題だった（executor 化で対話AIの要約が消えたため）。
+  if (view.pendingApproval) {
+    console.log("");
+    console.log(formatBriefing(buildBriefing(root, loadConfig(root), view.pendingApproval)));
+  }
 }
 
 // `aiw exec <step>`: resolve the step's executor and run it. Produces artifacts only — no
@@ -576,6 +584,10 @@ async function runDrive(): Promise<void> {
 
       // approval gate
       if (state.pendingApproval) {
+        // y/n を聞く前に判断材料を出す。**聞くだけのゲートにしない。**
+        safe(() => console.log(`
+${formatBriefing(buildBriefing(root, config, state.pendingApproval as string))}
+`));
         if (yes(await ask(`承認ゲート: "${state.pendingApproval}" を承認しますか？ [y=承認 / n=却下] `))) {
           safe(() => printOutcome(engineApprove(root, config)));
         } else {
