@@ -25,4 +25,5 @@ import "./watchdog.test.js";
 import "./claude-executor.test.js";
 import "./claude-integration.test.js";
 import "./briefing.test.js";
+import "./review-executor.test.js";
 import "./ac-schema.test.js";

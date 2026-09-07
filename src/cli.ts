@@ -24,6 +24,7 @@ import { appendEvent } from "./engine/eventLog.js";
 import { readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
 import { buildObserved } from "./engine/observed.js";
 import { buildSummary, formatSummary } from "./engine/summary.js";
+import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
@@ -369,7 +370,16 @@ program
   .description("Process completion for the current step (§7.7 pipeline)")
   .action((step: string) => {
     const root = engineRoot();
-    printOutcome(engineRunStep(root, loadConfig(root), step));
+    const config = loadConfig(root);
+    printOutcome(engineRunStep(root, config, step));
+    // ⚠️ **判定の後。** 提案は表示だけで、run の判定・遷移・exit code には影響しない
+    // （auditPolicy の counterOwner: cli という既存の分担どおり）。
+    const suggestion = suggestAuditOnModelChange(root, config, step);
+    if (suggestion) {
+      console.log(`
+⚠ ${suggestion.message}`);
+      console.log(`  → aiw exec review-audit / aiw run review-audit（standalone。通常フローは止めない）`);
+    }
   });
 
 program

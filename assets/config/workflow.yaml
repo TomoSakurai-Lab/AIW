@@ -68,7 +68,7 @@ versions:
   skills:
     implementation: 4         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     fix: 5                    # improve-check の判定範囲へ Fix Scope の Major を追加
-    review: 3                  # パリティ監査（兄弟機能の棚卸し表と実装の突き合わせ・発動漏れの指摘）
+    review: 4                  # M4 段階1-2: 計測コードを書かない規律 + BL-071 の文字化け検査手順
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 4             # improve-check の判定範囲へ Fix Scope の Major を追加
     research: 4               # 兄弟機能の棚卸し（パリティ表）。識別子 grep で発動、対象外は Open Decisions
@@ -390,6 +390,14 @@ steps:
       - type: artifact-contract
         onViolation: halt          # Fix の契約になるため構造欠落は許容しない
         artifact: current-review
+      # 第2網（M4 課題B）。**executor の宣言と違い、これは assets にも配る。**
+      # 塞ぐ故障モードが executor 経路の外にあるため——clipboard 運用（人間 + 対話AI が
+      # 誤ってコードを直す）、許可リストの穴、将来の設定退行。
+      # ⚠️ report にする理由: review 中の変更が review の仕業とは限らない（人間の並走ビルド等）。
+      # halt にすると無人運転が人間の作業で止まる。report なら承認ゲート③に届く。
+      - type: diff-scope
+        onViolation: report
+        declaredFilesFrom: context-package.md
     approval:
       required: true
       actor: human
