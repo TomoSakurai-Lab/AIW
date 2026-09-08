@@ -227,7 +227,10 @@ test("150: the shipped workflow declares review's second net, but not the execut
   assert.equal(review.executor, "clipboard", "executor は環境依存（隔離 home と認証が要る）ので配らない");
   assert.equal(review.bashAllow, undefined, "許可コマンドはプロジェクト固有なので配らない");
   // Skill を更新したら版も上げる（Event Log にどの版で走ったかが残る）
-  assert.equal((shipped.versions?.skills as Record<string, number>)?.review, 4);
+  assert.equal((shipped.versions?.skills as Record<string, number>)?.review, 5, "skills.review の bump 反映");
+  // ⚠️ **この数字は意図的な bump のたびに動く。**
+  // 契約は「値」ではなく「SKILL.md と versions が同じコミットで動く」こと。
+  // ここが落ちたら、bump の反映漏れかを確かめてから更新する。
 });
 
 // Test 151 — 故障注入 #10: reflection の許可セット（**自動化しないが、設定は今のうちに固定する**）。

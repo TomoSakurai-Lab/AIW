@@ -26,14 +26,37 @@ review ステップで毎回同じように行う手順。今回の対象は入�
 ### `## Specification Coverage Audit`
 
 - 実装が `context-package.md` の `# Source Requirements` を満たしているか
-- **Fix が必要な場合、原因を分類する**: `実装起因`（指示どおりに作られていない）か
-  `research起因`（指示自体が誤っていた）か。**この分類が Fix 発生率の解釈に必要**なので、
-  Fix Scope を出すときは必ずどちらかを書く
+- **Fix が必要な場合、原因を分類する**（3値。Fix Scope を出すときは必ずいずれかを書く）:
+  - `実装起因` … 指示どおりに作られていない
+  - `research起因（指示が誤り）` … 指示は存在したが、内容が間違っていた
+    （例: `# Required Tests` の手順が timeout する構成だった）
+  - `research起因（指示が不足）` … 必要な指示・棚卸し・判断の記録が**存在しなかった**
+    （例: `## Sibling Parity` の棚卸し範囲が不十分 /
+    `# Open Decisions` に落とすべき未定義が落ちていなかった）
+
+  > ⚠️ **「仕様が未定義だった」は独立カテゴリにしない。** 未定義を `# Open Decisions` へ
+  > 落とすのは research の仕事なので、落ちていなければ「指示が不足」。
+  > 落ちていて人間が判断済みなら、その判断に従った実装の問題は「実装起因」。
+
+  ⚠️ **2値だった頃は消去法で `research起因` に落ちた。** 実測（2026-09-08）:
+  M4 で review を自動化して以降、Fix が出たタスクの research起因が **5/5 = 100%** になり、
+  分類が何も区別しなくなった。**100% は情報量ゼロ**。誤り / 不足の内訳は
+  research 自動化（M4 段階3）の判断材料そのものなので、そこを分けるためにこの3値にしている。
 - **パリティ監査**: `research-findings.md` の `## Sibling Parity`（兄弟機能の棚卸し表）が
   ある場合、「適用」の各行が実装に反映されているかを AC と突き合わせる。
   **表も「兄弟なし」の1行も無いのに、対象機能と同じデータへの既存類似操作が明らかに
-  存在する場合は、`research起因` の Major として指摘する**（棚卸しの発動漏れへの網）。
+  存在する場合は、`research起因（指示が不足）` の Major として指摘する**（棚卸しの発動漏れへの網）。
   「対象外」の行が `# Open Decisions` / `# UX Assumptions` のどちらにも無い場合も同様
+
+  > パリティ表の欠落・棚卸し不足で見つかった**兄弟機能の未対応**は、
+  > **今回のタスクの Scope 内なら Fix Scope へ、Scope 外なら Backlog へ**
+  > （Trigger 必須・既存の backlog 書式に従う。Trigger の既定は
+  > 「次に当該機能を触るタスクの前」）。
+  > 判定基準は `context-package.md` の Scope 宣言。**迷う場合は Backlog 側に倒す**
+  > （review は scope を広げない、が原則）。
+  >
+  > ⚠️ Scope 外のものを Fix Scope に入れない——**scope の膨張は fixAttempts の有界と衝突する**。
+  > 入れた分だけ fix ループが伸び、上限に当たれば escalate で人間へ戻る。
 
 ### `## Acceptance Criteria Evidence Audit`
 
