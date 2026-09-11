@@ -342,6 +342,39 @@ export function summarize(event: any, secret: SessionSecret | null): ExecutorPro
   return [];
 }
 
+/**
+ * assistant イベントから **Read した対象のファイル名**を拾う（M4 段階1-3）。
+ *
+ * ## なぜ記録するか
+ *
+ * 知識ファイルは「全文結合」から「目次 + 必要な節を読む」へ移す。
+ * ⚠️ **ポインタ方式は実測で 5 周中 4 周（= 1/5 の不発）**——「読め」と書いてあっても読まれない回がある。
+ * 目次に条件付き必読を書いたうえで、**読んだ形跡を残す**のが最後の観測点になる。
+ *
+ * ⚠️ **判定には使わない。** ok / failureKind / 遷移は一切変えない。
+ * 「条件に当たるのに読んでいない」を**事後に人間が見つけられる**ようにするためだけの記録。
+ * 自動で咎めると、読まずに正解できた回まで止めることになる（検出と判定を混ぜない）。
+ *
+ * basename だけを残すのは Event Log を短く保つため（全文は runs/ の JSONL にある）。
+ */
+export function readTargets(event: any): string[] {
+  if (event?.type !== "assistant") {
+    return [];
+  }
+  const content = event.message?.content;
+  const out: string[] = [];
+  for (const block of Array.isArray(content) ? content : []) {
+    if (block?.type !== "tool_use" || block?.name !== "Read") {
+      continue;
+    }
+    const file = String(block.input?.file_path ?? "");
+    if (file !== "") {
+      out.push(path.basename(file));
+    }
+  }
+  return out;
+}
+
 function toolLine(block: any): ExecutorProgress {
   const name = String(block?.name ?? "tool");
   const input = block?.input ?? {};
@@ -530,6 +563,7 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       let usage: ClaudeUsage | null = null;
       let modelObserved: string[] | null = null;
       let toolsObserved: string[] | null = null;
+      const filesRead = new Set<string>();
       let denials: { count: number; tools: string[] } | null = null;
       let resultIsError: boolean | null = null;
       let apiErrorStatus: unknown = null;
@@ -594,6 +628,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
             // 「どの制限で走っているか」を起動直後に記録する（§3 観測1）
             toolsObserved = event.tools.map((t: unknown) => String(t)).sort();
           }
+          for (const name of readTargets(event)) {
+            filesRead.add(name);
+          }
           if (event.type === "result") {
             usage = usageFrom(event) ?? usage;
             modelObserved = modelsObserved(event) ?? modelObserved;
@@ -656,6 +693,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         tools,
         toolsObserved,
         editAllowed: editTargets(req.step),
+        // ⚠️ **観測であって判定ではない。** 知識ファイルを「目次 + 必要な節を読む」へ移した以上、
+        // 読み漏れは記録からしか分からない（ポインタ方式は実測 1/5 の不発）。
+        filesRead: [...filesRead].sort(),
         // ⚠️ 拒否を黙らせない。件数とツール名を残す（全文は runs/ の JSONL）
         permissionDenials: denials,
         errorEvents: errorCount,

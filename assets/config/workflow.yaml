@@ -70,8 +70,8 @@ versions:
     fix: 5                    # improve-check の判定範囲へ Fix Scope の Major を追加
     review: 5                  # Fix 原因分類を3値へ（誤り/不足）+ パリティ指摘の既定を Backlog へ
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
-    reflection: 4             # improve-check の判定範囲へ Fix Scope の Major を追加
-    research: 4               # 兄弟機能の棚卸し（パリティ表）。識別子 grep で発動、対象外は Open Decisions
+    reflection: 5             # context.md の索引を同時に更新する
+    research: 5               # 知識の取り込み節（context.md の索引を読む / 条件付き必読）
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)

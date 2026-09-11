@@ -30,7 +30,7 @@ AI がやると二重処理になる。
 
 ## 手順
 
-1. `context.md` / `learnings.md` を更新する（判定基準は Project Instructions）
+1. `context.md` / `learnings.md` を更新する（判定基準は Project Instructions）。⚠️ **`context.md` に節を足した / 節の意味を変えたら、冒頭の `## 索引` にも同じ行を足す。**読み手（research）は索引しか見ないので、**本文にだけ書いた知識は次のタスクに届かない**
 2. `current-review.md` の `## Backlog` を `backlog.md` へ転記する（書式は Project Instructions）
 2b. **fix が見送った Fix Scope の Major を `backlog.md` へ積む**（下記）
 3. **`research-findings.md` を消し込む**（下記・必須）

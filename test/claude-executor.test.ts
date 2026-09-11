@@ -542,3 +542,49 @@ test("137: progress lines summarize each event without streaming its content", (
   // ツール結果（user イベント）は画面に出さない
   assert.deepEqual(summarize({ type: "user", message: { content: [{ type: "tool_result" }] } }, null), []);
 });
+
+// Test 159 — **読んだ形跡を記録する**（M4 段階1-3）。判定には使わない。
+//
+// 知識ファイルを「全文結合」から「目次 + 必要な節を読む」へ移すと、読み漏れは
+// 記録からしか分からない。⚠️ ポインタ方式は実測で **5 周中 4 周（= 1/5 の不発）**。
+// 目次に条件付き必読を書いたうえで、最後の観測点としてここに残す。
+test("159: the executor records which files were read, as an observation and never as a verdict", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["improve-check"];
+  const { launch } = fakeClaude([
+    INIT,
+    {
+      type: "assistant",
+      session_id: SESSION_ID,
+      message: {
+        content: [
+          { type: "tool_use", name: "Read", input: { file_path: "C:/x/.ai-workflow/context.md" } },
+          { type: "tool_use", name: "Read", input: { file_path: "C:/x/.ai-workflow/instructions/local-environment-detail.md" } },
+          { type: "tool_use", name: "Read", input: { file_path: "C:/x/.ai-workflow/context.md" } },
+          { type: "tool_use", name: "Grep", input: { pattern: "x" } },
+          { type: "tool_use", name: "Edit", input: { file_path: "C:/x/.ai-workflow/current-status.json" } }
+        ]
+      }
+    },
+    RESULT
+  ]);
+
+  const result = await createClaudeExecutor({ launch }).execute({ root, config, step, projectRoot: root });
+
+  assert.deepEqual(
+    (result.meta as any).filesRead,
+    ["context.md", "local-environment-detail.md"],
+    "basename で重複を畳む（全文は runs/ の JSONL にある）"
+  );
+  // ⚠️ **判定は変えない。** 読んでいようがいまいが ok / failureKind は成果物の話ではない
+  assert.equal(result.ok, true);
+  assert.equal(result.failureKind, undefined);
+
+  // Read 以外のツールは拾わない（Edit した先を「読んだ」に混ぜない）
+  assert.equal((result.meta as any).filesRead.includes("current-status.json"), false);
+
+  // 1 件も読まなければ空配列。**null にしない**（「読まなかった」は観測できている）
+  const quiet = fakeClaude(OK_EVENTS);
+  const none = await createClaudeExecutor({ launch: quiet.launch }).execute({ root, config, step, projectRoot: root });
+  assert.deepEqual((none.meta as any).filesRead, []);
+});
