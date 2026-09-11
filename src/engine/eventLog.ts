@@ -21,7 +21,9 @@ export type EventType =
   | "transition"
   | "workflow.halted"
   | "workflow.resumed"
-  | "audit.suggested";
+  | "audit.suggested"
+  // 遷移確定時に作った 0 バイトスタブ（M4 段階1-3）。**黙って作らない**ための記録。
+  | "stub.created";
 
 export type EventRecord = {
   timestamp: string;

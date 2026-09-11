@@ -26,4 +26,6 @@ import "./claude-executor.test.js";
 import "./claude-integration.test.js";
 import "./briefing.test.js";
 import "./review-executor.test.js";
+import "./halt-artifacts.test.js";
+import "./output-stubs.test.js";
 import "./ac-schema.test.js";

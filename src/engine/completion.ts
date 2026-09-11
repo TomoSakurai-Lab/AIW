@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { appendEvent } from "./eventLog.js";
 import { captureIfAbsent } from "./gitScope.js";
@@ -57,6 +57,81 @@ function buildNotice(validation: ValidationOutcome): ValidationNotice | undefine
 // testing→fix のどの経路でも自動で効く。
 //
 // capture の失敗で遷移は止めない。baseline 欠損は課題4の表に従って validator 側が扱うので、
+/**
+ * 遷移先ステップの成果物が無ければ **0 バイトのスタブ**を作る（M4 段階1-3・設計 課題B）。
+ *
+ * ## なぜ要るか
+ *
+ * claude executor は書き込みを `Edit` だけで行う（`Write` はパスルールが効かないので
+ * ツールごと渡していない）。**`Edit` は対象ファイルの存在を要求する**ので、
+ * `aiw init` 直後のように `context-package.md` / `codex-prompt.md` が無い環境では、
+ * エージェントは書きたくても書けずに終わる——しかも **exit 0 で**（実測・§9-2）。
+ *
+ * ## なぜテンプレート復元ではなく 0 バイトなのか
+ *
+ * どちらも `file-exists` は通してしまうが、そこから先が違う:
+ *
+ * | 観点 | 0 バイト | テンプレート復元 |
+ * | --- | --- | --- |
+ * | `artifact-contract` | **落ちる**（見出しゼロ）→ halt | **通ってしまう**（見出しを含むため） |
+ * | `json-schema` | **落ちる**（パース不能）→ halt | 内容次第 |
+ * | テンプレート内容への依存 | **無い** | ある（見出しを足すと穴が開く） |
+ *
+ * `codex-prompt.md` には `token-range` が掛かっていないので、必須見出し入りのテンプレートは
+ * **書かれなくても契約を自力で満たす**（`task-metadata.json` で踏んだ罠と同型）。
+ * 0 バイトなら直後の contract で必ず止まる——**安全網が1枚減るのではなく、担当が移る**。
+ *
+ * ## 範囲を claude 実行のステップに限る理由
+ *
+ * ⚠️ 全ステップで作ると `reflection` の `task-metadata.json` にも 0 バイトが置かれ、
+ * `discardTaskMetadata` が「毎回新しく書かせるために消している」意図（`postActions.ts` の
+ * コメント参照）を骨抜きにする。今日は `file-exists` が**ファイル名を挙げて**止めるのに対し、
+ * スタブがあると `json-schema` の「パース不能」へ理由が落ちる。
+ * **存在を要求しているのは Edit だけ**なので、必要な範囲にだけ作る。
+ * reflection を executor 化するときは、ここの条件と task-metadata.json の扱いを**セットで**見直すこと。
+ *
+ * ## 規律
+ *
+ * - **無ければ作るだけ。既存ファイルは絶対に上書きしない**（reject → rerun で書き上げた成果物を消さない）
+ * - 対象は `outputs` の宣言から導く（手書きリストを持たない）。`optionalOutputs` は含めない
+ *   ——不在が正常なものへ存在を作ると、`skipped` を握り潰すのと同じことになる
+ * - ディレクトリ宣言（末尾 `/`）は対象外
+ * - **executor は関与しない**（「executor は成果物を検証しない / 用意しない」を保つ）
+ * - 作ったら Event Log に `stub.created` を残す。**黙って作らない**
+ */
+function createOutputStubsFor(
+  root: string,
+  config: WorkflowConfig,
+  destId: string,
+  logBase: Record<string, unknown>
+): void {
+  const dest = config.steps[destId];
+  if (!dest || dest.executor !== "claude") {
+    return;
+  }
+  const created: string[] = [];
+  for (const output of dest.outputs ?? []) {
+    if (output.path.endsWith("/")) {
+      continue;
+    }
+    const file = path.join(path.resolve(root), output.path);
+    if (existsSync(file)) {
+      continue; // ⚠️ 上書きしない
+    }
+    try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, "", "utf8");
+      created.push(output.path);
+    } catch {
+      // 作れなくても遷移は止めない。書けないことは file-exists が次の検証で言う
+      // （baseline の capture 失敗と同じ扱い——ここで二重に止めない）
+    }
+  }
+  if (created.length > 0) {
+    appendEvent(root, "stub.created", { ...logBase, step: destId, files: created });
+  }
+}
+
 // ここで halt すると二重に止まることになる。
 function captureBaselineFor(
   root: string,
@@ -393,6 +468,7 @@ export function processCompletion(
   // 9: commit the transition.
   commitTransition(root, draft, stepId, destId);
   captureBaselineFor(root, config, destId, draft.fixAttempts, logBase);
+  createOutputStubsFor(root, config, destId, logBase);
 
   // 10: log.
   appendEvent(root, "step.completed", { ...logBase, result: status.result, fixAttempts: draft.fixAttempts, isRetry });
@@ -478,6 +554,7 @@ export function resume(root: string, config: WorkflowConfig, opts: CompletionOpt
     }
     commitTransition(root, draft, pending.from, pending.to);
     captureBaselineFor(root, config, pending.to, draft.fixAttempts, logBase);
+    createOutputStubsFor(root, config, pending.to, logBase);
     appendEvent(root, "step.completed", { ...logBase, result: pending.result, isRetry: pending.isRetry, resumed: true });
     appendEvent(root, "transition", { ...logBase, from: pending.from, to: pending.to, result: pending.result, isRetry: pending.isRetry });
     return { kind: "transitioned", from: pending.from, to: pending.to, result: pending.result, isRetry: pending.isRetry };
