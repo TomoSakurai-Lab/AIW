@@ -12,7 +12,7 @@
 // ⚠️ 実測（2026-09-11）で 3 件とも確認したうえで、**消えないようにここへ固定する**。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { approve, runStep } from "../src/engine/engine.js";
 import {
@@ -100,4 +100,35 @@ test("154: a missing artifact halts naming the file, and whatever was written su
   for (const f of OUTPUTS.filter((x) => x !== "codex-prompt.md")) {
     assert.ok(after[f], `${f} は書けているので残る`);
   }
+});
+
+// Test 160 — **復路**: 人間が決定を書いて再実行すると、続きから完走する。
+//
+// 往路（Test 152）だけでは半分しか言えていない。「止まった」の価値は
+// **人間が書き足して再開できる**ことにあるので、そこまでを1本で通す。
+// ⚠️ 実測（2026-09-11）でも同じ形を使い捨てランタイムで確認している。
+test("160: after the human writes the decision, re-running research completes and moves on", () => {
+  const { root, config } = arrangeResearch("ux-decision-required");
+
+  // 往路: 承認ゲート② → research へ戻る
+  assert.equal(runStep(root, config, "research").kind, "awaiting-approval");
+  assert.equal((approve(root, config) as any).to, "research");
+
+  // 人間が `# Open Decisions` に決定を書く
+  const findings = path.join(root, "research-findings.md");
+  const decided = readFileSync(findings, "utf8").replace(
+    "# Open Decisions",
+    "# Open Decisions\n\n- **D-1: 決定（人間）**: 工種名の右に出す"
+  );
+  writeFileSync(findings, decided, "utf8");
+
+  // 復路: research が決定を織り込んで research-complete を宣言する
+  writeStatus(root, { step: "research", result: "research-complete", reason: "D-1 の決定を受けて確定" });
+  assert.equal(runStep(root, config, "research").kind, "awaiting-approval", "ゲート②は復路でも通る");
+  const outcome = approve(root, config);
+
+  assert.equal((outcome as any).to, "implementation", "続きから進む（やり直しではない）");
+  // ⚠️ **人間が書いた決定が消えていない。** 再実行のたびにテンプレートへ戻る作りだと、
+  // 人間の入力が往復のたびに失われて「止まって書いて再開する」が成立しない。
+  assert.match(readFileSync(findings, "utf8"), /決定（人間）/);
 });

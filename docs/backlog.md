@@ -124,6 +124,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-118
+
+- Source: M4 段階1-3 の前提整備（知識の届け方）/ 2026-09-11
+- Severity: Minor
+- Trigger: **2 回目の knowledge 監査時、または索引起因の読み漏れが 1 件出たとき**
+- Summary: **`context.md` の `## 索引` と本文 `##` 見出しのドリフトを機械検査する。** 索引の維持を reflection Skill の宣言に委ねた形は、系譜の言葉で言えば「**宣言だけ**」の状態で、節を足して索引に行を足さなければ**次のタスクからその知識は届かない**（読み手は索引しか見ない）。一致は grep で機械照合できる（`## 索引` の表の1列目 vs `^## ` の見出し集合）。⚠️ **validator は増やさない**（M4 の前提「validator を変更しない」）。Test 58 方式——「壊れていないこと」をテストが直接見る形——で `tools/aiw` 側のテストに置く。同じ検査は `instructions/local-environment.md` の `## 目次` と `local-environment-detail.md` の見出しにも要る（分割した以上、同型のドリフトが起きる）。
+- Status: open
 ## BL-117
 
 - Source: M4 段階1-1 の実装中に判明（claude executor の JSONL 回収）/ 2026-09-04
