@@ -124,6 +124,37 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-120
+
+- Source: M4 段階1-3 の切り替え（research の bashAllow 設計）/ 2026-09-14
+- Severity: Minor (deferred)
+- Trigger: **次に deny / allow（`CLAUDE_BASH_DENY` か各ステップの `bashAllow`）を触る枠**
+- Summary: **仕様根拠で許可した Bash コマンドを実測し、暫定マークを外す。** 2026-09-14 時点で
+  「ファイルへ書く引数を持たない」という仕様上の性質だけを根拠に許可しているもの:
+  `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research）、
+  `git status` / `git show`（review・improve-check、09-04 から）。
+  **`--output` の穴自体が「仕様の思い込みが実測で裏切られた」直後**なので、「検証済み」と
+  「仕様上安全なはず」の区別を記録に残し、次の枠でまとめて潰す。
+  ⚠️ **最優先は `dotnet build -o <path>`**（review の `dotnet build:*`）——短縮形 `-o` は
+  `Bash(*--output*)` の deny に掛からず、引数経由の書き込みと同型の**疑い**がある（本番の使用は 0 件）。
+  方法: 1 コマンド 30 秒のプローブ（許可プレフィックスの下で書き込み形を試す + 対照 `cp`）。
+  手順と結果の表は `docs/design-claude-executor.md` §9-2b。
+- Status: open
+
+## BL-119
+
+- Source: 2026-09-11 の拒否分類（134 件）/ 2026-09-14 に人間が承認
+- Severity: Minor
+- Trigger: **次のタスク境界**（research の claude executor 初回実行の完了後）
+- Summary: **review / improve-check の `bashAllow` へ `cd:*` を足す。** 拒否の 60%（81 件）が
+  `cd` による形式だけの拒否で、毎タスク数往復の無駄になっている。安全性は実測済み
+  （`cd` 自体は書かない。`cd … && … > f` のリダイレクトは Edit ルールで判定される・2026-09-14。
+  引数経由の書き込みは `CLAUDE_BASH_DENY` が常時塞ぐ）。
+  挙動の変更ではなく無駄往復の除去なので観測を汚す種類ではないが、**世代管理の規律として境界で入れる**:
+  runtime の `versions.workflow` を上げ、`docs/baseline.md` に世代注記（期待される効果:
+  review の `permission_denials` の `cd` 起因が 0 に近づく）。
+- Status: open（承認済み・境界待ち）
+
 ## BL-118
 
 - Source: M4 段階1-3 の前提整備（知識の届け方）/ 2026-09-11
