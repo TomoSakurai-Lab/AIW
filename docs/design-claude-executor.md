@@ -247,8 +247,10 @@ codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude で�
 | `Write(path)` のパスルール | ⚠️ **監視されない** | 2026-08-31 | `--tools` から Write を外す（§9-2） |
 | `Edit(path)` のパスルール | ✅ 成立（ファイル単位の列挙でよい） | 2026-08-31 | 書き込みは成果物ファイルの列挙だけを許可（§9-3） |
 | **シェルのリダイレクト**（`echo x > f` / `cd . && printf … > f` / heredoc） | ✅ **パス制限が効く**——宛先が Edit 許可なら通り、それ以外は拒否 | 2026-09-14 | 対処不要（Edit の列挙がそのまま効く） |
-| **引数経由の書き込み**（`git diff --output=f` / `git log --output=f` / `curl -o f`） | ⚠️ **素通りだった**——許可済みプレフィックスの下で任意のパスへ書けた | 2026-09-14 | **`CLAUDE_BASH_DENY`（11 パターン）を executor が常時 `--disallowedTools` で渡す** |
+| **引数経由の書き込み**（`git diff --output=f` / `git log --output=f` / `curl -o f`） | ⚠️ **素通りだった**——許可済みプレフィックスの下で任意のパスへ書けた | 2026-09-14 | **`CLAUDE_BASH_DENY`（09-14 時点で 12 パターン）を executor が常時 `--disallowedTools` で渡す** |
 | 引数経由の書き込み（`sed -n 'w f'` / `sort -o f` / `uniq in f`） | ⚠️ **素通り**（許可リスト未搭載の状態で確認） | 2026-09-14 | **許可リストに入れない**（引数の形を deny で網羅できない） |
+| 引数経由の書き込み（`dotnet build -o dir`・短縮形） | ⚠️ **素通りだった**——ビルド産物を指定したパスへ書けた（`--output` の deny に掛からない） | 2026-09-14 | **dotnet 限定の `Bash(dotnet* -o*)` を追加**。`-oDIR` も止まり、正当な `--nologo --artifacts-path` は巻き込まないことを実測 |
+| MSBuild プロパティ経由（`dotnet build -p:OutDir=dir`） | ⚠️ **素通り**——ビルド産物を指定したパスへ書けた（相対パスはプロジェクトのディレクトリ起点） | 2026-09-14 | **deny しない（残余として受け入れる）**。書けるのはビルド産物で任意内容ではない（等級は低い）/ `-p:` `/p:` `-property:` と大文字小文字の揺れで網羅できず、一部だけ塞ぐと塞いだように見えてしまう |
 | `find . -name f -delete` | ✅ 拒否された | 2026-09-14 | — |
 
 **deny の性質**（2026-09-14 実測・対照 `cp` は毎回拒否）:
@@ -269,8 +271,9 @@ codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude で�
 | --- | --- | --- |
 | ✅ 実測済み | `echo` / `cd`（リダイレクトは Edit 判定）、`git diff` / `git log`（`--output` は deny）、`curl`（書き込みフラグは deny）、`grep`（`-o` / `-cP` の読み取り） | 2026-09-14 のプローブ |
 | ⚠️ **暫定（仕様根拠・未実測）** | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research・09-14 追加）、`git status` / `git show`（review・improve-check・09-04 から） | 「ファイルへ書く引数を持たない」というコマンドの仕様。**BL-120 で実測する** |
-| ⚠️ **疑い（未実測）** | `dotnet build`（review）——**短縮形 `-o <path>` は `*--output*` の deny に掛からない** | 引数経由の書き込みと同型。本番の使用は 0 件。BL-120 の最優先 |
-| — 保証の外 | `dotnet run` / `./tools/nrun.cmd`（review） | 既存のビルド / テストを実行する（成果物の書き込みは設計上の前提）。エージェントが書いた内容は、上の書き込み経路が塞がれている限り実行されない |
+| ✅ 実測済み・残余あり | `dotnet build`（review）: `-o` / `-oDIR` は deny、`-p:OutDir=` は残余（上表） | 2026-09-14 のプローブ。**裁きの理由**: 第1網の契約は「任意内容の書き込み・ソース編集をさせない」であって「一切書かせない」ではない。正当なフローは `--artifacts-path` を使い `-o` を使わないので deny のコストはゼロ。書ける内容はビルド産物に限られるので等級は低い。本番での `dotnet build` の実行は 0 件 |
+| ⚠️ **疑い（目視・未実測）** | `./tools/nrun.cmd`（review）: `build -- --outDir <dir>`（vite）/ `test -- --coverage.reportsDirectory=<dir>`（vitest） | 書けるのはビルド産物 / カバレッジレポートで等級は低い。`--` 以降の引数経路は**正当に使われている**（本番 31 回: spec の指定と reporter）ので広い deny は不可。`--outDir` / `reportsDirectory` の本番使用は 0 件。BL-120 |
+| — 保証の外 | `dotnet run` / `./tools/nrun.cmd`（review） | 既存のビルド / テストを実行する（成果物の書き込みは設計上の前提）。エージェントが書いた内容は、上の書き込み経路が塞がれている限り実行されない。`dotnet run` には `-o` / `--output` が無い（`--help` で確認・2026-09-14） |
 
 ### 9-3. ファイル単位の列挙と 0 バイトファイル ← **設計の締めに使った2つの実測**
 
@@ -1061,6 +1064,7 @@ probe リポに marker 入り `CLAUDE.md` と `.claude/CLAUDE.md` を置き、
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 | 2026-09-14 | **第1網の信頼境界**（§9-2b 実測） | シェルのリダイレクトは Edit ルールで判定される（守られている）。**引数経由の書き込み（`git --output` / `curl -o`）は素通りだった** → `CLAUDE_BASH_DENY`（11 パターン）を常時 `--disallowedTools` で渡す。`sed` / `sort` / `uniq` は許可リストに入れない | プローブ 4 回（対照 `cp` つき）+ 本物の executor argv でスモーク 3/3。本番の悪用 0 件（837 呼び出し） |
 | 2026-09-14 | 仕様根拠で許可した Bash コマンド | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore` / `git status` / `git show` は**暫定（未実測）**、`dotnet build -o` は**疑い**として記録。BL-120 で次に deny / allow を触る枠で実測 | `--output` の穴自体が「仕様の思い込みが実測で裏切られた」例。検証済みと仕様上安全なはずの区別を記録から消さない |
+| 2026-09-14 | `dotnet build -o` の疑い（§9-2b） | **実測で書けた → dotnet 限定の `Bash(dotnet* -o*)` を追加**（12 パターン目）。`-p:OutDir=` も書けたが**残余として受け入れ、deny しない** | 契約は「任意内容の書き込み・ソース編集をさせない」。正当なフローは `--artifacts-path` で `-o` のコストはゼロ。`-p:` 系は書ける内容がビルド産物に限られ（等級低）、綴りの揺れで網羅できない |
 
 ---
 

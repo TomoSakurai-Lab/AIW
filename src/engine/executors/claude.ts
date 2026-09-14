@@ -87,6 +87,7 @@ export const CLAUDE_ENV_ALLOWLIST = [
  * | `git diff` / `git log` | `git diff --output=f` | ⚠️ **通って書けた** |
  * | `curl` | `curl -o f URL` | ⚠️ **通って書けた** |
  * | `sed` / `sort` / `uniq` | `sed -n 'w f'` / `sort -o f` / `uniq in f` | ⚠️ **通って書けた** |
+ * | `dotnet build` | `dotnet build -o dir`（短縮形） | ⚠️ **通ってビルド産物を書けた**（`--output` の deny に掛からない） |
  *
  * つまり review / improve-check は `--output=` と `curl -o` で**任意のパスへ書けた**（本番での悪用は 0 件）。
  * `sed` / `sort` / `uniq` はどの許可リストにも入れない（引数の形を deny で網羅できないため）。
@@ -112,7 +113,12 @@ export const CLAUDE_BASH_DENY = [
   "Bash(curl*--stderr*)",
   "Bash(curl*--libcurl*)",
   "Bash(curl* -c *)",
-  "Bash(curl*--cookie-jar*)"
+  "Bash(curl*--cookie-jar*)",
+  // dotnet build の短縮形 -o は `*--output*` に掛からない（2026-09-14 実測で書けた）。
+  // 書けるのはビルド産物で任意内容ではない（等級は低い）が、正当なフローは --artifacts-path だけで
+  // -o を使わないので deny のコストはゼロ。-p:OutDir= 等の MSBuild プロパティ経由は綴りの揺れで
+  // 網羅できないため deny せず、設計文書 §9-2b に残余として記録している。
+  "Bash(dotnet* -o*)"
 ] as const;
 
 export type ClaudeDeps = {

@@ -611,6 +611,9 @@ test("161: writes through a program's own arguments are always denied, without c
   assert.deepEqual(deny, [...CLAUDE_BASH_DENY]);
   assert.ok(deny.includes("Bash(*--output*)"), "git diff / log / show --output");
   assert.ok(deny.includes("Bash(curl* -o*)"), "curl -o と -oFILE");
+  // dotnet build の短縮形 -o は --output の deny に掛からず、ビルド産物を書けた（2026-09-14 実測）。
+  // ⚠️ dotnet に限定する。正当な `--nologo --artifacts-path` は巻き込まないことを実測済み
+  assert.ok(deny.includes("Bash(dotnet* -o*)"), "dotnet build -o と -oDIR");
 
   // ⚠️ grep -o は本番で 90 回使われている正当な読み取り。全体ワイルドカードで殺さない
   assert.equal(deny.includes("Bash(* -o *)"), false);

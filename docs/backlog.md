@@ -135,8 +135,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   `git status` / `git show`（review・improve-check、09-04 から）。
   **`--output` の穴自体が「仕様の思い込みが実測で裏切られた」直後**なので、「検証済み」と
   「仕様上安全なはず」の区別を記録に残し、次の枠でまとめて潰す。
-  ⚠️ **最優先は `dotnet build -o <path>`**（review の `dotnet build:*`）——短縮形 `-o` は
-  `Bash(*--output*)` の deny に掛からず、引数経由の書き込みと同型の**疑い**がある（本番の使用は 0 件）。
+  ~~`dotnet build -o <path>`~~ → **2026-09-14 に実測して消し込み**（通ってビルド産物を書けた →
+  `Bash(dotnet* -o*)` を追加）。同時に `-p:OutDir=` も書けたが、ビルド産物に限られ綴りの揺れで
+  網羅できないため**残余として受け入れた**（設計文書 §9-2b・決定ログ）。
+  追加（2026-09-14・許可リストの目視）: `./tools/nrun.cmd build -- --outDir <dir>`（vite）/
+  `./tools/nrun.cmd test -- --coverage.reportsDirectory=<dir>`（vitest）。書けるのはビルド産物 /
+  カバレッジレポートで等級は低く、本番の使用は 0 件。`--` 以降の引数経路は正当に使われている
+  （本番 31 回）ので、塞ぐなら nrun.cmd 限定で列挙する。
   方法: 1 コマンド 30 秒のプローブ（許可プレフィックスの下で書き込み形を試す + 対照 `cp`）。
   手順と結果の表は `docs/design-claude-executor.md` §9-2b。
 - Status: open
@@ -193,3 +198,21 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Trigger: `aiw init` を新環境へ配るとき、または assets↔runtime の宣言差分を次に棚卸しするとき
 - Summary: M3 で runtime に配線した `consumer-presence` / `measurement-completeness` validator の宣言が `assets/config/workflow.yaml` に無く、`aiw init` で配られない（grep 0 件）。ac-* の `optionalOutputs` と `artifacts` 定義は BL-113 で assets へ移植済みなので、残る差分はこの validator 2 宣言（`executor: codex` のような環境依存の意図的差分は除く）。意図的な差分と移植漏れを仕分けし、移植するものは test 88 系のテストで固定する。
 - Status: **done**（2026-09-04。M4 のついで枠。implementation へ consumer-presence + measurement-completeness、fix へ measurement-completeness を `onViolation: report` で移植。**非対称は意図**（consumer の実在は実装の話で fix で増えない / fix は ac-result を作り直す）なので Test 143 で「fix に consumer-presence を置かない」ことまで固定した。仕分けの結果、移植しなかった runtime 固有の宣言は `executor` / `codexHome` / `codexModel` / `verifyLocal` / `knownFailurePatternsFile` / タイムアウト値 / `steps.improve-check.executor` = **いずれも環境依存**）
+
+## BL-190
+
+- Source: アプリ側 `.ai-workflow/backlog.md` の BL-114（TASK-cell-dropdowns / current-review.md `## Backlog`）から移動（2026-09-14 棚卸し）
+- Severity: Minor
+- Trigger: ⚠️ **次にフェーズを跨ぐとき、または前タスクの差分を未コミットのまま次タスクへ進むとき**
+  （`scope-violation-report.md` に身に覚えのないファイルが並んだらまずこれを疑う）
+- Summary: ⚠️⚠️ **diff-scope の baseline がフェーズを跨いでも更新されない。**
+  **baseline `2026-08-31T08:38:12Z`（17:38 JST）が Phase 1 の実装（17:43 / 17:44）より古く、
+  Phase 1 の未コミット差分 2 件（`useGridSelection.tsx` / `EditableGridCore.tsx`）が
+  Phase 2 の未宣言変更として報告された。**
+  ⚠️ **実装は触っておらず（`find -newermt` で今回の変更は宣言どおり 9 件ちょうど）純粋な偽陽性。**
+  **人間がコミットしない運用ではフェーズを重ねるほど偽陽性が増える。**
+  `CLAUDE.md` の設計上 `recaptureBaseline` は対話 CLI（`aiw baseline capture`）からのみ
+  呼べるので、**フェーズ完了時に人間が取り直すか postActions で取り直すかを決める必要がある**
+  （後者は「resume で取り直すと検査が無言で無効化される」既存の禁止事項と衝突しないか要検討）。
+- Note: ⚠️ **本ファイルの `BL-114`（assets↔runtime の宣言差分・done）とは別件。** アプリ側と番号が衝突するため新しい番号を振った。
+- Status: open
