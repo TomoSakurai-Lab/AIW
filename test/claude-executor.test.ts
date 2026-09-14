@@ -588,3 +588,45 @@ test("159: the executor records which files were read, as an observation and nev
   const none = await createClaudeExecutor({ launch: quiet.launch }).execute({ root, config, step, projectRoot: root });
   assert.deepEqual((none.meta as any).filesRead, []);
 });
+
+// Test 161 — **引数経由の書き込みは常時 deny する**（2026-09-14 実測）。
+//
+// 第1網の Edit パスルールはシェルのリダイレクトには効くが、`git diff --output=f` や
+// `curl -o f` のような**プログラム自身の引数による書き込み**は迂回できた（実測で書けた）。
+// deny はステップの宣言に依存させず、executor が毎回渡す。
+test("161: writes through a program's own arguments are always denied, without catching legitimate reads", async () => {
+  const { CLAUDE_BASH_DENY } = await import("../src/engine/executors/claude.js");
+  const { root, config } = readyRoot();
+  const step = { ...config.steps["improve-check"], bashAllow: ["git diff:*", "curl:*", "grep:*"] };
+  const { launch, captured } = fakeClaude(OK_EVENTS);
+
+  await createClaudeExecutor({ launch }).execute({ root, config, step, projectRoot: root });
+
+  const argv = captured.argv;
+  const d = argv.indexOf("--disallowedTools");
+  const a = argv.indexOf("--allowedTools");
+  assert.ok(d > 0, "deny を必ず渡す");
+  assert.ok(d < a, "可変長オプションは次のフラグで区切る。deny は allow の前（実測した並び）");
+  const deny = argv.slice(d + 1, a);
+  assert.deepEqual(deny, [...CLAUDE_BASH_DENY]);
+  assert.ok(deny.includes("Bash(*--output*)"), "git diff / log / show --output");
+  assert.ok(deny.includes("Bash(curl* -o*)"), "curl -o と -oFILE");
+
+  // ⚠️ grep -o は本番で 90 回使われている正当な読み取り。全体ワイルドカードで殺さない
+  assert.equal(deny.includes("Bash(* -o *)"), false);
+  assert.equal(deny.includes("Bash(* -o*)"), false);
+  // ⚠️ grep -cP は BL-071 の文字化け検査そのもの。-c は curl に限定する
+  assert.equal(deny.some((r: string) => r.startsWith("Bash(* -c")), false);
+
+  // Bash を宣言していないステップにも同じ集合が渡る（宣言に依存させない）
+  const bare = fakeClaude(OK_EVENTS);
+  await createClaudeExecutor({ launch: bare.launch }).execute({
+    root,
+    config,
+    step: config.steps["improve-check"],
+    projectRoot: root
+  });
+  const bd = bare.captured.argv.indexOf("--disallowedTools");
+  const ba = bare.captured.argv.indexOf("--allowedTools");
+  assert.deepEqual(bare.captured.argv.slice(bd + 1, ba), [...CLAUDE_BASH_DENY]);
+});

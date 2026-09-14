@@ -74,6 +74,47 @@ export const CLAUDE_ENV_ALLOWLIST = [
   "TZ"
 ] as const;
 
+/**
+ * **常時 deny する Bash パターン**（`--disallowedTools`）。ステップの宣言に依存させない。
+ *
+ * ## なぜ要るか（2026-09-14 実測）
+ *
+ * 第1網の Edit パスルールは**シェルのリダイレクトには効く**が、**プログラム自身の引数経由の書き込み**には効かない:
+ *
+ * | 許可済みプレフィックス | 書き込みの試み | 結果 |
+ * | --- | --- | --- |
+ * | `echo` | `echo x > f`（リダイレクト） | 宛先が Edit 許可なら通り、それ以外は**拒否** |
+ * | `git diff` / `git log` | `git diff --output=f` | ⚠️ **通って書けた** |
+ * | `curl` | `curl -o f URL` | ⚠️ **通って書けた** |
+ * | `sed` / `sort` / `uniq` | `sed -n 'w f'` / `sort -o f` / `uniq in f` | ⚠️ **通って書けた** |
+ *
+ * つまり review / improve-check は `--output=` と `curl -o` で**任意のパスへ書けた**（本番での悪用は 0 件）。
+ * `sed` / `sort` / `uniq` はどの許可リストにも入れない（引数の形を deny で網羅できないため）。
+ *
+ * ## 実測で確かめた性質
+ *
+ * - **deny は allow に勝つ**（`git diff:*` を許可していても `--output` は拒否された）
+ * - `*` は先頭・中間で効く（`git diff --stat --output=f` も拒否）
+ * - 正当な読み取りは巻き込まない: `git diff --stat` / `curl -s -w "%{http_code}"` / `grep -o` / `grep -cP`
+ *
+ * ⚠️ **`Bash(* -o *)` のような全体ワイルドカードにしない。** `grep -o` は本番で 90 回使われている正当な読み取りで、
+ * 全体で塞ぐと reviewer の計測を黙って殺す（拒否の分類で「計測の拒否」を増やす側に倒れる）。
+ * curl の書き込みフラグは **curl に限定**して列挙する。`-c` も同じ理由（`grep -cP` は BL-071 の検査そのもの）。
+ */
+export const CLAUDE_BASH_DENY = [
+  "Bash(*--output*)",
+  "Bash(curl* -o*)",
+  "Bash(curl* -O*)",
+  "Bash(curl*--remote-name*)",
+  "Bash(curl* -D *)",
+  "Bash(curl*--dump-header*)",
+  "Bash(curl*--trace*)",
+  "Bash(curl*--stderr*)",
+  "Bash(curl*--libcurl*)",
+  "Bash(curl* -c *)",
+  "Bash(curl*--cookie-jar*)"
+] as const;
+
 export type ClaudeDeps = {
   /** テスト用の差し替え口。既定は pin した claude.exe を shell 無しで直接起動する */
   launch?: (argv: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => ClaudeProcess;
@@ -552,6 +593,10 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         // ⚠️ 可変長オプションは末尾に置く（後続の引数を飲み込むため）。
         "--tools",
         tools,
+        // 引数経由の書き込み（git --output / curl -o）は Edit ルールを迂回するので常時 deny する。
+        // ⚠️ 可変長なので、次のフラグ（--allowedTools）で区切られる位置に置く（実測した並び）。
+        "--disallowedTools",
+        ...CLAUDE_BASH_DENY,
         "--allowedTools",
         ...allowed
       ];
