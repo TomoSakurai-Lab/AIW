@@ -1064,7 +1064,7 @@ probe リポに marker 入り `CLAUDE.md` と `.claude/CLAUDE.md` を置き、
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 | 2026-09-14 | **第1網の信頼境界**（§9-2b 実測） | シェルのリダイレクトは Edit ルールで判定される（守られている）。**引数経由の書き込み（`git --output` / `curl -o`）は素通りだった** → `CLAUDE_BASH_DENY`（11 パターン）を常時 `--disallowedTools` で渡す。`sed` / `sort` / `uniq` は許可リストに入れない | プローブ 4 回（対照 `cp` つき）+ 本物の executor argv でスモーク 3/3。本番の悪用 0 件（837 呼び出し） |
 | 2026-09-14 | 仕様根拠で許可した Bash コマンド | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore` / `git status` / `git show` は**暫定（未実測）**、`dotnet build -o` は**疑い**として記録。BL-120 で次に deny / allow を触る枠で実測 | `--output` の穴自体が「仕様の思い込みが実測で裏切られた」例。検証済みと仕様上安全なはずの区別を記録から消さない |
-| 2026-09-14 | `dotnet build -o` の疑い（§9-2b） | **実測で書けた → dotnet 限定の `Bash(dotnet* -o*)` を追加**（12 パターン目）。`-p:OutDir=` も書けたが**残余として受け入れ、deny しない** | 契約は「任意内容の書き込み・ソース編集をさせない」。正当なフローは `--artifacts-path` で `-o` のコストはゼロ。`-p:` 系は書ける内容がビルド産物に限られ（等級低）、綴りの揺れで網羅できない |
+| 2026-09-14 | `dotnet build -o` の疑い（§9-2b） | **実測で書けた → dotnet 限定の `Bash(dotnet* -o*)` を追加**（12 パターン目）。`-p:OutDir=` も書けたが**残余として受け入れ、deny しない**。**承認済み**（2026-09-14） | 契約は「任意内容の書き込み・ソース編集をさせない」。正当なフローは `--artifacts-path` で `-o` のコストはゼロ。`-p:` 系は書ける内容がビルド産物に限られ（等級低）、綴りの揺れで網羅できない |
 
 ---
 
