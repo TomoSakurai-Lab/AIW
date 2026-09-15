@@ -140,7 +140,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: **仕様根拠で許可した Bash コマンドを実測し、暫定マークを外す。** 2026-09-14 時点で
   「ファイルへ書く引数を持たない」という仕様上の性質だけを根拠に許可しているもの:
   `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research）、
-  `git status` / `git show`（review・improve-check、09-04 から）。
+  `git status` / `git show`（review・improve-check、09-04 から）、`git rev-parse`（research、09-15 から）。
   **`--output` の穴自体が「仕様の思い込みが実測で裏切られた」直後**なので、「検証済み」と
   「仕様上安全なはず」の区別を記録に残し、次の枠でまとめて潰す。
   ~~`dotnet build -o <path>`~~ → **2026-09-14 に実測して消し込み**（通ってビルド産物を書けた →
@@ -167,7 +167,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   runtime の `versions.workflow` を上げ、`docs/baseline.md` に世代注記（期待される効果:
   review の `permission_denials` の `cd` 起因が 0 に近づく）。
 - 同じ境界で入れる（2026-09-15 承認）: research の `timeoutMs` 60 → 40 分（yaml に「暫定・実測 3 本で再確認」。下に idle 15 分がいるので締めすぎのリスクは小さい）/ research の `bashAllow` に `git rev-parse:*`（仕様根拠・未実測なので BL-120 の暫定マーク付き）。versions bump と世代注記は 3 件で 1 回にまとめる
-- Status: open（承認済み・境界待ち）
+- Status: **done**（2026-09-15。review / improve-check に `cd:*`、research の上限 40 分、research の `git rev-parse:*` を同じ境界で投入。runtime の `versions.workflow` 5 → 6、世代注記は baseline）
 
 ## BL-118
 

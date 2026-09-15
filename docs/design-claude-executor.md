@@ -270,7 +270,7 @@ codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude で�
 | 状態 | コマンド | 根拠 |
 | --- | --- | --- |
 | ✅ 実測済み | `echo` / `cd`（リダイレクトは Edit 判定）、`git diff` / `git log`（`--output` は deny）、`curl`（書き込みフラグは deny）、`grep`（`-o` / `-cP` の読み取り） | 2026-09-14 のプローブ |
-| ⚠️ **暫定（仕様根拠・未実測）** | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research・09-14 追加）、`git status` / `git show`（review・improve-check・09-04 から） | 「ファイルへ書く引数を持たない」というコマンドの仕様。**BL-120 で実測する** |
+| ⚠️ **暫定（仕様根拠・未実測）** | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research・09-14 追加）、`git status` / `git show`（review・improve-check・09-04 から）、`git rev-parse`（research・09-15 追加） | 「ファイルへ書く引数を持たない」というコマンドの仕様。**BL-120 で実測する** |
 | ✅ 実測済み・残余あり | `dotnet build`（review）: `-o` / `-oDIR` は deny、`-p:OutDir=` は残余（上表） | 2026-09-14 のプローブ。**裁きの理由**: 第1網の契約は「任意内容の書き込み・ソース編集をさせない」であって「一切書かせない」ではない。正当なフローは `--artifacts-path` を使い `-o` を使わないので deny のコストはゼロ。書ける内容はビルド産物に限られるので等級は低い。本番での `dotnet build` の実行は 0 件 |
 | ⚠️ **疑い（目視・未実測）** | `./tools/nrun.cmd`（review）: `build -- --outDir <dir>`（vite）/ `test -- --coverage.reportsDirectory=<dir>`（vitest） | 書けるのはビルド産物 / カバレッジレポートで等級は低い。`--` 以降の引数経路は**正当に使われている**（本番 31 回: spec の指定と reporter）ので広い deny は不可。`--outDir` / `reportsDirectory` の本番使用は 0 件。BL-120 |
 | — 保証の外 | `dotnet run` / `./tools/nrun.cmd`（review） | 既存のビルド / テストを実行する（成果物の書き込みは設計上の前提）。エージェントが書いた内容は、上の書き込み経路が塞がれている限り実行されない。`dotnet run` には `-o` / `--output` が無い（`--help` で確認・2026-09-14） |
