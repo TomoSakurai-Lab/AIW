@@ -28,4 +28,5 @@ import "./briefing.test.js";
 import "./review-executor.test.js";
 import "./halt-artifacts.test.js";
 import "./output-stubs.test.js";
+import "./knowledge-read.test.js";
 import "./ac-schema.test.js";

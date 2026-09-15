@@ -422,6 +422,95 @@ export function readTargets(event: any): string[] {
   return out;
 }
 
+/**
+ * **観測項目 8 の対象**: 目次 / 索引から「条件に当たったら読みに行く」ことになっている知識ファイル。
+ * ⚠️ 増やすときは docs/baseline.md の観測項目 8 と**同時に**変える（計器と台帳の定義をずらさない）。
+ */
+export const KNOWLEDGE_FILES = ["context.md", "local-environment-detail.md"] as const;
+
+/**
+ * assistant イベントから **知識ファイルに到達した形跡**を拾う（2026-09-15）。
+ *
+ * ## なぜ filesRead とは別に持つか
+ *
+ * `filesRead`（`readTargets`）は Read ツールしか数えない。research の初回実行（2026-09-14）は
+ * `context.md` を **Bash の `grep` / `sed` で**読んでいた（索引 → 該当節）ので、`filesRead` だけで
+ * 観測項目 8 を数えると「知識は届いていない」という**実態と逆の結論**が baseline に溜まる。
+ * **間違った計器は無い計器より悪い。**
+ * `filesRead` の意味は変えない（過去の Event Log と比較できなくなるため）。
+ *
+ * ## 数え方の定義
+ *
+ * 次のいずれかに `KNOWLEDGE_FILES` の名前が現れたら「到達した」と数える:
+ *
+ * 1. `Read` ツールの `file_path` の basename が**完全一致**
+ * 2. `Grep` ツールの `path` の basename が**完全一致**（Grep はファイルの中身を読む）
+ * 3. `Bash` の `command` の **1 行目**に**単語境界つき**で現れる（`bashKnowledgeReads`）
+ *    - 単語境界: 直前が行頭 / 空白 / 引用符 / `/` / `\` / `=` / `:` / `(`、
+ *      直後が行末 / 空白 / 引用符 / `;` `|` `&` `)` `<` `>`。
+ *      `error-context.md` や `context.md.bak` を `context.md` と数えない
+ *      （knowledge 監査で `error-context.md` を弾いたのと同じ規律）
+ *    - **2 行目以降は見ない**（ヒアドキュメントの本文。書く内容に名前が出ても読んだことにはならない）
+ *    - 1 行目でも **`<<` より後ろは見ない**（ヒアドキュメントの開始より後ろ）
+ *    - **リダイレクト先は除く**（`> context.md` / `>> context.md` は書き込みであって読み取りではない）。
+ *      `2>&1` のような fd の複製はリダイレクト先として扱わない
+ *
+ * ⚠️ **既知の過大計上**: 1 行目にファイル名が**ファイル以外の引数として**出る場合も数える
+ * （例: `grep -rn "context.md" docs/`）。シェルを構文解析しないための割り切りで、
+ * 取りこぼし（到達したのに 0）より過大計上のほうが観測として害が小さい側に倒している。
+ * `Glob` は一覧を返すだけで中身を読まないので数えない。
+ *
+ * ⚠️ **判定には使わない**（`filesRead` と同じく観測用 meta）。
+ */
+export function knowledgeTargets(event: any): string[] {
+  if (event?.type !== "assistant") {
+    return [];
+  }
+  const content = event.message?.content;
+  const found = new Set<string>();
+  for (const block of Array.isArray(content) ? content : []) {
+    if (block?.type !== "tool_use") {
+      continue;
+    }
+    const input = block.input ?? {};
+    if (block.name === "Read" || block.name === "Grep") {
+      const file = String((block.name === "Read" ? input.file_path : input.path) ?? "");
+      const base = file === "" ? "" : path.basename(file.replace(/\\/g, "/"));
+      if ((KNOWLEDGE_FILES as readonly string[]).includes(base)) {
+        found.add(base);
+      }
+      continue;
+    }
+    if (block.name !== "Bash") {
+      continue;
+    }
+    for (const name of bashKnowledgeReads(String(input.command ?? ""))) {
+      found.add(name);
+    }
+  }
+  return [...found];
+}
+
+/** Bash の 1 行目から、読み取りとして現れた知識ファイル名を返す（定義は `knowledgeTargets` のコメント）。 */
+export function bashKnowledgeReads(command: string): string[] {
+  let line = command.split(/\r?\n/)[0] ?? "";
+  const heredoc = line.indexOf("<<");
+  if (heredoc >= 0) {
+    line = line.slice(0, heredoc);
+  }
+  // リダイレクト先を落とす（書き込みは読み取りではない）。`2>&1` は (?!&) で対象外にする
+  line = line.replace(/\d*>>?(?!&)\s*("[^"]*"|'[^']*'|[^\s;|&)]+)/g, " ");
+  const out: string[] = [];
+  for (const name of KNOWLEDGE_FILES) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const boundary = new RegExp(`(?:^|[\\s"'/\\\\=:(])${escaped}(?=$|[\\s"';|&)<>])`);
+    if (boundary.test(line)) {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 function toolLine(block: any): ExecutorProgress {
   const name = String(block?.name ?? "tool");
   const input = block?.input ?? {};
@@ -615,6 +704,7 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       let modelObserved: string[] | null = null;
       let toolsObserved: string[] | null = null;
       const filesRead = new Set<string>();
+      const knowledgeRead = new Set<string>();
       let denials: { count: number; tools: string[] } | null = null;
       let resultIsError: boolean | null = null;
       let apiErrorStatus: unknown = null;
@@ -682,6 +772,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
           for (const name of readTargets(event)) {
             filesRead.add(name);
           }
+          for (const name of knowledgeTargets(event)) {
+            knowledgeRead.add(name);
+          }
           if (event.type === "result") {
             usage = usageFrom(event) ?? usage;
             modelObserved = modelsObserved(event) ?? modelObserved;
@@ -744,9 +837,13 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         tools,
         toolsObserved,
         editAllowed: editTargets(req.step),
-        // ⚠️ **観測であって判定ではない。** 知識ファイルを「目次 + 必要な節を読む」へ移した以上、
-        // 読み漏れは記録からしか分からない（ポインタ方式は実測 1/5 の不発）。
+        // ⚠️ **観測であって判定ではない。** filesRead は **Read ツールのみ**（全ファイル）。
+        // 意味は変えない（過去の Event Log と比較するため）。**知識の到達はこれで数えない**——
+        // Bash の grep / sed で読んだ分が映らず、実態と逆の結論になる（2026-09-14 実測）。
         filesRead: [...filesRead].sort(),
+        // 知識ファイル（KNOWLEDGE_FILES）への到達。Read / Grep / Bash の読み取りを数える。
+        // 数え方の定義は knowledgeTargets のコメントが正本。観測項目 8 はこちらで数える。
+        knowledgeRead: [...knowledgeRead].sort(),
         // ⚠️ 拒否を黙らせない。件数とツール名を残す（全文は runs/ の JSONL）
         permissionDenials: denials,
         errorEvents: errorCount,

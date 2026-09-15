@@ -124,6 +124,14 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-121
+
+- Source: M4 段階1-3 research 初回実行の観測 / 2026-09-14（起票 2026-09-15・人間の判断）
+- Severity: Minor (deferred)
+- Trigger: **鮮度表示が「依頼より古い」を実際に出したタスクが 1 件出たとき、または次に postActions を触る枠**
+- Summary: **research 成果物 2 本（`context-package.md` / `codex-prompt.md`）は archive も削除もされず、次タスクが上書きする運用。** research が書き損じた場合、前タスクの内容がそのまま `artifact-contract` を通る（見出しの存在しか見ない。`codex-prompt.md` には `token-range` も無い）。書き損じ時の防御は**承認ゲート②の鮮度表示（依頼より古い）だけ**。対処候補: research 成果物も `task-metadata.json` / `ac-*` と同じ「**archive 後に削除**」へ寄せる——0 バイトスタブの機構が毎タスク働くようになり、鮮度問題も構造ごと消える。KI-09 系譜 #10（生成だけ配線して掃除を忘れる）の変種として、忘れる前に台帳へ積む。⚠️ 2026-09-14 の初回では**実際には起きていない**（3 本とも実行中に書かれたことを mtime と内容で確認）。
+- Status: open
+
 ## BL-120
 
 - Source: M4 段階1-3 の切り替え（research の bashAllow 設計）/ 2026-09-14
@@ -158,6 +166,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   挙動の変更ではなく無駄往復の除去なので観測を汚す種類ではないが、**世代管理の規律として境界で入れる**:
   runtime の `versions.workflow` を上げ、`docs/baseline.md` に世代注記（期待される効果:
   review の `permission_denials` の `cd` 起因が 0 に近づく）。
+- 同じ境界で入れる（2026-09-15 承認）: research の `timeoutMs` 60 → 40 分（yaml に「暫定・実測 3 本で再確認」。下に idle 15 分がいるので締めすぎのリスクは小さい）/ research の `bashAllow` に `git rev-parse:*`（仕様根拠・未実測なので BL-120 の暫定マーク付き）。versions bump と世代注記は 3 件で 1 回にまとめる
 - Status: open（承認済み・境界待ち）
 
 ## BL-118
