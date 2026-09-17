@@ -31,3 +31,4 @@ import "./output-stubs.test.js";
 import "./knowledge-read.test.js";
 import "./settings-migration.test.js";
 import "./ac-schema.test.js";
+import "./feature-archive.test.js";

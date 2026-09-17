@@ -535,6 +535,7 @@ steps:
       - discardTaskMetadata        # 退避後に削除。空テンプレを残すと file-exists が素通りする
       - discardAcArtifacts         # KI-09 系譜 #10: ac-* も退避後に削除（正本は archive 側）
       - resetFixAttempts
+      - archiveFeature             # feature-complete のとき feature.md を archive/<feature>/<日付>-feature-*.md へ退避
       - advancePhase               # feature-continue のとき CLI が feature.md を更新
     transitions:
       feature-continue:

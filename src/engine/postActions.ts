@@ -92,8 +92,33 @@ function archiveStamp(now = new Date()): string {
 // deliberate trade. Idempotency across a resume is already guaranteed by
 // pendingTransition.completedPostActions, so this action does not need its own guard — and a
 // guard that silently returns success is exactly how the data was lost.
+// The feature a task belongs to, for archive/<feature>/.
+//
+// draft.featureId is null in practice — nothing on the engine side sets it — so every phase of a
+// multi-phase feature used to land in archive/single/ next to unrelated one-off tasks. The AI does
+// declare the feature, in task-metadata.json (reflection's own output, validated by json-schema),
+// so that is the source to read. Resolved once here and written back to the state draft, because
+// archiveFeature runs after discardTaskMetadata has deleted the file.
+function resolveFeatureId(root: string, draft: EngineState): string | null {
+  if (draft.featureId) {
+    return draft.featureId;
+  }
+  const file = abs(root, "task-metadata.json");
+  if (!existsSync(file)) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const id = (parsed as { featureId?: unknown }).featureId;
+    return typeof id === "string" && id.trim() ? id.trim() : null;
+  } catch {
+    return null; // a malformed metadata file is the json-schema validator's business, not ours
+  }
+}
+
 const archiveArtifacts: PostActionFn = ({ root, draft }) => {
   const { archiveDir, attemptsDir } = rootPaths(root);
+  draft.featureId = resolveFeatureId(root, draft);
   const feature = draft.featureId ?? "single";
   const task = draft.taskId ?? "task";
   const dest = path.join(archiveDir, feature, `${archiveStamp()}-${task}`);
@@ -226,6 +251,62 @@ const resetFixAttempts: PostActionFn = ({ draft }) => {
   draft.fixAttempts = 0;
 };
 
+// Local date component for the feature archive filename: 20260916.
+//
+// Deliberately local time, not UTC like archiveStamp(): this name is read by a human scanning
+// archive/, and a feature completed on the evening of the 16th JST must not file itself under
+// the 15th. Date only (no time) was the explicit choice — a second feature completing on the
+// same day gets a "-2" suffix below rather than a longer name for everyone.
+function featureArchiveDate(now = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}`;
+}
+
+// feature-complete only: move feature.md into archive/<feature>/<date>-feature-<featureId>.md.
+//
+// feature.md has no template to restore (unlike the current-*.md working docs), and nothing else
+// clears it — so before this action a completed feature.md stayed in the runtime root, where the
+// next task's Task Planning would read a finished Phase list as if it were live. Archiving it is
+// what makes "complete" observable, and the date is what makes several completed features
+// distinguishable in one directory.
+//
+// Copy-then-remove, not rename: the copy is verified to exist before the original goes away, so a
+// failure between the two leaves feature.md in place rather than losing it. Idempotent by way of
+// the existsSync guard — a resume after feature.md is gone is a no-op, not an error.
+const archiveFeature: PostActionFn = ({ root, result, draft }) => {
+  if (result !== "feature-complete") {
+    return;
+  }
+  const src = abs(root, "feature.md");
+  if (!existsSync(src)) {
+    return;
+  }
+  // A single task leaves the seeded feature.md (a comment, no Phase list) untouched in the root.
+  // Filing that would put an empty file in archive/single/ after every single-task reflection and
+  // then delete the seed, so the next feature would start without its template. Only a feature.md
+  // that actually declares phases is a feature worth archiving.
+  if ((parseFeaturePhases(root) ?? []).length === 0) {
+    return;
+  }
+  const { archiveDir } = rootPaths(root);
+  const feature = draft.featureId ?? "single";
+  const dir = path.join(archiveDir, feature);
+  mkdirSync(dir, { recursive: true });
+  const base = `${featureArchiveDate()}-feature${draft.featureId ? `-${draft.featureId}` : ""}`;
+  let dest = path.join(dir, `${base}.md`);
+  for (let n = 2; existsSync(dest); n += 1) {
+    dest = path.join(dir, `${base}-${n}.md`);
+  }
+  copyFileSync(src, dest);
+  if (!existsSync(dest)) {
+    throw new Error(`archiveFeature: copy to ${dest} did not land`);
+  }
+  rmSync(src, { force: true });
+  // The feature is over: clear it so the next task's archiveArtifacts resolves afresh (and a
+  // single task that follows does not file itself under the finished feature).
+  draft.featureId = null;
+};
+
 // feature-continue only: update "Current phase" in feature.md. Idempotent.
 const advancePhase: PostActionFn = ({ root, result, nextPhaseId, draft }) => {
   if (result !== "feature-continue" || !nextPhaseId) {
@@ -250,5 +331,6 @@ export const defaultPostActions: PostActionRegistry = {
   archiveArtifacts,
   restoreTemplates,
   resetFixAttempts,
+  archiveFeature,
   advancePhase
 };
