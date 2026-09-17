@@ -79,6 +79,23 @@ export const DEFAULT_EXECUTOR: ExecutorName = "clipboard";
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
+/**
+ * **executor 固有のステップ設定キーの表**（BL-219・2026-09-17）。ここが唯一の正本。
+ *
+ * ここに載っているキーは**その executor だけが実行時に読む**。他の executor のステップに書いても効かないので、
+ * ローダーが `config.ineffectiveStepKeys` に集め、CLI が表示する（KI-09 系譜 #15「宣言はあるが効いていない」）。
+ * 表に載っていないステップ設定キー（skill / outputs / validators / timeoutMs …）はエンジンが読む共通のキー。
+ *
+ * ⚠️ executor にキーを読ませる実装を足したら、同じコミットでここへ足すこと（足さないと「効くのに効かないと表示される」）。
+ * ⚠️ **ロード時エラーにしない。** 不変条件5 は「executor を clipboard に戻せば現行動作へ復帰できる」。
+ * エラーにすると、claude のステップを 1 行で戻した瞬間に effort / bashAllow が残っていてロードが落ちる。
+ */
+export const EXECUTOR_STEP_KEYS: Record<ExecutorName, readonly string[]> = {
+  clipboard: [],
+  codex: [],
+  claude: ["model", "effort", "bashAllow"]
+};
+
 export type WorkflowStep = {
   id: string; // ローダーが steps マップキーから注入(§7.1)
   // `cli` は testing ステップ専用だったが、testing ごと削除した（2026-08-07）。
@@ -212,6 +229,9 @@ export type WorkflowConfig = {
   /** ローダーが集めた設定の deprecation（旧キーの読み替え・削除済みキー）。CLI が表示する。
    *  無ければキーごと無い。 */
   deprecations?: string[];
+  /** そのステップの executor が読まない設定キー（BL-219。表は EXECUTOR_STEP_KEYS）。deprecations と同じ経路で CLI が表示する。
+   *  無ければキーごと無い。 */
+  ineffectiveStepKeys?: string[];
 };
 
 // current-status.json — the AI/CLI declaration that drives branching (§6.1)

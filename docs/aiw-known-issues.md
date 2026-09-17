@@ -513,7 +513,7 @@ runtimeRoot 配下に作っていたので、runtimeRoot 起点で解決する�
 | 12 | `schemas/ac-manifest.schema.json` / `ac-result.schema.json` | runtime にのみ存在し、どの validator も参照せず、`aiw init` でも配られない。壊れても誰も検知しない | **修正済み**（2026-08-31。BL-113。緩い版へ差し替えて json-schema validator に配線・assets から配布。**実データ全件パスを配線の前提条件にした**） |
 | 13 | `steps.research.inputs` の `context.md` | `inputs` 宣言がエンジンの存在検査にしか効かず、プロンプトにも Skill にも名前が出ていない。clipboard では人間が補っていたが、**executor 化すると知識ゼロで走る**（knowledge 監査 2026-09-08） | **解消**（2026-09-11。`context.md` 冒頭の `## 索引` + 条件付き必読。到達は `meta.knowledgeRead` で観測・v6 で 12/12。※この行は 2026-09-17 に表へ追記。それまで記録は設計文書と baseline にだけあった） |
 | 14 | `settings.claudeTimeoutMs` | 型と文書で「claude 側の総上限」と宣言されていたが、**エンジン経由では一度も参照されない**（エンジンは claude のステップでも `codexTimeoutMs` を読んでいた） | **削除済み**（2026-09-17・M4.4 の比較表で発見。書かれていればローダーが「効果なし」を表示。設定キーは `executorTimeoutMs` へ中立化） |
-| 15 | codex / clipboard ステップの `model` / `effort` / `bashAllow` | claude executor だけが読むキー。他の executor のステップに書いてもローダーは弾かず**黙って無視**される | **未修正**（2026-09-17・M4.4 の比較表で発見。BL-219。対策はステップ設定のキーを executor 別に検証する側。BL-113 の緩い schema と同根） |
+| 15 | codex / clipboard ステップの `model` / `effort` / `bashAllow` | claude executor だけが読むキー。他の executor のステップに書いてもローダーは弾かず**黙って無視**される | **修正済み**（2026-09-17・BL-219。executor 固有キーの表 `EXECUTOR_STEP_KEYS` を 1 箇所に持ち、ローダーが `config.ineffectiveStepKeys` に集めて CLI が「⚠ ineffective:」で表示。**ロード時エラーにはしない**——claude のステップを executor の 1 行で clipboard へ戻した瞬間に落ちるため（不変条件5）。修正時点の件数は runtime / assets とも 0。表と実装のずれはテスト 178 が見る） |
 
 ### サブパターン: 「生成だけ配線して掃除を忘れる」（3回目）
 

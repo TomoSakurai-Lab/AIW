@@ -5,6 +5,7 @@ import {
   DEFAULT_EXECUTOR,
   EFFORT_LEVELS,
   EXECUTOR_NAMES,
+  EXECUTOR_STEP_KEYS,
   type EffortLevel,
   type ExecutorName,
   type WorkflowConfig,
@@ -89,6 +90,32 @@ export function migrateSettings(raw: Record<string, unknown>): {
   return { settings, deprecations };
 }
 
+/**
+ * そのステップの executor が読まない executor 固有キーを列挙する（BL-219・KI-09 系譜 #15）。
+ *
+ * 例: codex のステップに `model` を書いても codex executor は読まない（読むのは claude だけ）。
+ * 以前はローダーが黙って受け入れていた。**エラーにはしない**（理由は types.ts の EXECUTOR_STEP_KEYS）。
+ */
+export function findIneffectiveStepKeys(steps: Record<string, WorkflowStep>): string[] {
+  const out: string[] = [];
+  for (const [id, step] of Object.entries(steps)) {
+    for (const [owner, keys] of Object.entries(EXECUTOR_STEP_KEYS) as Array<[ExecutorName, readonly string[]]>) {
+      if (owner === step.executor) {
+        continue;
+      }
+      for (const key of keys) {
+        if ((step as Record<string, unknown>)[key] !== undefined) {
+          out.push(
+            `steps.${id}.${key} は executor "${step.executor}" では読まれない（読むのは ${owner} だけ）。` +
+              `効かない宣言なので削除するか executor を見直す（${owner} から戻した直後なら残してよい・不変条件5）`
+          );
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // Loads workflow.yaml and injects `id` into each step from its map key (§7.1).
 export function loadWorkflow(root: string): WorkflowConfig {
   const { workflowYaml } = rootPaths(root);
@@ -138,10 +165,12 @@ export function loadWorkflow(root: string): WorkflowConfig {
   }
 
   const { settings, deprecations } = migrateSettings(parsed.settings ?? {});
+  const ineffectiveStepKeys = findIneffectiveStepKeys(steps);
   return {
     version: parsed.version,
     settings: settings as WorkflowConfig["settings"],
     ...(deprecations.length > 0 ? { deprecations } : {}),
+    ...(ineffectiveStepKeys.length > 0 ? { ineffectiveStepKeys } : {}),
     defaults: parsed.defaults,
     versions: parsed.versions,
     artifacts: parsed.artifacts ?? {},

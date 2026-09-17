@@ -194,7 +194,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   対策の方向: **ステップ設定のキーを executor 別に検証する**——executor ごとに「読むキー」の表を 1 箇所に持ち、
   読まないキーが書かれていればロード時に知らせる（落とすか、`config.deprecations` と同じ経路で表示するかは枠で決める）。
   ⚠️ codex に `steps.<id>.model` を読ませる方向（`codexModel` のステップ上書き）は別の判断。先に「効かない宣言を書けない」を入れる。
-- Status: open
+- Status: **done**（2026-09-17・BL-219 のコミット）。**先に数えた件数**: runtime / assets の workflow.yaml とも、その executor が読まないキーは **0 件**（runtime の effort / bashAllow は全て claude のステップ上）。指示の決め方では 0 件ならロード時エラーだったが、**表示にした**（設計からの逸脱）: 不変条件5「executor を clipboard に戻せば復帰」と衝突するため——runtime の review / research / improve-check は effort / bashAllow を持ち、executor の 1 行だけ戻すとロードが落ちる。実装: `EXECUTOR_STEP_KEYS`（types.ts・claude: model / effort / bashAllow）→ `findIneffectiveStepKeys`（loader）→ `config.ineffectiveStepKeys` → CLI が deprecations と同じ入口で「⚠ ineffective:」を表示。テスト 178（表と executor の実装のずれを source から照合）/ 179（codex ステップの model / effort）/ 180（claude ステップを 1 行で clipboard へ戻してもロードでき、そこで初めて列挙される）。KI-09 #15 を修正済みへ
 
 ## BL-210
 

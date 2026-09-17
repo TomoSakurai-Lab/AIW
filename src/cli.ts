@@ -47,6 +47,10 @@ function loadConfig(root: string): ReturnType<typeof engineLoadConfig> {
     for (const message of config.deprecations ?? []) {
       console.error(`⚠ deprecated: ${message}`);
     }
+    // BL-219: 効かないステップ設定キーも同じ経路で知らせる（黙って受け入れない）
+    for (const message of config.ineffectiveStepKeys ?? []) {
+      console.error(`⚠ ineffective: ${message}`);
+    }
   }
   return config;
 }
