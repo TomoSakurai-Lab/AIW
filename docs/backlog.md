@@ -124,6 +124,49 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-210
+
+- Source: M4 段階1-3 の境界後の集計（`versions.workflow` 6・2026-09-15〜16）/ 起票 2026-09-17・人間が承認
+- Severity: Minor (deferred)
+- Trigger: **`token-range` の halt が別の FEAT で再発したとき、または次に validator のメッセージを触る枠**
+- Summary: **`token-range` 超過時の修正ループが高くつく。対処は「書く側に測らせる」ではなく「halt が削る目安を教える」。**
+  ⚠️ **書く側は測らない。** research に aiw と同じトークン見積もりを持たせると、見積もりロジックの複製になり
+  ドリフトの種になる（同じ規則を 2 箇所に持たない）。超えたら halt が教える、を維持する。
+  実測（FEAT-api-layer-and-backend-move・2 タスク）: `context-package.md` が **~2029**（09-16 08:32・前のタスク）、
+  **~1506**（10:39）、**~1790**（10:51）で上限 1500 を超えて halt。clipboard 時代の research 19 本では上限超えは 0 件
+  （下限割れ 1 件・07-22）。research は自分で測ろうとして `node -e` / `wc -m` / `awk` を試み、拒否されていた
+  ——これは症状であって、対処の方向ではない。
+  ⚠️ **3 回とも claude の再実行なしで解消している**（halt → resume が 1〜11 分・間に exec なし＝validator を通すために
+  誰かが手で削った）。1506 → 1790 の間には `ux-decision-required` の差し戻しがあり、判断を反映した再実行で増えた。
+  **「モデルが手応えなしに削っている」証拠ではない**（2029 は別タスク）。コストの実体は「halt のたびに
+  人間が見積もりの手応えなしに手で削る」こと。
+  対処候補: `token-range` の violation メッセージに**現在値・上限・`##` セクション別の見積もり（どこを削れば収まるかの目安）**を
+  含め、直す側（人間でも再実行でも）が 1 回で収束できるようにする。見積もりは validator 自身の関数を使うので複製にならない。
+  ⚠️ validator の**緩和ではない**（上限は不変・不変条件4）が、M4 の前提「validator を変更しない」に触れるので M4 完了後の枠で。
+- Status: open
+
+## BL-209
+
+- Source: M4 段階1-3 の境界後の集計（`versions.workflow` 6・claude 23 実行）/ 起票 2026-09-17・人間が承認
+- Severity: Minor
+- Trigger: **次に deny / allow（各ステップの `bashAllow`）を触る枠、または research / review の Skill・プロンプトを次に変更するとき**
+- Summary: **`cd` で cwd を動かしてから `git` を呼ぶ複合コマンドは、許可リスト内でも必ず拒否される。**
+  Bash の cwd は呼び出しをまたいで持ち越される。その履歴を追って分けると、`cd … && git …`（他のコマンドも全て許可内）は
+  **cwd が変わる場合 36 件中 36 件拒否 / 変わらない場合 18 件中 1 件拒否**。git を含まない `cd` にこの偏りは無い
+  （cwd が変わる場合でも 141 件通過）。**同じ文面が通ったり拒否されたりする原因はこの状態変数**で、フレークではない。
+  仕組みは Claude Code 組み込みの保護（別ディレクトリで git を走らせることへの制限）と**推定**——拒否の文言は
+  dontAsk の汎用文で理由を含まないため、**確かなのは 36:0 の実測だけ**。許可ルールでは直せない可能性が高い。
+  対処候補（A を先に実測し、成立すれば A）:
+  **A. 代替手段を与える: `git -C <path> <subcommand>` を許可する。** cd で移らずに別ディレクトリを見る手段になり、
+  プロンプトの禁止事項ではなく**代替手段の提供**で解ける。以前の review の `git -C` 拒否 24 件（09-11 集計）は
+  **許可リストに無かったから**で、保護の証拠ではない。要実測: (1) `git -C` 自体が同じ組み込み保護に掛からないか
+  （「別ディレクトリで git」という点では同型なので掛かる可能性がある）(2) 許可ルールの形——`git -C:*` は `commit` 等も通すので、
+  途中ワイルドカード（`git -C * status*` など）でサブコマンドを列挙する。途中ワイルドカードは deny では実測済み・allow では未実測
+  (3) `--output` 系は `CLAUDE_BASH_DENY` の `*--output*` が `-C` 付きでも効くこと。
+  **B. プロンプトで「git は cd と組み合わせない（cwd を動かしたら git は単独の呼び出しにする）」と書く。** A が成立しないときの第一手。
+  入れたら runtime の `versions.workflow` を上げ、baseline に世代注記（拒否件数が下がるため）。
+- Status: open
+
 ## BL-121
 
 - Source: M4 段階1-3 research 初回実行の観測 / 2026-09-14（起票 2026-09-15・人間の判断）
