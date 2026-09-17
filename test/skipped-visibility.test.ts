@@ -64,9 +64,9 @@ test("37: validation.completed records every validator status including skips", 
   // どちらも「検査できなかった」であって passed ではない。
   // json-schema ×2 は BL-113 で配線した ac-manifest / ac-result。このテストは ac-* を
   // 書かないので「optional target absent」の skipped になる（不在は違反ではなく未検査）。
-  // consumer-presence / measurement-completeness は BL-114 で assets へ移植した宣言（2026-09-04）。
+  // consumer-presence / measurement-completeness は BL-211 で assets へ移植した宣言（2026-09-04）。
   // ac-manifest.json が無いのでこちらも skipped。**この 2 件がリストへ増えたこと自体が
-  // BL-114 の目的**だった——以前は宣言ごと存在せず、「検査していない」という記録すら残らなかった。
+  // BL-211 の目的**だった——以前は宣言ごと存在せず、「検査していない」という記録すら残らなかった。
   const skipped = results.filter((r) => r.status === "skipped").map((r) => r.type).sort();
   const expected = [
     "consumer-presence",

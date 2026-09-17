@@ -64,8 +64,8 @@ test("155: entering a claude-run step creates empty stubs for the missing output
   assert.ok(ev, "黙って作らない");
   assert.deepEqual([...ev.files].sort(), ["codex-prompt.md", "context-package.md", "research-findings.md"]);
   // ⚠️ `research-findings.md` が入るのは **`aiw init` 直後だけ**（以降は restoreTemplates が戻す）。
-  // そしてそのテンプレートは必須 8 見出しを備えていて **contract を自力で満たす**（BL-116）。
-  // つまりここでの 0 バイトは、init 直後に限っては BL-116 の穴より**厳しい**側に倒れている。
+  // そしてそのテンプレートは必須 8 見出しを備えていて **contract を自力で満たす**（BL-213）。
+  // つまりここでの 0 バイトは、init 直後に限っては BL-213 の穴より**厳しい**側に倒れている。
   assert.equal(ev.step, "research");
 });
 

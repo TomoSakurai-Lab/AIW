@@ -21,8 +21,33 @@
 runtime 側の項目を消さず `Status: wontfix (tools/aiw/docs/backlog.md へ移管)` を残し、
 中身をこちらへ写す。**runtime 側の行を消すと「無い＝存在しない」に見える**ので消さない。
 
-⚠️ **ID は2ファイルで1つの番号系統を共有する。** 採番前に**両方**を検査すること
-（過去に BL-103 で衝突した。その再発防止が BL-103 自身の中身）。
+⚠️ **ID は2ファイルで1つの番号系統を共有する。採番は両ファイルの最大 ID + 1。起票前に両方を grep すること**
+（規則の正本は `instructions/backlog-rules.md`「採番」）。親リポジトリのルートで:
+
+```bash
+grep -ohE "BL-[0-9]+" .ai-workflow/backlog.md tools/aiw/docs/backlog.md | sort -t- -k2 -n | tail -1
+```
+
+見出しの並びは ID 順ではないので、末尾の見出しを最大値とみなさないこと。
+過去に BL-103 で衝突し、**2026-09-17 に BL-114〜121 の 8 件で再発した**——規則は冒頭に書いてあったが、
+採番時の検査が片側しか見ておらず、書き手の注意だけで守られていた。再発防止として backlog-rules へ宣言した。
+
+### 振り直しの対応表（2026-09-17）
+
+このファイルの BL-114〜121 はアプリ側と番号が衝突していたため BL-211〜218 へ振り直した。
+**旧番号は過去のコミットメッセージに残っている**（書き換えられない）ので、履歴を読むときはこの表で引く。
+アプリ側（`.ai-workflow/backlog.md`）の BL-114〜121 は元の番号のまま。
+
+| 旧 | 新 | 件名 |
+| --- | --- | --- |
+| BL-114 | BL-211 | `consumer-presence` / `measurement-completeness` の宣言を assets へ移植 |
+| BL-115 | BL-212 | review 用 diff-scope の「宣言ゼロ」モード |
+| BL-116 | BL-213 | `templates/research-findings.md` が契約を自力で満たす |
+| BL-117 | BL-214 | `aiw log` が `runs/claude/` を読めない |
+| BL-118 | BL-215 | `context.md` の索引と見出しのドリフト検査 |
+| BL-119 | BL-216 | review / improve-check の `bashAllow` に `cd:*` |
+| BL-120 | BL-217 | 仕様根拠で許可した Bash コマンドの実測 |
+| BL-121 | BL-218 | research 成果物が archive も削除もされない |
 
 ⚠️ **バックアップの単位が別。** ここは AIW リポジトリの履歴に残るが、
 runtime 側は親リポジトリで gitignore されており **git に残らない**。
@@ -167,16 +192,18 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   入れたら runtime の `versions.workflow` を上げ、baseline に世代注記（拒否件数が下がるため）。
 - Status: open
 
-## BL-121
+## BL-218
 
+- Note: 旧 BL-121（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 段階1-3 research 初回実行の観測 / 2026-09-14（起票 2026-09-15・人間の判断）
 - Severity: Minor (deferred)
 - Trigger: **鮮度表示が「依頼より古い」を実際に出したタスクが 1 件出たとき、または次に postActions を触る枠**
 - Summary: **research 成果物 2 本（`context-package.md` / `codex-prompt.md`）は archive も削除もされず、次タスクが上書きする運用。** research が書き損じた場合、前タスクの内容がそのまま `artifact-contract` を通る（見出しの存在しか見ない。`codex-prompt.md` には `token-range` も無い）。書き損じ時の防御は**承認ゲート②の鮮度表示（依頼より古い）だけ**。対処候補: research 成果物も `task-metadata.json` / `ac-*` と同じ「**archive 後に削除**」へ寄せる——0 バイトスタブの機構が毎タスク働くようになり、鮮度問題も構造ごと消える。KI-09 系譜 #10（生成だけ配線して掃除を忘れる）の変種として、忘れる前に台帳へ積む。⚠️ 2026-09-14 の初回では**実際には起きていない**（3 本とも実行中に書かれたことを mtime と内容で確認）。
 - Status: open
 
-## BL-120
+## BL-217
 
+- Note: 旧 BL-120（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 段階1-3 の切り替え（research の bashAllow 設計）/ 2026-09-14
 - Severity: Minor (deferred)
 - Trigger: **次に deny / allow（`CLAUDE_BASH_DENY` か各ステップの `bashAllow`）を触る枠**
@@ -197,8 +224,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   手順と結果の表は `docs/design-claude-executor.md` §9-2b。
 - Status: open
 
-## BL-119
+## BL-216
 
+- Note: 旧 BL-119（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: 2026-09-11 の拒否分類（134 件）/ 2026-09-14 に人間が承認
 - Severity: Minor
 - Trigger: **次のタスク境界**（research の claude executor 初回実行の完了後）
@@ -209,42 +237,47 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   挙動の変更ではなく無駄往復の除去なので観測を汚す種類ではないが、**世代管理の規律として境界で入れる**:
   runtime の `versions.workflow` を上げ、`docs/baseline.md` に世代注記（期待される効果:
   review の `permission_denials` の `cd` 起因が 0 に近づく）。
-- 同じ境界で入れる（2026-09-15 承認）: research の `timeoutMs` 60 → 40 分（yaml に「暫定・実測 3 本で再確認」。下に idle 15 分がいるので締めすぎのリスクは小さい）/ research の `bashAllow` に `git rev-parse:*`（仕様根拠・未実測なので BL-120 の暫定マーク付き）。versions bump と世代注記は 3 件で 1 回にまとめる
+- 同じ境界で入れる（2026-09-15 承認）: research の `timeoutMs` 60 → 40 分（yaml に「暫定・実測 3 本で再確認」。下に idle 15 分がいるので締めすぎのリスクは小さい）/ research の `bashAllow` に `git rev-parse:*`（仕様根拠・未実測なので BL-217〔旧 BL-120〕の暫定マーク付き）。versions bump と世代注記は 3 件で 1 回にまとめる
 - Status: **done**（2026-09-15。review / improve-check に `cd:*`、research の上限 40 分、research の `git rev-parse:*` を同じ境界で投入。runtime の `versions.workflow` 5 → 6、世代注記は baseline）
 
-## BL-118
+## BL-215
 
+- Note: 旧 BL-118（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 段階1-3 の前提整備（知識の届け方）/ 2026-09-11
 - Severity: Minor
 - Trigger: **2 回目の knowledge 監査時、または索引起因の読み漏れが 1 件出たとき**
 - Summary: **`context.md` の `## 索引` と本文 `##` 見出しのドリフトを機械検査する。** 索引の維持を reflection Skill の宣言に委ねた形は、系譜の言葉で言えば「**宣言だけ**」の状態で、節を足して索引に行を足さなければ**次のタスクからその知識は届かない**（読み手は索引しか見ない）。一致は grep で機械照合できる（`## 索引` の表の1列目 vs `^## ` の見出し集合）。⚠️ **validator は増やさない**（M4 の前提「validator を変更しない」）。Test 58 方式——「壊れていないこと」をテストが直接見る形——で `tools/aiw` 側のテストに置く。同じ検査は `instructions/local-environment.md` の `## 目次` と `local-environment-detail.md` の見出しにも要る（分割した以上、同型のドリフトが起きる）。
 - Status: open
-## BL-117
+## BL-214
 
+- Note: 旧 BL-117（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 段階1-1 の実装中に判明（claude executor の JSONL 回収）/ 2026-09-04
 - Severity: Minor
 - Trigger: `aiw log` を次に触るとき、または claude 実行の詳細を後から追う必要が出たとき
 - Summary: **`aiw log` が読めるのは `runs/codex/` だけ**で、claude executor が tee する `runs/claude/` の JSONL は整形できない。`codexLog.ts` の整形は codex のイベント語彙（`item.*` / `thread.started` / `turn.completed`）専用で、claude の語彙（`system:init` / `assistant` / `result`）とは別物のため。段階1-1 では「記録が無い」と言って終わらせないための最小対応として、claude の実行があればそのファイルパスを案内するようにした（`cli.ts`）。本対応は claude 側の整形（`summarize` と同じ対応表を読み取り側にも持つ）だが、**M4.4 の「イベント語彙を共通化するか」の判定と同じ論点**なので、判定の前に片側だけ実装しない。
 - Status: open
 
-## BL-116
+## BL-213
 
+- Note: 旧 BL-116（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 設計セッション（Edit-only の検討中に実測で発見）/ 2026-08-31
 - Severity: Major (deferred)
 - Trigger: research の validator を次に変更するとき、または「書かれていない成果物が通った」事象が観測されたとき
 - Summary: **`templates/research-findings.md` は契約の必須8見出しを全て含むため、research が一度も書かなくても `file-exists` と `artifact-contract` を通過する**。`artifact-contract` は `checkMarkdownSections` で見出しの存在しか見ず、`research-findings.md` には `token-range` が掛かっていない（掛かっているのは `context-package.md` のみ）。KI-09 系譜「生成だけ配線して素通りを塞ぎ忘れる」/ `task-metadata.json` で踏んだ罠と同型で、**M4 が持ち込んだものではなく既存**。`aiw status --summary` の Open Decisions 件数など、この成果物を読む下流も同時に静かに壊れる。対処案: (a) `research-findings.md` にも `token-range` の下限を掛ける (b) 契約を「見出しの存在」から「見出し配下に本文があること」へ拡張する（validator 変更）。**実績の確認方法**: Event Log で `research-findings` の artifact-contract が passed でありながら中身がテンプレートと同一だったタスクを数える。
 - Status: open
 
-## BL-115
+## BL-212
 
+- Note: 旧 BL-115（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: M4 設計セッション（design-claude-executor.md 課題B）/ 2026-08-31
 - Severity: Minor
 - Trigger: M4 実装が安定した後の validator 改修枠
 - Summary: review 用に diff-scope の「宣言ゼロ」モードを追加し、第2網を本物にする。`declaredFilesFrom` の既定が `context-package.md` のため、review が Modify 集合内のファイルを触っても第2網（diff-scope report）が反応しない。validator 変更にあたるため M4 では見送り（M4 前提3）。それまでは第1網（ツール制限）がこの穴を塞ぐ唯一の防壁。
 - Status: open
 
-## BL-114
+## BL-211
 
+- Note: 旧 BL-114（2026-09-17 に振り直し。アプリ側と衝突していた）
 - Source: BL-113 の実装中に判明（2026-08-31 のエンジン改修枠）
 - Severity: Minor
 - Trigger: `aiw init` を新環境へ配るとき、または assets↔runtime の宣言差分を次に棚卸しするとき
@@ -266,5 +299,5 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   `CLAUDE.md` の設計上 `recaptureBaseline` は対話 CLI（`aiw baseline capture`）からのみ
   呼べるので、**フェーズ完了時に人間が取り直すか postActions で取り直すかを決める必要がある**
   （後者は「resume で取り直すと検査が無言で無効化される」既存の禁止事項と衝突しないか要検討）。
-- Note: ⚠️ **本ファイルの `BL-114`（assets↔runtime の宣言差分・done）とは別件。** アプリ側と番号が衝突するため新しい番号を振った。
+- Note: ⚠️ **本ファイルの `BL-211`（旧 BL-114・assets↔runtime の宣言差分・done）とは別件。** アプリ側と番号が衝突するため新しい番号を振った。
 - Status: open

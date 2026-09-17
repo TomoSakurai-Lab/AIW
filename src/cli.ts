@@ -188,7 +188,7 @@ function engineLogCmd(stepArg: string | undefined, opts: { raw?: boolean; json?:
     // ⚠️ claude executor（M4）の JSONL は `runs/claude/` へ tee されるが、この整形は
     // codex のイベント語彙（item.* / thread.started）専用で読めない。
     // **「記録が無い」と言って終わらせない**のが要点で、存在するなら場所を教える。
-    // claude 側の整形は BL-116（M4 後）。
+    // claude 側の整形は BL-214（旧 BL-117。M4 後）。
     const claudeDir = path.join(rootPaths(root).runsDir, "claude");
     const claudeRuns = existsSync(claudeDir)
       ? readdirSync(claudeDir).filter((f) => f.endsWith(`-${step}.jsonl`)).sort()

@@ -270,9 +270,9 @@ codex の C-3（read-only 拒否でも exit 0）と**同じ性質が Claude で�
 | 状態 | コマンド | 根拠 |
 | --- | --- | --- |
 | ✅ 実測済み | `echo` / `cd`（リダイレクトは Edit 判定）、`git diff` / `git log`（`--output` は deny）、`curl`（書き込みフラグは deny）、`grep`（`-o` / `-cP` の読み取り） | 2026-09-14 のプローブ |
-| ⚠️ **暫定（仕様根拠・未実測）** | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research・09-14 追加）、`git status` / `git show`（review・improve-check・09-04 から）、`git rev-parse`（research・09-15 追加） | 「ファイルへ書く引数を持たない」というコマンドの仕様。**BL-120 で実測する** |
+| ⚠️ **暫定（仕様根拠・未実測）** | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore`（research・09-14 追加）、`git status` / `git show`（review・improve-check・09-04 から）、`git rev-parse`（research・09-15 追加） | 「ファイルへ書く引数を持たない」というコマンドの仕様。**BL-217 で実測する** |
 | ✅ 実測済み・残余あり | `dotnet build`（review）: `-o` / `-oDIR` は deny、`-p:OutDir=` は残余（上表） | 2026-09-14 のプローブ。**裁きの理由**: 第1網の契約は「任意内容の書き込み・ソース編集をさせない」であって「一切書かせない」ではない。正当なフローは `--artifacts-path` を使い `-o` を使わないので deny のコストはゼロ。書ける内容はビルド産物に限られるので等級は低い。本番での `dotnet build` の実行は 0 件 |
-| ⚠️ **疑い（目視・未実測）** | `./tools/nrun.cmd`（review）: `build -- --outDir <dir>`（vite）/ `test -- --coverage.reportsDirectory=<dir>`（vitest） | 書けるのはビルド産物 / カバレッジレポートで等級は低い。`--` 以降の引数経路は**正当に使われている**（本番 31 回: spec の指定と reporter）ので広い deny は不可。`--outDir` / `reportsDirectory` の本番使用は 0 件。BL-120 |
+| ⚠️ **疑い（目視・未実測）** | `./tools/nrun.cmd`（review）: `build -- --outDir <dir>`（vite）/ `test -- --coverage.reportsDirectory=<dir>`（vitest） | 書けるのはビルド産物 / カバレッジレポートで等級は低い。`--` 以降の引数経路は**正当に使われている**（本番 31 回: spec の指定と reporter）ので広い deny は不可。`--outDir` / `reportsDirectory` の本番使用は 0 件。BL-217 |
 | — 保証の外 | `dotnet run` / `./tools/nrun.cmd`（review） | 既存のビルド / テストを実行する（成果物の書き込みは設計上の前提）。エージェントが書いた内容は、上の書き込み経路が塞がれている限り実行されない。`dotnet run` には `-o` / `--output` が無い（`--help` で確認・2026-09-14） |
 
 ### 9-3. ファイル単位の列挙と 0 バイトファイル ← **設計の締めに使った2つの実測**
@@ -526,7 +526,7 @@ baseline に吸収されるため、誤帰属は起きない。同一 `(step, fi
 validator の変更が要り、前提3（validator は1つも変更しない）で禁止。
 review が最も触りたくなるのは正に Modify 集合内のファイルなので、
 **この穴は第1網（ツール制限）が塞ぐ**。第1網が主、第2網は補助という関係はここから来る。
-M4 後の改修候補として **BL-115**（diff-scope の「宣言ゼロ」モードで第2網を本物にする）を
+M4 後の改修候補として **BL-212**（diff-scope の「宣言ゼロ」モードで第2網を本物にする）を
 起票済み（2026-08-31）。
 
 `onViolation` を **report** にする理由: review 中の変更が review 自身の仕業とは限らない
@@ -803,7 +803,7 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 
 | 項目 | 内容 | 同枠の理由 |
 | --- | --- | --- |
-| **BL-114** | `consumer-presence` / `measurement-completeness` の宣言を `assets/config/workflow.yaml` へ移植し、test 88 系で固定。意図的差分（`executor: codex` 等の環境依存）は移植しない仕分けを添える | M4 で workflow.yaml の assets / runtime 両側を触る（Claude 側ステップの executor 宣言・diff-scope 追加） |
+| **BL-211** | `consumer-presence` / `measurement-completeness` の宣言を `assets/config/workflow.yaml` へ移植し、test 88 系で固定。意図的差分（`executor: codex` 等の環境依存）は移植しない仕分けを添える | M4 で workflow.yaml の assets / runtime 両側を触る（Claude 側ステップの executor 宣言・diff-scope 追加） |
 | **BL-071** | 生バイト検査コマンドを review の Bash 許可リストへ含め、手順を review Skill に追記 | 課題B の許可コマンド設計そのもの |
 
 ## 課題K: 故障注入（実装の完了条件として列挙）
@@ -882,7 +882,7 @@ spawn(<pin した claude.exe の絶対パス>, [
 
 ## 段階1-3: review（本丸）
 
-- review の許可セット + diff-scope 宣言（workflow.yaml 両側）+ BL-071 / BL-114
+- review の許可セット + diff-scope 宣言（workflow.yaml 両側）+ BL-071 / BL-211
 - review Skill へ追記: 「計測コードが必要なら書いて測らず NOT VERIFIED /
   Manual Verification Required として記録する」（E2E 決定の規律）
 - review-audit の model-change 最小実装（課題G）
@@ -1063,7 +1063,7 @@ probe リポに marker 入り `CLAUDE.md` と `.claude/CLAUDE.md` を置き、
 | 2026-09-04 | BL-071 の検査コマンド | **確定**（実装時の実測5）。`(*UTF)` 必須。リテラル範囲は偽陽性のため不可 | 検出 10/10・偽陽性 0（実ドキュメント 2,999 行）。U+FFFD のみでは 0/10 で見逃す。Claude の Bash は MINGW64 と確認済み |
 | 2026-08-31 | effort | **静的宣言に置き換える**: `settings.claudeEffort: low` 既定 + `steps.review.effort: high` + `steps.research.effort: high`（常時）。記録は `effortRequested` のみ（observed は取れない・§8 実測）。**再検討条件**: research のトークンが問題になったら task-planning に難易度を宣言させる機構を検討 | clipboard 時代の「人間が難易度で使い分け」は executor で再現できない。research 起因 fix（M1 実測 3/8）のコスト > 簡単タスクを high で走らせるコスト。安全側に倒す |
 | 2026-09-14 | **第1網の信頼境界**（§9-2b 実測） | シェルのリダイレクトは Edit ルールで判定される（守られている）。**引数経由の書き込み（`git --output` / `curl -o`）は素通りだった** → `CLAUDE_BASH_DENY`（11 パターン）を常時 `--disallowedTools` で渡す。`sed` / `sort` / `uniq` は許可リストに入れない | プローブ 4 回（対照 `cp` つき）+ 本物の executor argv でスモーク 3/3。本番の悪用 0 件（837 呼び出し） |
-| 2026-09-14 | 仕様根拠で許可した Bash コマンド | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore` / `git status` / `git show` は**暫定（未実測）**、`dotnet build -o` は**疑い**として記録。BL-120 で次に deny / allow を触る枠で実測 | `--output` の穴自体が「仕様の思い込みが実測で裏切られた」例。検証済みと仕様上安全なはずの区別を記録から消さない |
+| 2026-09-14 | 仕様根拠で許可した Bash コマンド | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore` / `git status` / `git show` は**暫定（未実測）**、`dotnet build -o` は**疑い**として記録。BL-217 で次に deny / allow を触る枠で実測 | `--output` の穴自体が「仕様の思い込みが実測で裏切られた」例。検証済みと仕様上安全なはずの区別を記録から消さない |
 | 2026-09-14 | `dotnet build -o` の疑い（§9-2b） | **実測で書けた → dotnet 限定の `Bash(dotnet* -o*)` を追加**（12 パターン目）。`-p:OutDir=` も書けたが**残余として受け入れ、deny しない**。**承認済み**（2026-09-14） | 契約は「任意内容の書き込み・ソース編集をさせない」。正当なフローは `--artifacts-path` で `-o` のコストはゼロ。`-p:` 系は書ける内容がビルド産物に限られ（等級低）、綴りの揺れで網羅できない |
 
 ---

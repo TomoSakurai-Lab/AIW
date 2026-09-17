@@ -73,7 +73,7 @@ test("147: review gets a reviewer's toolset — read, run the declared commands,
   assert.ok(edits.some((r) => r.endsWith("current-review.md)")));
   assert.ok(edits.some((r) => r.endsWith("current-status.json)")));
   // ⚠️ リポジトリ側は1本も許可しない——**これが第1網の本体**。
-  // 第2網（diff-scope）は Modify 宣言済みファイルを見逃すので（BL-115）、
+  // 第2網（diff-scope）は Modify 宣言済みファイルを見逃すので（BL-212）、
   // review が最も触りたくなる集合を止めているのはここだけ。
   assert.equal(edits.some((r) => r.includes("/src/") || r.includes("ClientApp")), false);
 
@@ -168,7 +168,7 @@ test("148: entering review re-captures the baseline, so only changes made during
     "report"
   );
 
-  // ⚠️ **残る盲点（BL-115）**: Modify 宣言済みファイルへの変更は違反にならない。
+  // ⚠️ **残る盲点（BL-212）**: Modify 宣言済みファイルへの変更は違反にならない。
   // ここは validator を変えないと直せないので、**第1網が塞ぐ**という関係をテストにも残す。
   put("declared.ts", "touched during review\n");
   assert.equal(

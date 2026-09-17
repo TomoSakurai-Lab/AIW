@@ -227,7 +227,7 @@ test("125: versionInfo enumerates every declared schema with version and hash", 
   assert.equal(schemaVersionKey("schemas/current-status.schema.json"), "currentStatus");
 });
 
-// Test 143 — **BL-114: AC 証跡の validator が出荷側にも配線されている。**
+// Test 143 — **BL-211: AC 証跡の validator が出荷側にも配線されている。**
 //
 // M3 では runtime にだけ宣言があり、`aiw init` で配られる assets には無かった
 // （grep 0 件）。新環境では「検査していない」が **skipped ですらなく、宣言ごと存在しない**

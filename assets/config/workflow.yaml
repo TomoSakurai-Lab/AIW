@@ -75,7 +75,7 @@ versions:
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)
-    backlog-rules: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
+    backlog-rules: 4          # 採番は番号系統を共有する全 backlog の最大値 + 1（2026-09-17）
     knowledge-files: 1
 
 # --------------------------------------------------------
@@ -344,7 +344,7 @@ steps:
       - type: verify-local
         onViolation: report        # 失敗は test-report.md として review へ渡し fix ループに乗せる
         command: typecheck
-      # AC の証跡を検査する 2 つ（BL-114 で runtime から移植・2026-09-04）。
+      # AC の証跡を検査する 2 つ（BL-211〔旧 BL-114〕で runtime から移植・2026-09-04）。
       # どちらも ac-manifest.json / ac-result.json が無ければ skipped になり、
       # 「検査していない」が Event Log と status --summary に残る（passed へ丸めない）。
       - type: consumer-presence
