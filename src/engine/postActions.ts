@@ -271,12 +271,27 @@ function featureArchiveDate(now = new Date()): string {
 // distinguishable in one directory.
 //
 // Copy-then-remove, not rename: the copy is verified to exist before the original goes away, so a
-// failure between the two leaves feature.md in place rather than losing it. Idempotent by way of
-// the existsSync guard — a resume after feature.md is gone is a no-op, not an error.
+// failure between the two leaves feature.md in place rather than losing it.
+//
+// Idempotent across a crash at any point before the checkpoint (2026-09-17: the first version was
+// not — see the two resume tests in feature-archive.test.ts):
+//   - crash after the copy, before the remove → the resume finds an identical copy already filed
+//     and only removes the original (it does not file a "-2" duplicate)
+//   - crash after the remove, before the checkpoint → feature.md is gone, but the featureId reset
+//     below still runs; an early return here used to skip it, leaving state.featureId set so the
+//     next single task filed itself under the finished feature
 const archiveFeature: PostActionFn = ({ root, result, draft }) => {
   if (result !== "feature-complete") {
     return;
   }
+  fileFeatureMd(root, draft.featureId);
+  // The feature is over: clear it so the next task's archiveArtifacts resolves afresh (and a
+  // single task that follows does not file itself under the finished feature). ⚠️ On EVERY
+  // feature-complete path, including the ones where there was nothing (left) to file.
+  draft.featureId = null;
+};
+
+function fileFeatureMd(root: string, featureId: string | null): void {
   const src = abs(root, "feature.md");
   if (!existsSync(src)) {
     return;
@@ -289,23 +304,25 @@ const archiveFeature: PostActionFn = ({ root, result, draft }) => {
     return;
   }
   const { archiveDir } = rootPaths(root);
-  const feature = draft.featureId ?? "single";
-  const dir = path.join(archiveDir, feature);
+  const dir = path.join(archiveDir, featureId ?? "single");
   mkdirSync(dir, { recursive: true });
-  const base = `${featureArchiveDate()}-feature${draft.featureId ? `-${draft.featureId}` : ""}`;
-  let dest = path.join(dir, `${base}.md`);
-  for (let n = 2; existsSync(dest); n += 1) {
-    dest = path.join(dir, `${base}-${n}.md`);
-  }
-  copyFileSync(src, dest);
-  if (!existsSync(dest)) {
-    throw new Error(`archiveFeature: copy to ${dest} did not land`);
+  const content = readFileSync(src);
+  const filed = readdirSync(dir).some(
+    (name) => /-feature(-.+)?\.md$/.test(name) && readFileSync(path.join(dir, name)).equals(content)
+  );
+  if (!filed) {
+    const base = `${featureArchiveDate()}-feature${featureId ? `-${featureId}` : ""}`;
+    let dest = path.join(dir, `${base}.md`);
+    for (let n = 2; existsSync(dest); n += 1) {
+      dest = path.join(dir, `${base}-${n}.md`);
+    }
+    copyFileSync(src, dest);
+    if (!existsSync(dest)) {
+      throw new Error(`archiveFeature: copy to ${dest} did not land`);
+    }
   }
   rmSync(src, { force: true });
-  // The feature is over: clear it so the next task's archiveArtifacts resolves afresh (and a
-  // single task that follows does not file itself under the finished feature).
-  draft.featureId = null;
-};
+}
 
 // feature-continue only: update "Current phase" in feature.md. Idempotent.
 const advancePhase: PostActionFn = ({ root, result, nextPhaseId, draft }) => {
