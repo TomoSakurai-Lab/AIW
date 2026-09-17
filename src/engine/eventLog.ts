@@ -35,6 +35,14 @@ export type EventRecord = {
 };
 
 // Append-only JSONL (§9). Token/cache fields are allowed to be null in Phase 1.
+//
+// ⚠️⚠️ **トークン欄を集計するスクリプト・レポートを書く人へ（2026-09-17・M4.4 で実測）:**
+// `inputTokens` の意味は **executor ごとに違う。executor をまたいで合算・比較してはいけない。**
+//   - codex:  `inputTokens` は**キャッシュ込み**（`cacheReadTokens` ⊂ `inputTokens`。実測 90/90 本で cacheRead ≤ input）。
+//             課金対象の非キャッシュ入力 = inputTokens − cacheReadTokens。キャッシュ率 = cacheReadTokens / inputTokens
+//   - claude: `inputTokens` は**キャッシュ別**（非キャッシュ入力だけ。実測 68/68 本で cacheRead > input。例 118 vs 4,291,144）。
+//             総入力 = inputTokens + cacheReadTokens + cacheWriteTokens。キャッシュ率 = cacheReadTokens / 総入力
+// 集計は必ず `executor` 列で分けてから、上の定義で揃えること。M7 レポートの「cacheRead / input」（93.9%）は codex の定義。
 export function appendEvent(root: string, event: EventType, fields: Record<string, unknown> = {}): void {
   const { runsDir, eventLog } = rootPaths(root);
   mkdirSync(runsDir, { recursive: true });

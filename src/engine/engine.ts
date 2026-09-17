@@ -167,6 +167,9 @@ export type ExecOptions = {
  * executor の meta から Event Log のトークン欄を取り出す（M3・B-4）。
  *
  * appendEvent は既定で inputTokens / outputTokens / cacheReadTokens を null で埋める。
+ *
+ * ⚠️ **欄の名前は共通でも意味は executor ごとに違う**（codex の inputTokens はキャッシュ込み、claude はキャッシュ別）。
+ * ここは写すだけで意味を揃えない——揃えると「測った値」が加工値になる。合算・比較の禁止と差引の定義は eventLog.ts の appendEvent のコメント。
  * ここで値が取れたときだけ上書きする。**取れなければ null のまま**にすること。
  */
 function tokenFields(result: ExecutorResult): Record<string, unknown> {

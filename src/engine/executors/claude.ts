@@ -290,7 +290,9 @@ export type ClaudeUsage = {
   reasoningTokens: number | null;
 };
 
-/** `result.usage` を Event Log のトークン欄へ写す形にする。欠けた値は 0 に丸めず null。 */
+/** `result.usage` を Event Log のトークン欄へ写す形にする。欠けた値は 0 に丸めず null。
+ *  ⚠️ claude の `input_tokens` は**キャッシュ別**（非キャッシュ入力だけ）。codex の inputTokens とは意味が違うので
+ *  executor をまたいで合算・比較しない（定義は eventLog.ts の appendEvent のコメント・2026-09-17 実測）。 */
 export function usageFrom(event: any): ClaudeUsage | null {
   const u = event?.usage;
   if (!u || event?.type !== "result") {

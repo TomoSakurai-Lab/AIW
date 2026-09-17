@@ -128,6 +128,8 @@ export type CodexUsage = {
   reasoningTokens: number | null;
 };
 
+/** ⚠️ codex の `input_tokens` は**キャッシュ込み**（`cached_input_tokens` を含む）。claude の inputTokens とは意味が違うので
+ *  executor をまたいで合算・比較しない（定義は eventLog.ts の appendEvent のコメント・2026-09-17 実測）。 */
 export function usageFrom(event: any): CodexUsage | null {
   const u = event?.usage;
   if (!u) {

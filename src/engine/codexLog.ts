@@ -213,6 +213,8 @@ export function formatRunLog(log: RunLog): string {
   out.push(`say ${c.say} / edit ${c.edit} / shell ${c.shell}${c.error ? ` / error ${c.error}` : ""}`);
   if (log.usage) {
     const u = log.usage;
+    // ⚠️ この比は **codex の定義**（input_tokens がキャッシュ込み）でだけ正しい。claude の JSONL を整形する（BL-214）ときに
+    // 同じ式を流用すると、キャッシュ別の inputTokens で割って数万 % になる。定義は eventLog.ts の appendEvent のコメント。
     const ratio =
       u.inputTokens && u.cachedInputTokens !== null ? `  cacheRead ${Math.round((u.cachedInputTokens / u.inputTokens) * 100)}%` : "";
     out.push(`tokens in ${(u.inputTokens ?? 0).toLocaleString()} / out ${(u.outputTokens ?? 0).toLocaleString()}${ratio}`);

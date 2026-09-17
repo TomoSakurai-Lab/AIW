@@ -633,6 +633,11 @@ env は許可リスト方式で構築               # 渡す変数を列挙す�
 | `cache_read_input_tokens` | `cacheReadTokens` |
 | `cache_creation_input_tokens` | `cacheWriteTokens` |
 
+⚠️ **2026-09-17 追記（M4.4 の比較で発見）: 欄の名前は codex と同じだが意味が違う。** claude の `input_tokens` は
+**キャッシュ別**（非キャッシュ入力だけ・実測 68/68 本で cacheRead > input）、codex の `input_tokens` は**キャッシュ込み**
+（90/90 本で cacheRead ≤ input）。上の表は名前の対応であって意味の対応ではない。**executor をまたいで合算・比較しない。**
+差引の定義は `src/engine/eventLog.ts` の `appendEvent` のコメント。
+
 - **モデルは実測値が取れる**（§3 観測2）。両方記録する:
   - `meta.modelRequested`: `settings.claudeModel` の指定値（未指定なら `"unspecified"`。三値の規律）
   - `meta.modelObserved`: `result.modelUsage` の**キーの配列**。

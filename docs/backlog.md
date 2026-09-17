@@ -149,6 +149,53 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: `schemas/ac-manifest.schema.json` と `ac-result.schema.json` が **runtime にしか無く、どの validator からも参照されていない**。`aiw init` で配られないので新環境には存在せず、内容が壊れても誰も検知しない。`assets/schemas/` へ移すか、`workflow.yaml` の implementation へ `json-schema` validator を宣言するかを決める（宣言するなら `onViolation` の値も決める）。
 - Status: **done**（2026-08-31。「参照する」方向で両方実施。implementation へ ac-manifest / ac-result、fix へ ac-result の `json-schema` validator を `onViolation: report` で配線し、schema は緩い版（必須+型のみ。enum は pathBase / status の実害枠だけ）へ差し替えて `assets/schemas/` から配布。**配線の前提条件として archive + root の実データ全件〔2ペア4ファイル〕が schema を通ることを先に確認した**（4/4 PASS。c-p の「テストがバグと共犯」の教訓の適用）。pathBase の許容値は schema enum（書き手向け契約）と `KNOWN_PATH_BASES`（実行時安全網）の両残しとし、test 124 が機械照合。不在の扱いは optionalOutputs 宣言から skipped、schema 不在は report→skipped / halt→failed。故障注入 4 件を実環境 config のクローンで実測済み。テスト 118-125 新設・全 141 green。**世代注記**: versions へ `schemas.acManifest: 1` / `schemas.acResult: 1` を新設し、`versionInfo()` を step の json-schema 宣言から動的列挙する形へ拡張（指示外の新規追加。登録だけして Event Log に乗らない「宣言はあるが効いていない」を作らないため）。⚠️ `docs/baseline.md` は両リポジトリと git 履歴のどこにも存在せず世代注記をそちらへ書けなかった——本記録が代替）
 
+## BL-221
+
+- Source: M4.4 の比較表の副産物 4（`docs/design-claude-executor.md` 課題I）/ 起票 2026-09-17・人間が承認
+- Severity: Minor
+- Trigger: **M4 完了後の最初のエンジン改修枠**（M4.4 の判定で codex.ts の凍結は解除された）
+- Summary: **「executor 対称化の小枠」。同じ判定が 2 実装で既に分岐した箇所を claude.ts 側へ揃え、BL-219 / BL-220 を同じ枠で入れる。**
+  M4.4 は「抽出しない」と判定した——共通ヘルパーへ寄せるのではなく、**意味の分岐だけを揃える**。個別:
+  (1) cwd の内外判定: codex.ts は生の文字列で比べる（`isInside(paths.root, projectRoot)`）。claude.ts は 2026-09-04 のスモークで
+  8.3 短縮名による誤判定を実測し `longPath` で正規化した。codex は未反映（今は冗長な `--add-dir` が付くだけで無害）
+  (2) `numberSetting` / `stringSetting`: codex.ts は NaN / 0 / 負数 / 空文字を通す。claude.ts と engine は有限の正数・空白でない文字列だけ
+  (3) codex.ts の自前タイマーと `CODEX_DEFAULT_TIMEOUT_MS`（30 分）: エンジン経由では必ず `req.timeoutMs` が埋まり watchdog が見張るので
+  死んでいる（2026-09-02 の決定ログ「統合は M4.4 の後」）。claude.ts はタイマーを持たない
+  (4) `req.signal` が execute の前に abort 済みのとき: claude.ts は即 kill、codex.ts は listener を足すだけで反応しない
+  (5) 小さな重複ヘルパー（`firstLine` / `truncate` / `flatten` / `k` / `isInside`）は**抽出しない**
+  （M4.4: 2 実装が独立に読めることの価値が上回る）
+  ⚠️ codex.ts を変えたら clipboard 経路のテストを**同じコミットで**通し直す（不変条件5）。
+  実装用のプロンプトが要るなら枠を開くときに用意する。
+- Status: open
+
+## BL-220
+
+- Source: M4.4 の比較表の副産物 3 / 起票 2026-09-17・人間が承認
+- Severity: Minor
+- Trigger: **次に codex.ts を触る枠**（BL-221 の小枠）
+- Summary: **codex.ts は子プロセスの env を全部引き継ぐ（`{ ...process.env, CODEX_HOME }`）。** claude.ts は許可リスト方式
+  （`CLAUDE_ENV_ALLOWLIST`。拒否リストでは知らない変数名を塞げない）。claude 側で実在を確認した漏れ変数
+  （`ANTHROPIC_BASE_URL` / `CLAUDECODE` / `CLAUDE_EFFORT`——aiw が Claude Code の配下で動く限り必ず起きる経路）が
+  codex の挙動に影響するかは未知。ただし **`OPENAI_*` 系（API キー・ベース URL など）が親の環境にあれば
+  隔離 CODEX_HOME の外から設定が混入しうる、という同型のリスクは構造的に同じ**。
+  手順: codex が env から読む変数を `--help` / 実測で確認 → claude の許可リストを出発点に codex 固有分を足す。
+  ⚠️ PATH 系を落とすと起動できない（claude 側の実測）。許可リストは「起動できる最小」を実測で決める。
+- Status: open
+
+## BL-219
+
+- Source: M4.4 の比較表の副産物 2 / 起票 2026-09-17・人間が承認（KI-09 系譜 #15）
+- Severity: Minor
+- Trigger: **次に codex.ts を触る枠（BL-221 の小枠）、またはローダーの検証を次に触るとき**
+- Summary: **`steps.<id>.model` / `effort` / `bashAllow` は claude executor だけが読む。codex（や clipboard）のステップに書いても
+  ローダーは弾かず、黙って無視される**（「宣言はあるが効いていない」の 15 例目）。`effort` は値の語彙だけを検証し、
+  その executor が effort を読むかは見ない。根は BL-113 の schema 検証（`additionalProperties` を撤去した緩い版）と同じ
+  「知らない・効かないキーを弾かない」。
+  対策の方向: **ステップ設定のキーを executor 別に検証する**——executor ごとに「読むキー」の表を 1 箇所に持ち、
+  読まないキーが書かれていればロード時に知らせる（落とすか、`config.deprecations` と同じ経路で表示するかは枠で決める）。
+  ⚠️ codex に `steps.<id>.model` を読ませる方向（`codexModel` のステップ上書き）は別の判断。先に「効かない宣言を書けない」を入れる。
+- Status: open
+
 ## BL-210
 
 - Source: M4 段階1-3 の境界後の集計（`versions.workflow` 6・2026-09-15〜16）/ 起票 2026-09-17・人間が承認
