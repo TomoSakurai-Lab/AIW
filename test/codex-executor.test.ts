@@ -10,15 +10,17 @@
 //   - タイムアウトの二重判定（C-2 / KI-08）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { execStep } from "../src/engine/engine.js";
 import { createCodexExecutor, summarize, usageFrom } from "../src/engine/executors/codex.js";
 import { visibleOnScreen } from "../src/engine/executors/index.js";
+import { readEventLog } from "../src/engine/observed.js";
 import { assembleStepPrompt } from "../src/engine/promptAssembly.js";
 import { rootPaths } from "../src/engine/paths.js";
 import type { ExecutorProgress } from "../src/engine/executors/types.js";
-import { makeRoot } from "./helpers.js";
+import { makeRoot, setStep } from "./helpers.js";
 
 const THREAD_ID = "01a013b1-80e9-7c71-9460-305caf414464";
 
@@ -144,24 +146,29 @@ test("95: exit 0 reports process completion only, never artifact success", async
 });
 
 // Test 96 — タイムアウトは transient。**failed に化けない**（C-2 / KI-08）。
+// ⚠️ 2026-09-17（BL-221 (3)）: codex.ts は自前タイマーを持たなくなった。総上限は watchdog が signal で撃つので、
+// ここでも「上限を過ぎて signal が撃たれた」形で見る（以前は executor 内の setTimeout が撃っていた）。
 test("96: a timeout is transient, not a permanent failure", async () => {
   const { root, config } = readyRoot();
   const step = config.steps["implementation"];
   const { launch, captured } = fakeCodex([{ type: "thread.started", thread_id: THREAD_ID }], { hang: true });
+  const watchdog = new AbortController();
+  setTimeout(() => watchdog.abort(), 40); // 総上限 30ms を過ぎてから watchdog が撃つ
 
   const result = await createCodexExecutor({ launch }).execute({
     root,
     config,
     step,
     projectRoot: root,
-    timeoutMs: 30
+    timeoutMs: 30,
+    signal: watchdog.signal
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.failureKind, "transient", "再試行に意味がある種類として分類する");
   assert.equal((result.meta as any).timedOut, true);
   assert.ok(captured.killed >= 1, "子プロセスを止める");
-  assert.match(result.error ?? "", /タイムアウト/);
+  assert.match(result.error ?? "", /中断されました/);
 });
 
 // Test 97 — 隔離 CODEX_HOME が無ければ permanent で止める。
@@ -275,4 +282,99 @@ test("108: the screen shows codex's own words (and errors), not its shell traffi
 
   assert.deepEqual(shown(false), ["message", "error"], "既定は発言と error のみ");
   assert.deepEqual(shown(true), kinds, "--verbose では全種類");
+});
+
+// ---------------------------------------------------------------------------------------------
+// BL-221（executor 対称化の小枠・2026-09-17）: 同じ判定が codex.ts / claude.ts で分岐していた箇所を揃えた。
+// ---------------------------------------------------------------------------------------------
+
+// Test 173 — **abort 済みの signal を渡されたら起動しない。**
+// ⚠️ abort 済みの AbortSignal に listener を足しても abort イベントは二度と来ない。以前の codex.ts は listener を
+// 足すだけだったので、watchdog が起動前に abort した場合（externalSignal が既に aborted の分岐）でも最後まで走った。
+// M5（aiw auto）の停止はここに依存する。
+test("173: an already-aborted signal never launches codex", async () => {
+  const { root, config } = readyRoot();
+  const { launch, captured } = fakeCodex(OK_EVENTS);
+  let launched = 0;
+  const counting = (argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv }) => {
+    launched += 1;
+    return launch(argv, o);
+  };
+  const stopped = new AbortController();
+  stopped.abort();
+
+  const result = await createCodexExecutor({ launch: counting }).execute({
+    root,
+    config,
+    step: config.steps["implementation"],
+    projectRoot: root,
+    signal: stopped.signal,
+    timeoutMs: 60_000
+  });
+
+  assert.equal(launched, 0, "プロセスを起動しない");
+  assert.equal(captured.stdin, "", "プロンプトも送らない");
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "transient", "failureKind の語彙は増やさない（中断は transient）");
+  assert.equal((result.meta as any).launched, false);
+  assert.match(result.error ?? "", /起動前に中断/);
+});
+
+// Test 174 — **実行中に外から abort すると kill される**（engine 経由）。
+// あわせて M5 設計への申し送りを事実として固定する: 外部中断は watchdog の発火ではないので
+// Event Log は「transient で timeoutKind なし」になり、rate limit 等の transient と executor の結果からは区別できない。
+test("174: an external abort mid-run kills codex, and is logged as transient without a timeoutKind", async () => {
+  const { root, config } = readyRoot();
+  setStep(root, "implementation");
+  const { launch, captured } = fakeCodex([{ type: "thread.started", thread_id: THREAD_ID }], { hang: true });
+  const human = new AbortController();
+  setTimeout(() => human.abort(), 30);
+
+  const result = await execStep(root, config, "implementation", {
+    executor: createCodexExecutor({ launch }),
+    signal: human.signal
+  });
+
+  assert.ok(captured.killed >= 1, "子プロセスを止める");
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "transient");
+  const log = readEventLog(root);
+  assert.ok(Array.isArray(log));
+  const failed = (log as Array<Record<string, any>>).filter((r) => r.event === "exec.failed").pop();
+  assert.equal(failed?.failureKind, "transient");
+  assert.equal(failed?.meta?.timeoutKind, undefined, "外部中断は総上限でも無進行でもない（firedKind は null）");
+});
+
+// Test 175 — cwd の内外判定は **8.3 短縮名を正式表記へ直してから**比べる（claude.ts と同じ・2026-09-04 の実測）。
+test("175: a short-name runtime root inside the workspace is not mistaken for outside", async (t) => {
+  const { root, config } = readyRoot();
+  const longRepo = realpathSync.native(path.resolve(root, ".."));
+  if (path.resolve(root, "..") === longRepo) {
+    t.skip("この環境の一時ディレクトリは短縮名ではないので再現できない（Windows の TOMO~1.SAK 形で再現する）");
+    return;
+  }
+  const { launch, captured } = fakeCodex(OK_EVENTS);
+  const result = await createCodexExecutor({ launch }).execute({
+    root, // 短縮名の表記
+    config,
+    step: config.steps["implementation"],
+    projectRoot: longRepo // git が返す長い表記
+  });
+  assert.equal(result.ok, true);
+  assert.equal(captured.argv.includes("--add-dir"), false, "配下にあるのに --add-dir を足さない");
+  assert.equal((result.meta as any).addDir, null);
+});
+
+// Test 176 — 設定値は有限の正数・空白でない文字列だけを通す（claude.ts / engine と同じ強さ）。
+test("176: a zero timeout and a blank codexHome fall back to the defaults instead of misbehaving", async () => {
+  const { root, config } = readyRoot();
+  const { launch, captured } = fakeCodex(OK_EVENTS);
+  const result = await createCodexExecutor({ launch }).execute({
+    root,
+    config: { ...config, settings: { ...config.settings, executorTimeoutMs: 0, codexHome: "   " } },
+    step: config.steps["implementation"],
+    projectRoot: root
+  });
+  assert.equal(result.ok, true, "0 の上限で「実測時間 ≥ 上限」に化けて即中断扱いにならない");
+  assert.equal(path.basename(String(captured.env.CODEX_HOME)), ".codex-home", "空白の codexHome は既定へ落ちる");
 });

@@ -166,7 +166,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   （M4.4: 2 実装が独立に読めることの価値が上回る）
   ⚠️ codex.ts を変えたら clipboard 経路のテストを**同じコミットで**通し直す（不変条件5）。
   実装用のプロンプトが要るなら枠を開くときに用意する。
-- Status: open
+- Status: **done**（2026-09-17・BL-221 のコミット）。(1) `longPath` で正規化 (2) 設定値の検査を claude.ts / engine と同じ強さへ (3) 自前タイマーと `CODEX_DEFAULT_TIMEOUT_MS` を撤去——**撤去前に grep で確認**: 本番で codex executor を呼ぶのは `engine.ts` の `execStep` だけ（呼び元は `aiw exec` と drive）で、必ず watchdog の signal と `req.timeoutMs` が渡る。自前タイマーに依存していたのはテスト 96 だけで、signal 経由へ書き換えた (4) abort 済みの signal では起動しない（`meta.launched: false`）。中断の文言は claude.ts の「中断されました」へ揃えた。failureKind の語彙は不変 (5) ヘルパーは抽出していない。**実測**: テスト 173（abort 済み→起動しない）/ 174（実行中の外部 abort→kill・Event Log は transient で timeoutKind なし）/ 175（この環境の一時ディレクトリ `TOMO~1.SAK` で短縮名を実際に再現）/ 176（上限 0・空白の codexHome）。修正前の codex.ts では 173・175・176 が fail、174 は pass（実行中の中断は元から効いていた）。全 217 green・clipboard 経路（105 / 117 ほか）も同じ実行で green
 
 ## BL-220
 

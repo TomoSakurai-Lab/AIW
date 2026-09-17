@@ -758,7 +758,7 @@ M3 で codex が実装された結果、**`executor: codex` と宣言しても `
 
 | 論点 | 決定 | 根拠 |
 | --- | --- | --- |
-| タイムアウト既定値 | **30 分**（`CODEX_DEFAULT_TIMEOUT_MS`。`settings.codexTimeoutMs` で上書き可） | 実測の implementation 中央値 17 分に対して 3 倍弱。長すぎると無人運転で気付かず、短すぎると正常なタスクを殺す |
+| タイムアウト既定値 | ~~**30 分**~~（2026-09-17 撤去・BL-221。見張りは engine/watchdog.ts だけ）（`CODEX_DEFAULT_TIMEOUT_MS`。`settings.codexTimeoutMs` で上書き可） | 実測の implementation 中央値 17 分に対して 3 倍弱。長すぎると無人運転で気付かず、短すぎると正常なタスクを殺す |
 | `--approve-for-me` の採否 | **採用**（`-s` は併記できないので落とす） | 上記の排他。無人実行で承認待ちに入らないことが要件 |
 | 既定 executor の切り替え時期 | **提案のみ**。`workflow.yaml` にコメントで置き、既定は clipboard のまま | 切り替えは人間の判断。1 ステップずつ切り替えられるので implementation から始めるのを勧める |
 | JSONL の保持 | **当面は全保存**（`runs/codex/<時刻>-<step>.jsonl`） | まだ量の実測が無い。1 実行 1.2 KB（疎通時）。実タスク数本の実測を見てから archive 退避を決める |

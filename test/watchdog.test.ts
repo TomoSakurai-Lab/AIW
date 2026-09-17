@@ -211,9 +211,9 @@ test("watchdog: classifyTimeout also trusts the measured duration (KI-08)", () =
 
 // ── 追加分（レビュー指摘への対応）───────────────────────────────
 
-// ⚠️ **codex.ts の 30 分フォールバックが「死んでいると証明された既定」であること。**
-// codex.ts は不変の縛りがあるため CODEX_DEFAULT_TIMEOUT_MS を消せない。
-// 消せない代わりに、**エンジン経由なら必ず timeoutMs が埋まる**ことを固定する。
+// ⚠️ **executor 側の既定が「死んでいると証明された既定」であること。**
+// 当時は codex.ts 不変の縛りで CODEX_DEFAULT_TIMEOUT_MS を消せなかった。2026-09-17（BL-221 (3)）に
+// このテストを根拠として自前タイマーごと撤去した。**エンジン経由なら必ず timeoutMs が埋まる**ことを引き続き固定する。
 // これが無いと「本番では使われない」は宣言でしかなく、KI-09 の系譜になる。
 test("watchdog: the engine always fills request.timeoutMs (the executor default is unreachable)", async () => {
   const { root, config: base } = makeRoot();

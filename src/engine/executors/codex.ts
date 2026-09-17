@@ -13,8 +13,12 @@
 //   - **exit code を成功判定に使わない**。read-only サンドボックスが書き込みを拒否しても
 //     exit 0 で返ることを実測済み
 //   - CODEX_HOME を隔離する。共有するとアプリの config.toml が実行のたびに汚れる（実測）
+//   - **タイマーを持たない**（2026-09-17・BL-221 で claude.ts に揃えた）。総上限と無進行の見張りは
+//     engine/watchdog.ts が担い、ここは `req.signal` を配線するだけ。本番で codex executor を呼ぶ経路は
+//     engine の execStep だけで、必ず watchdog の signal と `req.timeoutMs` が渡る（撤去前に grep で確認）。
+//     ⚠️ execStep を通さずに直接呼ぶなら、止めたい側が signal を渡すこと
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { assembleStepPrompt } from "../promptAssembly.js";
@@ -22,11 +26,12 @@ import { rootPaths } from "../paths.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
 import { redactSession, sessionSecret, toSessionRef, type SessionRef, type SessionSecret } from "../session.js";
 import type { ExecutorName } from "../types.js";
+import { DEFAULT_TOTAL_TIMEOUT_MS } from "../watchdog.js";
 import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
 
-/** 既定タイムアウト。実測の implementation 中央値 17 分に対して 3 倍弱を取る。
- *  長すぎると無人運転で気付かない、短すぎると正常なタスクを殺す。 */
-export const CODEX_DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+// `CODEX_DEFAULT_TIMEOUT_MS`（30 分）と自前の setTimeout は 2026-09-17 に撤去した（BL-221 (3)）。
+// エンジン経由では必ず req.timeoutMs が埋まるので、2026-09-02 の時点で「死んでいると証明された既定」だった。
+// ここで使う上限は KI-08 の二重判定（実測時間 ≥ 上限か）と表示のためだけの値。
 
 export type CodexDeps = {
   /** テスト用の差し替え口。既定は pin した @openai/codex の JS シムを node で起動する */
@@ -152,7 +157,21 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
     name: "codex" as ExecutorName,
     async execute(req: ExecutorRequest): Promise<ExecutorResult> {
       const paths = rootPaths(req.root);
-      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.executorTimeoutMs) ?? CODEX_DEFAULT_TIMEOUT_MS;
+      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.executorTimeoutMs) ?? DEFAULT_TOTAL_TIMEOUT_MS;
+
+      // --- 起動前に中断済みなら起動しない（BL-221 (4)） ---
+      // ⚠️ abort 済みの AbortSignal に listener を足しても abort イベントは二度と来ない。
+      // 以前は listener を足すだけだったので、watchdog が起動前に abort した場合（externalSignal が既に
+      // aborted の分岐）でも codex が最後まで走っていた。M5 の停止はここに依存する。
+      if (req.signal?.aborted) {
+        return {
+          ok: false,
+          outputs: [],
+          failureKind: "transient",
+          error: "codex executor: 起動前に中断されました（プロセスは起動していない）。",
+          meta: { executor: "codex", stage: "aborted-before-launch", launched: false, timedOut: true }
+        };
+      }
 
       // --- 作業ディレクトリ（-C）。diff-scope と同じ解決を使う（検査範囲と実行範囲を揃える） ---
       let projectRoot = req.projectRoot;
@@ -172,7 +191,9 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
 
       // runtimeRoot が workspace の外にあると、Codex は成果物を書けない。
       // 黙って書けない状態で走らせない（設計 A-2）。
-      const addDir = isInside(paths.root, projectRoot) ? null : paths.root;
+      // ⚠️ **両辺を正式表記へ直してから比べる**（BL-221 (1)・claude.ts と同じ）。repoRoot は git が返す長い名前、
+      // runtimeRoot は呼び出し側の表記（8.3 短縮名のことがある）なので、生の文字列では「中にあるのに外」になる。
+      const addDir = isInside(longPath(paths.root), longPath(projectRoot)) ? null : paths.root;
 
       // --- 隔離 CODEX_HOME ---
       const codexHome = resolveCodexHome(req.root, stringSetting(req.config.settings.codexHome));
@@ -263,14 +284,17 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
         }
       );
 
-      // タイムアウトと中断
-      let timedOutFlag = false;
-      const timer = setTimeout(() => {
-        timedOutFlag = true;
+      // 中断は watchdog（総上限・無進行）と外部シグナルの両方から来る。**ここでタイマーは持たない。**
+      let abortedFlag = false;
+      const onAbort = () => {
+        abortedFlag = true;
         child.kill("SIGTERM");
-      }, timeoutMs);
-      const onAbort = () => child.kill("SIGTERM");
-      req.signal?.addEventListener("abort", onAbort, { once: true });
+      };
+      if (req.signal?.aborted) {
+        onAbort(); // claude.ts と同じ形の保険（起動前チェックからここまでは同期区間なので通常は到達しない）
+      } else {
+        req.signal?.addEventListener("abort", onAbort, { once: true });
+      }
 
       // JSONL を1行ずつ: 保存（生のまま） + 要約を通知
       if (child.stdout) {
@@ -325,15 +349,14 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       }
 
       const outcome = await finished;
-      clearTimeout(timer);
       req.signal?.removeEventListener("abort", onAbort);
       // ⚠️ flush を待ってから返す。待たないと JSONL の末尾が落ち、
       // 直後に落ちた場合や aiw log が読む場合に途中までのファイルを掴む。
       await new Promise<void>((resolve) => sink.end(resolve));
 
       const durationMs = now() - startedAt;
-      // KI-08 の二重判定。shell:false なので signal は信用できるが、verify-local と同じ形を保つ。
-      const timedOut = timedOutFlag || outcome.signal !== null || durationMs >= timeoutMs;
+      // KI-08 の二重判定。内部フラグだけを信じず、signal と実測時間からも裏を取る。
+      const timedOut = abortedFlag || outcome.signal !== null || durationMs >= timeoutMs;
 
       const meta: Record<string, unknown> = {
         executor: "codex",
@@ -368,7 +391,8 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
           ok: false,
           outputs: [],
           failureKind: "transient",
-          error: `codex executor: ${Math.round(durationMs / 1000)}s でタイムアウトしました（上限 ${Math.round(timeoutMs / 1000)}s）。`,
+          // claude.ts と同じ文言。総上限・無進行・外部中断のどれかは executor には分からない（種別はエンジンが書き足す）
+          error: `codex executor: ${Math.round(durationMs / 1000)}s で中断されました（上限 ${Math.round(timeoutMs / 1000)}s）。`,
           meta: { ...meta, timedOut: true }
         };
       }
@@ -406,12 +430,23 @@ function isInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/** OS の正式表記へ直す（8.3 短縮名・シンボリックリンクを畳む）。claude.ts と同じ。実在しないパスはそのまま返す。 */
+function longPath(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
+// BL-221 (2): claude.ts / engine と同じ強さ。以前は空文字・NaN・0・負数を通していた
+// （空文字の codexHome は既定へ落ちず root そのものを指し、0 の上限は即中断になる）。
 function stringSetting(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
 function numberSetting(v: unknown): number | undefined {
-  return typeof v === "number" ? v : undefined;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
 export const codexExecutor: StepExecutor = createCodexExecutor();
