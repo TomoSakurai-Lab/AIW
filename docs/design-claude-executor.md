@@ -773,7 +773,16 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 
 ## 課題I: M4.4 — Canonical Primitive を抽出するか
 
-**判定は claude.ts 実装後**。ここでは手順と比較表の形だけを定める。
+**判定済み（2026-09-17）。結論: 新しく抽出する Canonical Primitive は無い——「抽出しない」。**
+4 条件を全て満たしたのは**タイムアウトの設定キーの中立化**の 1 行だけで、これは実装した
+（`executorTimeoutMs` / `executorIdleTimeoutMs`・旧キーは 1 世代エイリアス + deprecation・`claudeTimeoutMs` 削除）。
+既に共通化済みのもの（session.ts / assembleStepPrompt / watchdog / `ExecutorProgress` / `ExecutorResult.failureKind`）は維持。
+
+**(d) の読み方（人間が承認）**: 「設定量」は `workflow.yaml` の設定量として読む。コード上の共通ヘルパーは
+設定量を減らせないので (d) を**構造的に満たせない**——4 条件は「設定駆動エンジンにとっての抽象化の価値」を測る設計で、
+コードの重複削減それ自体は目的ではない（2 実装が独立に読めることの価値が上回る、という M3 以来の判断と整合）。
+
+比較表は 2026-09-17 に **codex.ts / claude.ts / engine.ts / watchdog.ts / loader.ts の実物**から埋めた。
 
 判定手順:
 
@@ -785,21 +794,22 @@ review を executor 化した瞬間 = モデル変更そのものなのに**発�
 4. 抽出しない行は理由を1行で記録する（**抽出しない判断も正当な結末**）
 5. 結果はこの文書の決定ログへ追記する
 
-比較表の形:
+比較表（2026-09-17・実物から）:
 
 | 概念 | codex.ts の実装 | claude.ts の実装 | (a)共通 | (b)無損失 | (c)実行時参照 | (d)設定減 | 判定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 起動（spawn / shell:false / stdin） | | | | | | | |
-| 隔離 home の解決と不在時拒否 | | | | | | | |
-| cwd = checkRepoRoot / --add-dir 縮退 | | | | | | | |
-| タイムアウト（二重判定・SIGTERM） | | | | | | | |
-| JSONL の tee 保存 | | | | | | | |
-| イベント要約 → onProgress | | | | | | | |
-| usage → Event Log 転記 | | | | | | | |
-| model の記録（requested / observed） | | | | | | | |
-| session の型分離と redact | | | | | | | |
-| failureKind の導出 | | | | | | | |
-| ツール制限の宣言（claude のみ？） | | | | | | | |
+| 起動（spawn / shell:false / stdin） | node + JS シム・`shell:false`・stdin | `claude.exe` を直接・`shell:false`・stdin・起動前に実体の実在と `.old.*` を確認 | △ spawn の数行だけ | × argv の意味が別物（sandbox vs tools / permission） | ✓ | — | **抽出しない**。共通なのは KI-08 の規律（shell:false）で、本体は実行体の解決と argv |
+| 隔離 home の解決と不在時拒否 | `resolveCodexHome`・不在で permanent・**env は全継承** + `CODEX_HOME` | 同型の `resolveClaudeHome`・**env は許可リスト** + `CLAUDE_CONFIG_DIR` / `DISABLE_AUTOUPDATER` | 解決 ✓ / env × | ✓ | ✓ | × 別ディレクトリを指す必要があり減らない | **抽出しない**。env の非対称は BL-220 |
+| cwd = checkRepoRoot / --add-dir 縮退 | 生の文字列で内外判定 | `longPath` で正規化してから判定（09-04 の 8.3 短縮名の実測） | ✓ | ✓ | ✓ | — | **抽出しない**。⚠️ **既に分岐している**（codex は未反映・今は冗長な `--add-dir` が付くだけ）→ BL-221 で揃える |
+| タイムアウト（二重判定・SIGTERM） | 自前タイマー（既定 30 分）+ signal | タイマー無し・signal のみ（abort 済みなら即 kill） | 見張りは engine/watchdog.ts に**抽出済み** | ✓ | ✓ | ✓ 設定キーは実質共通なのに codex 名。中立化で `claudeTimeoutMs` が消える | **見張り: 維持。設定キー: 昇格（実装済み）**。codex の自前タイマーと abort 済み signal は BL-221 |
+| JSONL の tee 保存 | `runs/codex/<stamp>-<step>.jsonl` | `runs/claude/…`（同一コード） | ✓ | ✓ | ✓ | — | **抽出しない** |
+| イベント要約 → onProgress | 単数を返す・`item.*` / `turn.completed` | 配列を返す・`assistant` / `result`（1 メッセージが複数ブロック・result が tokens と拒否を同時に運ぶ） | 出力型 `ExecutorProgress` は**共通化済み**（M3 課題I） | × 入力の語彙 | ✓ | — | **出力型は維持・入力語彙は共通化しない**。→ BL-214（`aiw log` の claude 対応）は共通語彙を待たず claude 専用の整形で進めてよい |
+| usage → Event Log 転記 | `input_tokens` は**キャッシュ込み**（90/90 本で cacheRead ≤ input） | `input_tokens` は**キャッシュ別**（68/68 本で cacheRead > input） | 形だけ | **× 意味が違う** | ✓ | — | **抽出しない**。executor をまたいで合算・比較禁止（定義は eventLog.ts の `appendEvent` のコメント） |
+| model の記録（requested / observed） | `settings.codexModel` の指定値のみ | `steps.<id>.model` → `settings.claudeModel`・observed は `modelUsage` のキー配列 | △ requested のみ | × codex は observed を取れない | ✓ | — | **抽出しない**。⚠️ codex ステップの `model` / `effort` / `bashAllow` は黙って無視される → BL-219（KI-09 #15） |
+| session の型分離と redact | `session.ts`（`thread.started`） | `session.ts`（全メッセージの `session_id`） | ✓ | ✓ | ✓ | — | **抽出済み（M3）・維持** |
+| failureKind の導出 | spawn 失敗 / timeout / exit≠0 の文面の正規表現 | spawn 失敗 / 中断 / `is_error`・`api_error_status`・`subtype`・文面 | 型（transient / permanent）は共通化済み | × 分類器の入力が別 | ✓ | — | **型は維持・分類器は Provider 固有** |
+| ツール制限の宣言（claude のみ？） | `--approve-for-me`（workspace-write sandbox） | `toolSet` / `allowRules`（`outputs` と `bashAllow` から導出）+ `CLAUDE_BASH_DENY` | × | × | ✓ | — | **Provider 固有設定を維持**（無理に共通語彙へ押し込まない） |
+| プロンプトの組み立て | `assembleStepPrompt`・空なら permanent | 同じ | ✓ | ✓ | ✓ | — | **抽出済み（M2）・維持** |
 | **失敗モード「正常終了だが作業なし」** | exit 0（read-only 拒否の実測） | `is_error: false` / exit 0（permission 拒否の実測） | ✅ **共通** | — | — | — | **抽象化ではなく規律として共通**: 成功判定に exit code を使わない。両 executor で必要だと実測で確定した（2026-08-31） |
 
 ⚠️ 先取りの注意: イベントの**語彙**は既に非対称（codex: `thread.started` / `item.*` /
@@ -1072,6 +1082,9 @@ probe リポに marker 入り `CLAUDE.md` と `.claude/CLAUDE.md` を置き、
 | 2026-09-14 | **第1網の信頼境界**（§9-2b 実測） | シェルのリダイレクトは Edit ルールで判定される（守られている）。**引数経由の書き込み（`git --output` / `curl -o`）は素通りだった** → `CLAUDE_BASH_DENY`（11 パターン）を常時 `--disallowedTools` で渡す。`sed` / `sort` / `uniq` は許可リストに入れない | プローブ 4 回（対照 `cp` つき）+ 本物の executor argv でスモーク 3/3。本番の悪用 0 件（837 呼び出し） |
 | 2026-09-14 | 仕様根拠で許可した Bash コマンド | `head` / `tail` / `ls` / `wc` / `git ls-files` / `git check-ignore` / `git status` / `git show` は**暫定（未実測）**、`dotnet build -o` は**疑い**として記録。BL-217 で次に deny / allow を触る枠で実測 | `--output` の穴自体が「仕様の思い込みが実測で裏切られた」例。検証済みと仕様上安全なはずの区別を記録から消さない |
 | 2026-09-14 | `dotnet build -o` の疑い（§9-2b） | **実測で書けた → dotnet 限定の `Bash(dotnet* -o*)` を追加**（12 パターン目）。`-p:OutDir=` も書けたが**残余として受け入れ、deny しない**。**承認済み**（2026-09-14） | 契約は「任意内容の書き込み・ソース編集をさせない」。正当なフローは `--artifacts-path` で `-o` のコストはゼロ。`-p:` 系は書ける内容がビルド産物に限られ（等級低）、綴りの揺れで網羅できない |
+| 2026-09-17 | **M4.4: Canonical Primitive を抽出するか**（課題I） | **抽出しない**。4 条件を全て満たしたのは設定キーの中立化 1 行のみ → 昇格して実装（`executorTimeoutMs` / `executorIdleTimeoutMs`・旧キーは 1 世代エイリアス + CLI の deprecation 表示・`claudeTimeoutMs` 削除）。既存の共通部品（session / プロンプト組み立て / watchdog / `ExecutorProgress` / failureKind 型）は維持。**(d) は `workflow.yaml` の設定量として読む**（人間が承認） | 比較表は実物のコードから。コード上の共通ヘルパーは (d) を構造的に満たせない——4 条件は設定駆動エンジンにとっての抽象化の価値を測る設計で、2 実装が独立に読める価値が重複削減を上回る。旧キーを即削除しないのは、既存 runtime の設定が**黙って既定値に落ちる**ため |
+| 2026-09-17 | M4.4 の副産物（抽象化ではなく、実物を並べて初めて見えたもの） | (1) `inputTokens` は executor で意味が違う → 合算・比較禁止を eventLog.ts / engine / 両 usageFrom / codexLog / 本文書 §usage / baseline に注記 (2) codex ステップの `model` / `effort` / `bashAllow` が黙って無視 → BL-219・KI-09 #15 (3) codex の env 全継承 → BL-220 (4) 同じ判定の分岐（cwd の `longPath`・設定値の検査の強さ・codex の自前タイマー・abort 済み signal）→ **BL-221「executor 対称化の小枠」**に 2・3 と束ねる。**M4.4 が閉じたので codex.ts の凍結は解除** | (1) は実測 codex 90/90・claude 68/68。集計スクリプトはリポジトリに無いので、集計を書く人が必ず通る場所に置いた。(2) は BL-113 の緩い schema と同根 |
+| 2026-09-17 | **M4 完了** | **完了を宣言**。review / improve-check / research は claude executor で無人実行、implementation / fix は codex、fix ループは Codex↔Claude 間で接続。手貼りが残るのは task-planning と reflection のみ（**自動化しない判断済み**）。Canonical Primitive は「抽出しない」で記録。比較の副産物まで台帳へ（BL-219〜221）。fresh 固定（M4.5）は維持 | 計画 M4.5 の完了条件 4 項目: 無人実行 ✓（reflection は自動化しない判断を記録）/ fix ループ接続 ✓ / 抽出しない判断の記録 ✓ / Provider 固有設定を共通語彙へ押し込んでいない ✓（ツール制限・イベント語彙・usage の意味を Provider 固有のまま維持） |
 
 ---
 
