@@ -180,7 +180,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   隔離 CODEX_HOME の外から設定が混入しうる、という同型のリスクは構造的に同じ**。
   手順: codex が env から読む変数を `--help` / 実測で確認 → claude の許可リストを出発点に codex 固有分を足す。
   ⚠️ PATH 系を落とすと起動できない（claude 側の実測）。許可リストは「起動できる最小」を実測で決める。
-- Status: open
+- Status: **done**（2026-09-17・BL-220 のコミット）。`CODEX_ENV_ALLOWLIST` + `codexEnv`。**実測**: codex 0.147.0 の実体が読む資格情報・接続先の変数をバイナリから抽出（`OPENAI_API_KEY` / `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN` / `CODEX_AUTHAPI_BASE_URL` / `CODEX_URL` 等）。親に偽の `OPENAI_API_KEY` / `CODEX_API_KEY` / `ANTHROPIC_BASE_URL` を置いて codex exec を実際に 3 回起動: 全継承 → `CODEX_API_KEY` が隔離 CODEX_HOME の ChatGPT ログインを上書きして **401**（リスクは実在した）/ 許可リスト → 認証成功・成果物あり・漏れ 0 / PATH + SystemRoot のみ → 認証成功・成果物あり（起動できる最小）。最小まで削らない判断と理由は design-codex-executor.md の決定ログ。テスト 177
 
 ## BL-219
 

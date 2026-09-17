@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { execStep } from "../src/engine/engine.js";
-import { createCodexExecutor, summarize, usageFrom } from "../src/engine/executors/codex.js";
+import { CODEX_ENV_ALLOWLIST, codexEnv, createCodexExecutor, summarize, usageFrom } from "../src/engine/executors/codex.js";
 import { visibleOnScreen } from "../src/engine/executors/index.js";
 import { readEventLog } from "../src/engine/observed.js";
 import { assembleStepPrompt } from "../src/engine/promptAssembly.js";
@@ -377,4 +377,43 @@ test("176: a zero timeout and a blank codexHome fall back to the defaults instea
   });
   assert.equal(result.ok, true, "0 の上限で「実測時間 ≥ 上限」に化けて即中断扱いにならない");
   assert.equal(path.basename(String(captured.env.CODEX_HOME)), ".codex-home", "空白の codexHome は既定へ落ちる");
+});
+
+// Test 177 — **BL-220: codex へ渡す env は許可リスト方式。** 隔離 CODEX_HOME の外から認証・接続先を差し込める変数を渡さない。
+// 実測（2026-09-17）: 全継承のまま親に CODEX_API_KEY があると、隔離 CODEX_HOME の ChatGPT ログインが上書きされて 401 になった。
+test("177: codex gets an allowlisted env, so credentials outside the isolated CODEX_HOME never reach it", async () => {
+  const parent: NodeJS.ProcessEnv = {
+    Path: "C:/bin", // Windows の大小混在
+    SystemRoot: "C:/Windows",
+    OPENAI_API_KEY: "sk-leak",
+    CODEX_API_KEY: "leak",
+    CODEX_ACCESS_TOKEN: "leak",
+    CODEX_AUTHAPI_BASE_URL: "http://leak",
+    ANTHROPIC_BASE_URL: "http://leak",
+    CLAUDECODE: "1",
+    CODEX_HOME: "C:/users-real-home/.codex" // 親の CODEX_HOME も上書きされる
+  };
+  const env = codexEnv(parent, "C:/rt/.codex-home");
+  assert.deepEqual(Object.keys(env).sort(), ["CODEX_HOME", "Path", "SystemRoot"]);
+  assert.equal(env.CODEX_HOME, "C:/rt/.codex-home", "隔離 CODEX_HOME だけを渡す");
+  assert.equal(
+    CODEX_ENV_ALLOWLIST.some((n) => /^(OPENAI|CODEX|ANTHROPIC|CLAUDE)/i.test(n)),
+    false,
+    "許可リストに資格情報の系統を入れない"
+  );
+
+  // executor 経由でも同じ env が渡る（親の process.env に置いた変数が子へ漏れない）
+  const { root, config } = readyRoot();
+  const { launch, captured } = fakeCodex(OK_EVENTS);
+  const saved = process.env.CODEX_API_KEY;
+  process.env.CODEX_API_KEY = "leak-from-parent";
+  try {
+    await createCodexExecutor({ launch }).execute({ root, config, step: config.steps["implementation"], projectRoot: root });
+  } finally {
+    if (saved === undefined) delete process.env.CODEX_API_KEY;
+    else process.env.CODEX_API_KEY = saved;
+  }
+  assert.equal("CODEX_API_KEY" in captured.env, false);
+  assert.equal(Object.keys(captured.env).some((k) => /^(OPENAI_|ANTHROPIC_|CLAUDE)/i.test(k)), false);
+  assert.equal(path.basename(String(captured.env.CODEX_HOME)), ".codex-home");
 });

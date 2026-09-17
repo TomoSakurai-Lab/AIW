@@ -60,6 +60,73 @@ export function codexEntrypoint(): string {
   return path.resolve(here, "..", "..", "..", "node_modules", "@openai", "codex", "bin", "codex.js");
 }
 
+/**
+ * 子プロセスへ渡す env の**許可リスト**（BL-220・2026-09-17。claude.ts の CLAUDE_ENV_ALLOWLIST と同じ方式）。
+ *
+ * ⚠️ **拒否リストにしない。** codex 0.147.0 の実体は、隔離 CODEX_HOME の外から認証や接続先を差し込める変数を読む
+ * （バイナリから実測: `OPENAI_API_KEY` / `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN` / `CODEX_REFRESH_TOKEN` /
+ * `CODEX_AUTHAPI_BASE_URL` / `CODEX_URL` / `CODEX_EXEC_SERVER_URL` / `OPENAI_ORGANIZATION` …）。名前は版ごとに増えるので、
+ * 「OPENAI_* と CODEX_* を除く」では将来の変数を塞げない。渡すものを列挙し、それ以外は落とす。
+ * 実測: 以前は `{ ...process.env }` で、aiw が Claude Code の配下で動くと `ANTHROPIC_BASE_URL` / `CLAUDE_CODE_*` を含む
+ * 25 個の無関係な変数も codex へ渡っていた。
+ *
+ * **実害の実測（2026-09-17・codex exec を実際に起動）**: 全継承のまま親に `CODEX_API_KEY` を置くと、隔離 CODEX_HOME の
+ * ChatGPT ログインが**上書きされて** 401 で失敗した（偽の値だったので失敗で済んだ。本物なら黙って別の資格情報で走る）。
+ * 許可リストでは同じ親の環境から認証が通り、成果物が書かれ、偽の 3 変数は子へ渡らなかった（27 秒）。
+ *
+ * 出発点は CLAUDE_ENV_ALLOWLIST（**共通化はしない**・M4.4）で、codex 固有の追加は無い。
+ * ⚠️ **起動できる最小は `PATH` + `SystemRoot`（+ CODEX_HOME）だった**（同じ実測。ファイル 1 つを書く課題で認証・書き込みとも成功）。
+ * それでもこのリストを削らないのは、implementation / fix の codex が npm / dotnet / git / Playwright を子として動かすため——
+ * それらの `USERPROFILE` / `APPDATA` / `LOCALAPPDATA` / `TEMP` の要否は、ファイル 1 つのプローブでは測れない。
+ * このリストは review（claude）が dotnet build / nrun / curl を実際に回している組み合わせで、実働の根拠がある。
+ * ⚠️ プロキシ（`HTTPS_PROXY` 等）と CA 証明書（`SSL_CERT_FILE` / `CODEX_CA_CERTIFICATE`）は**入れていない**。
+ * 今の環境には無く、必要な環境では接続エラーとして**大きな声で**失敗する（黙って別の経路へ流れはしない）ので、
+ * そのときに実測して足す。
+ *
+ * 照合は**大文字小文字を無視**する（Windows の env 名は大小混在で入っている）。
+ */
+export const CODEX_ENV_ALLOWLIST = [
+  "PATH",
+  "PATHEXT",
+  "SystemRoot",
+  "SystemDrive",
+  "windir",
+  "COMSPEC",
+  "TEMP",
+  "TMP",
+  "USERPROFILE",
+  "HOME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+  "NUMBER_OF_PROCESSORS",
+  "OS",
+  "PROCESSOR_ARCHITECTURE",
+  "USERNAME",
+  "USERDOMAIN",
+  "LANG",
+  "LC_ALL",
+  "TZ"
+] as const;
+
+/** 子プロセスの env を許可リストから組み、隔離 CODEX_HOME を足す。 */
+export function codexEnv(base: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+  const allowed = new Set(CODEX_ENV_ALLOWLIST.map((n) => n.toLowerCase()));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined && allowed.has(key.toLowerCase())) {
+      env[key] = value;
+    }
+  }
+  env.CODEX_HOME = codexHome;
+  return env;
+}
+
 /** 隔離 CODEX_HOME の絶対パス。既定は runtimeRoot 配下の `.codex-home`。 */
 export function resolveCodexHome(root: string, declared?: string): string {
   const value = declared && declared.trim() !== "" ? declared : ".codex-home";
@@ -265,7 +332,7 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
 
       const child = launch(argv, {
         cwd: projectRoot,
-        env: { ...process.env, CODEX_HOME: codexHome }
+        env: codexEnv(process.env, codexHome) // BL-220: 許可リスト方式（全継承にしない）
       });
 
       const sink = createWriteStream(jsonlPath, { flags: "a" });
