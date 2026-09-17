@@ -256,8 +256,9 @@ export async function execStep(
   // 総上限と無進行の二段構え（engine/watchdog.ts）。**executor の外に置く**ので、
   // codex でも claude でも同じ機構が効く。executor 側は signal を見るだけでよい。
   const totalTimeoutMs =
-    numberSetting(step.timeoutMs) ?? numberSetting(config.settings.codexTimeoutMs) ?? DEFAULT_TOTAL_TIMEOUT_MS;
-  const idleTimeoutMs = numberSetting(config.settings.codexIdleTimeoutMs) ?? DEFAULT_IDLE_TIMEOUT_MS;
+    numberSetting(step.timeoutMs) ?? numberSetting(config.settings.executorTimeoutMs) ?? DEFAULT_TOTAL_TIMEOUT_MS;
+  // ⚠️ 旧キー（codexTimeoutMs / codexIdleTimeoutMs）はここで読まない。読み替えはローダーの migrateSettings だけ。
+  const idleTimeoutMs = numberSetting(config.settings.executorIdleTimeoutMs) ?? DEFAULT_IDLE_TIMEOUT_MS;
   const watchdog = createWatchdog({ totalTimeoutMs, idleTimeoutMs, externalSignal: opts.signal });
 
   appendEvent(root, "exec.started", { ...logBase, meta: { totalTimeoutMs, idleTimeoutMs } });

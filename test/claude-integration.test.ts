@@ -149,7 +149,7 @@ test("140: the engine's idle watchdog fires for claude too, and the kind is not 
   const { root, config } = ready();
   // INIT だけ流して黙り込む（stall の形）
   const { launch } = fake([INIT], undefined, { hang: true });
-  const settings = { ...config.settings, codexIdleTimeoutMs: 120, codexTimeoutMs: 60_000 };
+  const settings = { ...config.settings, executorIdleTimeoutMs: 120, executorTimeoutMs: 60_000 };
 
   const outcome = await execStep(root, { ...config, settings }, "improve-check", {
     executor: createClaudeExecutor({ launch })

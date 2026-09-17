@@ -643,6 +643,8 @@ env は許可リスト方式で構築               # 渡す変数を列挙す�
   **redact 対象の経路が codex より多い**（init・全メッセージ・result・transcript ファイル名。§3 観測6）。
   transcript は `--no-session-persistence` で作らせないので残るのは runs/ の JSONL のみ（codex と同じ扱い: 生値は一次資料にだけ残る）
 - 新設 settings: `claudeHome` / `claudeModel` / `claudeTimeoutMs`（codex の3つと対に）+ 下記 effort
+  （⚠️ 2026-09-17・M4.4: `claudeTimeoutMs` は**削除**。エンジン経由では一度も参照されない死んだ宣言だった。
+  総上限のフォールバックは executor を問わず `settings.executorTimeoutMs`〔旧 `codexTimeoutMs`〕）
 
 ### effort（2026-08-31 追加・調査結果 §8）
 
@@ -718,7 +720,7 @@ known-issues の系譜 #9 を「解消」へ更新する。
   実測中央値 13 分（監査項目追加後）の 3 倍。codex の「実測中央値 × 3 弱」と同じ決め方
 - **ステップ別に上書き可にする**（承認時の条件）: research は AI 部分の所要が未実測のため。
   優先順は `req.timeoutMs` > `steps.<id>.timeoutMs`（`WorkflowStep.timeoutMs` を型に追加・
-  課題E の `model` と同じく**配線とテストを同一コミット**で） > `settings.claudeTimeoutMs` > 既定 40 分
+  課題E の `model` と同じく**配線とテストを同一コミット**で） > `settings.claudeTimeoutMs`〔2026-09-17 削除 → `settings.executorTimeoutMs`〕 > 既定 40 分
 
 ## 課題G: 承認ゲートと halt 遷移
 
@@ -872,7 +874,7 @@ spawn(<pin した claude.exe の絶対パス>, [
 ## 段階1-1: improve-check（起動と回収の疎通）
 
 - `src/engine/executors/claude.ts` をスタブから実装（`createClaudeExecutor(deps)` 形式・codex と同型）
-- `settings.claudeHome` / `claudeModel` / `claudeTimeoutMs` を追加
+- `settings.claudeHome` / `claudeModel` / `claudeTimeoutMs` を追加（`claudeTimeoutMs` は 2026-09-17 に削除・M4.4）
 - JSONL の tee（`runs/claude/`）・usage / modelObserved の Event Log 転記・進行表示
 
 ## 段階1-2: 防衛線（同一コミット）

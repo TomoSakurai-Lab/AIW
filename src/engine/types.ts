@@ -98,7 +98,7 @@ export type WorkflowStep = {
   instructions?: string[];
   /** M2: 環境固有の instructions/<name>.md。不在は正常だが、省略は出力に明記する */
   optionalInstructions?: string[];
-  /** このステップの総上限（ミリ秒）。未指定なら settings.codexTimeoutMs → 既定 1 時間。
+  /** このステップの総上限（ミリ秒）。未指定なら settings.executorTimeoutMs → 既定 1 時間。
    *  ⚠️ **エンジンが解決して ExecutorRequest.timeoutMs へ渡す。** executor は
    *  workflow.yaml を読み直さない（executor ごとに解決規則が分岐するのを防ぐ）。
    *  fix は実測の中央値 6 分なので、既定より短い値を置く用途を想定している。 */
@@ -164,13 +164,21 @@ export type WorkflowConfig = {
      *  共有すると (1) アプリの config.toml が実行のたびに汚れる（実測）
      *  (2) アプリ側の設定変更が実行へ混入する。詳細は docs/design-codex-executor.md 課題 A-3 */
     codexHome?: string;
-    /** 総上限（ミリ秒）。未指定なら DEFAULT_TOTAL_TIMEOUT_MS。
-     *  steps.<id>.timeoutMs が指定されていればそちらが優先される。 */
-    codexTimeoutMs?: number;
+    /** 総上限（ミリ秒）。**executor を問わず**全ステップのフォールバック。未指定なら DEFAULT_TOTAL_TIMEOUT_MS。
+     *  steps.<id>.timeoutMs が指定されていればそちらが優先される。
+     *  2026-09-17（M4.4 の判定）に `codexTimeoutMs` から改名した——エンジンは claude のステップでも
+     *  この値を読んでいたので、キーは実質共通なのに名前だけが codex 用だった。 */
+    executorTimeoutMs?: number;
     /** 無進行タイムアウト（ミリ秒）。進行イベントがこの時間途絶えたら中断する。
      *  未指定なら DEFAULT_IDLE_TIMEOUT_MS。**総上限とは別の見張り**で、
      *  総上限を延ばしても stall の発見が遅れないようにするためのもの。
-     *  閾値の根拠は engine/watchdog.ts の冒頭コメント（実測から出している）。 */
+     *  閾値の根拠は engine/watchdog.ts の冒頭コメント（実測から出している）。
+     *  2026-09-17 に `codexIdleTimeoutMs` から改名。 */
+    executorIdleTimeoutMs?: number;
+    /** @deprecated 旧名。ローダーが executorTimeoutMs へ読み替えて deprecation を残す（1 世代の間だけ）。
+     *  ⚠️ エンジン / executor はこのキーを読まない。読み替えはローダーの 1 箇所だけ（`migrateSettings`）。 */
+    codexTimeoutMs?: number;
+    /** @deprecated 旧名。ローダーが executorIdleTimeoutMs へ読み替える（同上）。 */
     codexIdleTimeoutMs?: number;
     /** codex exec に渡すモデル（`-m`）。未指定なら渡さず、codex の既定に委ねる。
      *  ⚠️ 委ねた場合、**どのモデルで走ったかはどこにも記録されない**
@@ -192,10 +200,8 @@ export type WorkflowConfig = {
      *  ⚠️ **実行時の値は観測できない**（出力のどこにも出ない・設計 §8 実測）うえ、
      *  モデルによる silent downgrade がありうる。記録は effortRequested（指定値）のみ。 */
     claudeEffort?: string;
-    /** claude 側ステップの総上限（ミリ秒）のフォールバック。
-     *  ⚠️ 通常は engine が steps.<id>.timeoutMs から解決して渡すので、これが効くのは
-     *  executor を直接呼ぶ場合だけ。既定は CLAUDE_DEFAULT_TIMEOUT_MS（40 分）。 */
-    claudeTimeoutMs?: number;
+    // `claudeTimeoutMs` は 2026-09-17（M4.4）に削除した。エンジン経由では一度も参照されない
+    // 死んだ宣言だった。書かれていればローダーが「効果なし」の deprecation を出す（黙って無視しない）。
     [key: string]: unknown;
   };
   defaults?: Record<string, unknown>;
@@ -203,6 +209,9 @@ export type WorkflowConfig = {
   artifacts: Record<string, ArtifactDef>;
   steps: Record<string, WorkflowStep>;
   auditPolicy?: Record<string, unknown>;
+  /** ローダーが集めた設定の deprecation（旧キーの読み替え・削除済みキー）。CLI が表示する。
+   *  無ければキーごと無い。 */
+  deprecations?: string[];
 };
 
 // current-status.json — the AI/CLI declaration that drives branching (§6.1)

@@ -7,7 +7,7 @@ import {
   approve as engineApprove,
   execStep as engineExecStep,
   initRoot,
-  loadConfig,
+  loadConfig as engineLoadConfig,
   nextSuggestion as engineNext,
   reject as engineReject,
   resume as engineResume,
@@ -36,6 +36,20 @@ program
   .description("AI workflow engine CLI (config-driven, stateful; design rev.5)")
   .version("0.3.0")
   .option("--root <dir>", `workflow root (default: resolve ${RUNTIME_DIR_NAME} or AIW_ROOT)`);
+
+// 設定の deprecation（旧キーの読み替え・削除済みキー）を表示する。**黙って読み替えない**（M4.4・2026-09-17）。
+// 1 コマンドで設定を何度読んでも表示は 1 回。
+let deprecationsShown = false;
+function loadConfig(root: string): ReturnType<typeof engineLoadConfig> {
+  const config = engineLoadConfig(root);
+  if (!deprecationsShown) {
+    deprecationsShown = true;
+    for (const message of config.deprecations ?? []) {
+      console.error(`⚠ deprecated: ${message}`);
+    }
+  }
+  return config;
+}
 
 function engineRoot(): string {
   return resolveRoot(program.opts().root as string | undefined);

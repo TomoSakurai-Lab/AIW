@@ -150,7 +150,7 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
     name: "codex" as ExecutorName,
     async execute(req: ExecutorRequest): Promise<ExecutorResult> {
       const paths = rootPaths(req.root);
-      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.codexTimeoutMs) ?? CODEX_DEFAULT_TIMEOUT_MS;
+      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.executorTimeoutMs) ?? CODEX_DEFAULT_TIMEOUT_MS;
 
       // --- 作業ディレクトリ（-C）。diff-scope と同じ解決を使う（検査範囲と実行範囲を揃える） ---
       let projectRoot = req.projectRoot;

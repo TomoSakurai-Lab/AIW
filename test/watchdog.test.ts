@@ -78,7 +78,7 @@ function lastExecEvent(root: string): Record<string, unknown> | null {
 test("watchdog: a run that keeps emitting is stopped by the total cap, not misreported as failed", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 400, codexIdleTimeoutMs: 10_000 });
+  const config = configWith(base, { executorTimeoutMs: 400, executorIdleTimeoutMs: 10_000 });
   const { executor } = pulsingExecutor({ everyMs: 20 });
 
   const result = await execStep(root, config, "implementation", { executor });
@@ -98,7 +98,7 @@ test("watchdog: a stalled run is stopped by the idle timer and the reason is dis
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
   // 総上限は十分長く、無進行だけが撃つ状況にする
-  const config = configWith(base, { codexTimeoutMs: 15_000, codexIdleTimeoutMs: 250 });
+  const config = configWith(base, { executorTimeoutMs: 15_000, executorIdleTimeoutMs: 250 });
   const { executor, events } = pulsingExecutor({ everyMs: 20, silentAfter: 3 });
 
   const started = Date.now();
@@ -122,7 +122,7 @@ test("watchdog: a stalled run is stopped by the idle timer and the reason is dis
 test("watchdog: a long-but-under-threshold silence does not kill the run", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 3_000, codexIdleTimeoutMs: 600 });
+  const config = configWith(base, { executorTimeoutMs: 3_000, executorIdleTimeoutMs: 600 });
   // 3 イベント出したあと 300ms 沈黙し（閾値 600ms 未満）、その後再開する
   const { executor } = pulsingExecutor({ everyMs: 20, silentAfter: 3, resumeAfterMs: 300 });
 
@@ -139,7 +139,7 @@ test("watchdog: a long-but-under-threshold silence does not kill the run", async
 test("watchdog: steps.<id>.timeoutMs overrides the settings default", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 20_000, codexIdleTimeoutMs: 10_000 }, { timeoutMs: 300 });
+  const config = configWith(base, { executorTimeoutMs: 20_000, executorIdleTimeoutMs: 10_000 }, { timeoutMs: 300 });
 
   let seen: number | undefined;
   const spy: StepExecutor = {
@@ -164,7 +164,7 @@ test("watchdog: steps.<id>.timeoutMs overrides the settings default", async () =
 test("watchdog: after a watchdog kill, a fresh re-run from artifacts alone completes", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 250, codexIdleTimeoutMs: 10_000 });
+  const config = configWith(base, { executorTimeoutMs: 250, executorIdleTimeoutMs: 10_000 });
 
   const killed = await execStep(root, config, "implementation", { executor: pulsingExecutor({ everyMs: 20 }).executor });
   assert.equal(killed.ok, false);
@@ -229,12 +229,12 @@ test("watchdog: the engine always fills request.timeoutMs (the executor default 
   };
 
   // (1) settings も step も未指定 → エンジンの既定が入る（executor 側の既定には落ちない）
-  const bare = { ...base, settings: { ...base.settings, codexTimeoutMs: undefined, codexIdleTimeoutMs: undefined } };
+  const bare = { ...base, settings: { ...base.settings, executorTimeoutMs: undefined, executorIdleTimeoutMs: undefined } };
   await execStep(root, bare, "implementation", { executor: probe });
   // (2) settings 指定
-  await execStep(root, configWith(base, { codexTimeoutMs: 1234 }), "implementation", { executor: probe });
+  await execStep(root, configWith(base, { executorTimeoutMs: 1234 }), "implementation", { executor: probe });
   // (3) step 指定（settings より優先）
-  await execStep(root, configWith(base, { codexTimeoutMs: 1234 }, { timeoutMs: 999 }), "implementation", { executor: probe });
+  await execStep(root, configWith(base, { executorTimeoutMs: 1234 }, { timeoutMs: 999 }), "implementation", { executor: probe });
 
   assert.deepEqual(seen, [DEFAULT_TOTAL_TIMEOUT_MS, 1234, 999]);
   assert.ok(
@@ -257,7 +257,7 @@ test("watchdog: an idle kill reports only the idle reason end to end", async () 
   setStep(root, "implementation");
   // 総上限を極端に短くし、**idle が先に撃ったあと居座る**状況を作る。
   // 居座り中に実測時間は総上限を超える（実運用の SIGTERM 遅延 237s と同じ形）。
-  const config = configWith(base, { codexTimeoutMs: 900, codexIdleTimeoutMs: 200 });
+  const config = configWith(base, { executorTimeoutMs: 900, executorIdleTimeoutMs: 200 });
   const lingering: StepExecutor = {
     name: "codex",
     async execute(req) {
@@ -282,7 +282,7 @@ test("watchdog: an idle kill reports only the idle reason end to end", async () 
 test("watchdog: idle observations are recorded even for successful runs", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 10_000, codexIdleTimeoutMs: 5_000 });
+  const config = configWith(base, { executorTimeoutMs: 10_000, executorIdleTimeoutMs: 5_000 });
 
   const withPause: StepExecutor = {
     name: "codex",
@@ -308,7 +308,7 @@ test("watchdog: idle observations are recorded even for successful runs", async 
 test("watchdog: a run that never progressed records zero events", async () => {
   const { root, config: base } = makeRoot();
   setStep(root, "implementation");
-  const config = configWith(base, { codexTimeoutMs: 10_000, codexIdleTimeoutMs: 200 });
+  const config = configWith(base, { executorTimeoutMs: 10_000, executorIdleTimeoutMs: 200 });
   const silent: StepExecutor = {
     name: "codex",
     async execute(req) {

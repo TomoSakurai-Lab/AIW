@@ -592,7 +592,7 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
     async execute(req: ExecutorRequest): Promise<ExecutorResult> {
       const paths = rootPaths(req.root);
       // ⚠️ 通常は engine（watchdog）が解決した値が来る。executor は独自タイマーを持たない。
-      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.claudeTimeoutMs) ?? CLAUDE_DEFAULT_TIMEOUT_MS;
+      const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.executorTimeoutMs) ?? CLAUDE_DEFAULT_TIMEOUT_MS;
 
       // --- 実行体（pin）。自動更新で消えた実績があるので、起動前に実在を確かめる ---
       const entry = claudeEntrypoint();
