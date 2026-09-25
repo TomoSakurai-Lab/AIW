@@ -23,7 +23,13 @@ export type EventType =
   | "workflow.resumed"
   | "audit.suggested"
   // 遷移確定時に作った 0 バイトスタブ（M4 段階1-3）。**黙って作らない**ための記録。
-  | "stub.created";
+  | "stub.created"
+  // aiw auto（M5・docs/design-auto.md）。起動 / 再試行 / 停止 / 起動拒否。
+  // ⚠️ auto は判定に関与しないので、ここに判定の結果は無い（判定の記録は run の既存イベント）。
+  | "auto.started"
+  | "auto.retry"
+  | "auto.stopped"
+  | "auto.refused";
 
 export type EventRecord = {
   timestamp: string;

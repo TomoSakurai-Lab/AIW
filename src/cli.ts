@@ -29,6 +29,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
+import { releaseAutoLock, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
 
@@ -260,6 +261,188 @@ function printExecResult(step: string, executor: string, result: ExecutorResult)
 }
 
 
+/** 所要の表示（`6m27s`） */
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+}
+
+/** 待機の表示（`5分` / `30秒`） */
+function formatWait(ms: number): string {
+  return ms >= 60_000 ? `${Math.round(ms / 60_000)}分` : `${Math.round(ms / 1000)}秒`;
+}
+
+function formatRetrySettings(r: AutoRetrySettings): string {
+  const waits = r.transientWaitsMs.map((ms) => formatWait(ms).replace("分", "")).join("・");
+  return `再試行 total-timeout ${r.totalTimeout}(即時)・idle-timeout ${r.idleTimeout}(${formatWait(r.idleWaitMs)}後)・transient ${r.transient}(${waits}${r.transientWaitsMs[0] >= 60_000 ? "分" : ""})・起動あたり上限 ${r.maxPerRun}`;
+}
+
+/**
+ * 停止サマリの実行表（設計 課題F の2・3）。行は `auto.stopped` の `executed` として Event Log にも同じものが残る。
+ * ⚠️ トークンは **executor 別**に出し、executor をまたいで合算しない（前提1・eventLog.ts の注意）。
+ */
+function formatAutoRun(executed: AutoExecution[]): string[] {
+  if (executed.length === 0) {
+    return ["  （この起動ではステップを実行していない）"];
+  }
+  const lines = executed.map((e, i) => {
+    const model = e.modelObserved && e.modelObserved !== e.modelRequested ? `${e.modelRequested ?? "-"} → ${e.modelObserved}` : (e.modelRequested ?? "-");
+    const retry = e.retries > 0 ? `  再試行 ${e.retries}` : "";
+    return `  ${i + 1}. ${e.step.padEnd(14)} ${e.executor}·${model}  ${formatDuration(e.durationMs).padStart(7)}  ${e.result}${retry}  session: fresh`;
+  });
+  for (const e of executed) {
+    for (const r of e.reported) {
+      lines.push(`     ⚠ report (${e.step}): ${r}`);
+    }
+  }
+  const byExecutor = new Map<string, { input: number; output: number; cacheRead: number; measured: boolean }>();
+  for (const e of executed) {
+    const t = byExecutor.get(e.executor) ?? { input: 0, output: 0, cacheRead: 0, measured: false };
+    if (e.tokens) {
+      t.measured = true;
+      t.input += e.tokens.inputTokens ?? 0;
+      t.output += e.tokens.outputTokens ?? 0;
+      t.cacheRead += e.tokens.cacheReadTokens ?? 0;
+    }
+    byExecutor.set(e.executor, t);
+  }
+  for (const [executor, t] of byExecutor) {
+    lines.push(
+      t.measured
+        ? `  tokens (${executor}): in ${t.input} / out ${t.output} / cacheRead ${t.cacheRead}（inputTokens の意味は executor ごとに違う。合算しない）`
+        : `  tokens (${executor}): -（計測なし）`
+    );
+  }
+  return lines;
+}
+
+/**
+ * `aiw auto`（M5・docs/design-auto.md）。承認ゲートの後の無人区間を、人間の代わりに exec → run と叩き続ける。
+ *
+ * 本体（停止条件・予算・再試行・ロック）は engine/auto.ts。ここは表示と Ctrl+C と終了コードだけ。
+ * **drive とは別コマンド**: drive は対話（stdin を読む）、auto は無対話で終了コードを返す
+ * （同じコマンドのモードにすると、スクリプトから呼んだときに stdin 待ちで止まる経路が残る）。
+ */
+async function engineAutoCmd(opts: { quiet?: boolean; verbose?: boolean; json?: boolean; maxSteps?: string }): Promise<void> {
+  const root = engineRoot();
+  const config = loadConfig(root);
+  // --json のときは stdout を最後の1行の JSON のために空け、人間向けの表示は stderr へ出す
+  const out = (text: string): void => (opts.json ? console.error(text) : console.log(text));
+  const maxSteps = opts.maxSteps === undefined ? undefined : Number(opts.maxSteps);
+
+  // Ctrl+C: 1回目は auto の AbortController を撃ち、executor の終了を待つ（A20 / A22）。2回目は即時終了（A21）。
+  const controller = new AbortController();
+  let runId: string | null = null;
+  let sigints = 0;
+  const onSigint = (): void => {
+    sigints++;
+    if (sigints === 1) {
+      console.error("⏹ 中断要求を受け付けた — 実行中のものの終了を待っています（もう一度 Ctrl+C で強制終了）");
+      controller.abort();
+      return;
+    }
+    console.error("⏹ 強制終了: 子プロセスが残っている可能性 — Get-Process codex,claude で確認");
+    if (runId) {
+      releaseAutoLock(root, runId);
+    }
+    process.exit(130);
+  };
+  process.on("SIGINT", onSigint);
+
+  const printProgress = progressPrinter({ quiet: opts.quiet, verbose: opts.verbose });
+  let result: AutoResult;
+  try {
+    result = await runAuto(root, config, {
+      maxSteps,
+      signal: controller.signal,
+      reporter: {
+        started: (info) => {
+          runId = info.runId;
+          const breakdown = info.budget.breakdown.map((b) => `${b.step} ${b.count}`).join(" + ");
+          const budget =
+            info.budget.source === "derived"
+              ? `予算 ${info.budget.total} = ${breakdown}`
+              : `予算 ${info.budget.total}（${info.budget.source === "cli" ? "--max-steps" : "settings.autoMaxSteps"}。導出値 ${info.budget.derived} = ${breakdown}）`;
+          out(`aiw auto — ${budget} / ${formatRetrySettings(info.retry)}`);
+          if (info.takenOver) {
+            out(`⚠ 古いロックを引き継いだ（pid ${info.takenOver.pid} は存在しない。開始 ${info.takenOver.startedAt}）`);
+          }
+        },
+        stepStarted: ({ index, budget, step, model, effort }) => {
+          const detail = [step.executor, model ?? "model 未指定", ...(effort ? [`effort ${effort}`] : [])].join(" · ");
+          out(`▶ [${index}/${budget}] ${step.id}  (${detail})`);
+        },
+        progress: printProgress,
+        retrying: ({ step, cause, attempt, max, waitMs }) => {
+          const when = waitMs > 0 ? `${formatWait(waitMs)}後に再試行` : "即時に再試行";
+          out(`↻ ${step}: ${cause} — ${when} (${attempt}/${max})   Ctrl+C で中断`);
+        },
+        outcome: (outcome, { step, durationMs }) => {
+          const took = formatDuration(durationMs);
+          if (outcome.kind === "transitioned") {
+            out(`✓ ${outcome.from} → ${outcome.to}  (${took})`);
+          } else if (outcome.kind === "awaiting-approval") {
+            out(`✓ ${step} → 承認待ち  (${took})`);
+          } else if (outcome.kind === "halted") {
+            printOutcome(outcome);
+          } else {
+            out(`${step}: ${outcome.kind}  (${took})`);
+          }
+          if (outcome.kind === "transitioned" || outcome.kind === "awaiting-approval") {
+            // report 違反は停止に格上げしない（前提5）。**黙らせもしない**
+            printNotice(outcome.notice);
+          }
+          // run コマンドと同じ提案（表示だけ。判定には影響しない）
+          const suggestion = suggestAuditOnModelChange(root, config, step);
+          if (suggestion) {
+            out(`⚠ ${suggestion.message}`);
+          }
+        },
+        resumed: (outcome) => {
+          const detail =
+            outcome.kind === "transitioned" ? `${outcome.from} → ${outcome.to}` : outcome.kind === "halted" ? `HALT(${outcome.reason})` : outcome.kind;
+          out(`postAction チェックポイントを resume した: ${detail}`);
+        }
+      }
+    });
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
+
+  out("");
+  out(result.line);
+  if (!opts.quiet && result.stop !== "refused") {
+    out("");
+    out(`この起動の実行 (${result.executed.length}/${result.budget?.total ?? "-"}):`);
+    for (const line of formatAutoRun(result.executed)) {
+      out(line);
+    }
+    out("");
+    out(formatSummary(buildSummary(root), buildObserved(root)));
+    if (result.stop === "gate" && result.step) {
+      out("");
+      out(formatBriefing(buildBriefing(root, config, result.step)));
+    }
+    const next = engineNext(root, config);
+    out("");
+    out(`next: ${next.action}`);
+  }
+  if (opts.json) {
+    console.log(
+      JSON.stringify({
+        stop: result.stop,
+        condition: result.condition,
+        step: result.step,
+        reason: result.line,
+        exitCode: result.exitCode,
+        runId: result.runId,
+        executed: result.executed
+      })
+    );
+  }
+  process.exitCode = result.exitCode;
+}
+
 // `aiw baseline capture`: 現在の作業ツリー状態を「タスク外」として再固定する。
 //
 // **検査を骨抜きにできる操作。** 対話確認を必ず挟み、確認を省くオプション（--yes / --force）は
@@ -438,6 +621,19 @@ program
   .action(runDrive);
 
 program
+  .command("auto")
+  .description(
+    "Unattended exec → run over the auto: true steps; stops at gates / clipboard / halt (exit 0 human turn, 1 refused, 2 halt, 3 budget, 4 exec failed, 5 no progress, 130 Ctrl+C)"
+  )
+  .option("--quiet", "進行の1行を抑え、ステップの見出しと停止の1行だけを出す")
+  .option("--verbose", "shell / edit / thinking も画面へ出す（既定は発言と error のみ）")
+  .option("--json", "最後に1行の JSON を stdout へ出す（人間向けの表示は stderr）")
+  .option("--max-steps <n>", "この起動でのステップ実行回数の上限（既定は workflow.yaml から導出。settings.autoMaxSteps より優先）")
+  .action(async (opts: { quiet?: boolean; verbose?: boolean; json?: boolean; maxSteps?: string }) => {
+    await engineAutoCmd(opts);
+  });
+
+program
   .command("baseline")
   .argument("<action>", "capture")
   .description("Re-fix the diff-scope baseline to the current working tree (interactive confirmation required)")
@@ -518,6 +714,9 @@ async function runShellCommand(command: string, args: string[]): Promise<void> {
       return;
     case "drive":
       console.log("`drive` は shell 外で `aiw drive` として実行してください（対話ループのため）。");
+      return;
+    case "auto":
+      console.log("`auto` は shell 外で `aiw auto` として実行してください（終了コードと Ctrl+C を扱うため）。");
       return;
     default:
       console.log('Unknown command. Type "help" for available commands.');
@@ -751,6 +950,7 @@ function printShellHelp(): void {
   console.log("  prompt [step]     Print a step's phase prompt (default: current step) to stdout + clipboard");
   console.log("  new-task          Reset to a fresh Task Planning start (clears user-task.md + current-*)");
   console.log("  (drive)           Interactive y/n driver — run as `aiw drive` outside the shell");
+  console.log("  (auto)            Unattended exec → run over auto: true steps — run as `aiw auto` outside the shell");
   console.log("");
   console.log("  help              Show this help message");
   console.log("  exit | quit       Exit the REPL");

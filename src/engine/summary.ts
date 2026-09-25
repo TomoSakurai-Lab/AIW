@@ -117,6 +117,15 @@ export function formatSummary(summary: ReviewSummary, observed?: Observed): stri
         lines.push(`    report:  ${r.validator} — ${r.message}`);
       }
       lines.push(`  fixAttempts:          ${observed.fixAttempts === null ? "-" : observed.fixAttempts}`);
+      const a = observed.lastAuto;
+      if (a) {
+        lines.push(`  Last auto:            ${a.stop} (${a.condition}, exit ${a.exitCode}) at ${a.step ?? "-"} — ${a.at}`);
+        lines.push(`    ${a.message}`);
+        if (a.executed.length > 0) {
+          const path = a.executed.map((e) => `${e.step} ${e.result}${e.retries > 0 ? ` (再試行 ${e.retries})` : ""}`).join(" / ");
+          lines.push(`    executed: ${path}`);
+        }
+      }
       if (observed.eventsInWindow === 0) {
         lines.push("  ※ 現タスクのイベントがまだ無い（直前のタスク境界以降が対象）。");
       }

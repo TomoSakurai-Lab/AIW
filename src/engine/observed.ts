@@ -27,6 +27,20 @@ export type Observed = {
   eventsInWindow: number | null;
   /** why the fields above are null, when they are */
   unavailable?: "no-event-log" | "unreadable-event-log";
+  /**
+   * 現在のタスクの窓で最後に止まった `aiw auto`（M5・設計 課題F）。窓に `auto.stopped` が無ければキーごと無い。
+   * 後から来た人間が「auto がどこまで何をして、なぜ止まったか」を同じ画面で読めるように。
+   */
+  lastAuto?: {
+    at: string;
+    runId: string;
+    stop: string;
+    condition: string;
+    step: string | null;
+    exitCode: number;
+    message: string;
+    executed: Array<{ step: string; result: string; retries: number }>;
+  };
 };
 
 type LogRecord = Record<string, unknown>;
@@ -113,11 +127,32 @@ export function buildObserved(root: string): Observed {
     null
   );
 
+  const lastStopped = [...window].reverse().find((r) => r.event === "auto.stopped");
+  const lastAuto: Observed["lastAuto"] = lastStopped
+    ? {
+        at: String(lastStopped.timestamp ?? ""),
+        runId: String(lastStopped.runId ?? ""),
+        stop: String(lastStopped.stop ?? ""),
+        condition: String(lastStopped.condition ?? ""),
+        step: typeof lastStopped.step === "string" ? lastStopped.step : null,
+        exitCode: typeof lastStopped.exitCode === "number" ? lastStopped.exitCode : -1,
+        message: String(lastStopped.message ?? ""),
+        executed: Array.isArray(lastStopped.executed)
+          ? (lastStopped.executed as Array<Record<string, unknown>>).map((e) => ({
+              step: String(e.step ?? "?"),
+              result: String(e.result ?? "?"),
+              retries: typeof e.retries === "number" ? e.retries : 0
+            }))
+          : []
+      }
+    : undefined;
+
   return {
     validators: [...byStep.values()].flat(),
     reported,
     fixAttempts,
-    eventsInWindow: window.length
+    eventsInWindow: window.length,
+    ...(lastAuto ? { lastAuto } : {})
   };
 }
 

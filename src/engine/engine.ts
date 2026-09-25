@@ -148,7 +148,9 @@ function assertStepRunnable(state: EngineState, config: WorkflowConfig, stepId: 
 // left untouched and status stays "ready". If `aiw auto` treats this error as retryable it will
 // spin forever: run → EngineError → state unchanged → run. The auto loop must treat "an error that
 // ended without advancing state" as its own stop condition.
-function staleStatusStep(
+// → M5 で実装済み: auto はこの関数を **exec の後・run の前にだけ**呼び、当たれば A17（無進行・終了コード 5）で止まる
+//   （engine/auto.ts）。exec の前に呼ぶと、遷移の直後は毎回当たるので全ステップの手前で止まる（設計 課題E の初版の誤り）。
+export function staleStatusStep(
   root: string,
   config: WorkflowConfig,
   state: EngineState,
