@@ -23,7 +23,15 @@ import { getStep, loadWorkflow } from "./loader.js";
 import { ASSETS_DIR, rootPaths } from "./paths.js";
 import { readState, updateState, writeState } from "./state.js";
 import { readStatus } from "./status.js";
-import { DEFAULT_ENGINE_STATE, type EngineState, type Status, type WorkflowConfig, type WorkflowStep } from "./types.js";
+import {
+  DEFAULT_ENGINE_STATE,
+  type EngineState,
+  type HaltedReason,
+  type PendingTransition,
+  type Status,
+  type WorkflowConfig,
+  type WorkflowStep
+} from "./types.js";
 import { versionInfo } from "./versions.js";
 
 // Plain operational error: exits non-zero, mutates NO workflow state (distinct from a halt).
@@ -395,36 +403,81 @@ function isTerminalState(config: WorkflowConfig, id: string): boolean {
   return Object.values(config.steps).some((s) => Object.values(s.transitions).some((t) => t.next === id));
 }
 
-// `aiw next`: suggest the action for the current state (does not auto-run claude/codex work).
-export function nextSuggestion(root: string, config: WorkflowConfig): { action: string; reason: string } {
-  const state = readState(root);
+/**
+ * 状態の判定（M5 段階1）。`aiw next` / `aiw drive` / `aiw auto` が**同じこの関数**で状況を決める。
+ *
+ * **優先順位の正本は docs/design-auto.md 課題E の「判定の優先順位」表。** 複数の条件が同時に成り立つとき
+ * どれを人間に見せるかは、この関数の if の並びで決まる。以前は next と drive が別々に並べていて、
+ * 未定義のステップと halt が同時に立つと答えが食い違っていた（Test 190）。
+ *
+ *   1 halted > 2 awaiting-approval > 3 checkpoint > 4 terminal > 5 unknown > 6 runnable
+ *
+ * ⚠️ 条件を足すときは、設計文書の表と Test 194 の表にも**同じ行を足す**。どれか1つだけを変えない。
+ *
+ * ⚠️ **state だけで決まる状況しか返さない。** stale status（current-status.json が前ステップの宣言のまま）は
+ * ここに入れない——遷移の直後は毎回成立する正常な状態で、意味を持つのは exec の後・run の前だけ
+ * （設計文書 課題E「初版の誤り」）。clipboard か・auto の区間内か も呼び出し側の方針であってここでは見ない。
+ *
+ * 純関数（ファイルを読まない）。呼び出し側が readState した state を渡す。
+ */
+export type Situation =
+  | { kind: "halted"; step: string; reason: HaltedReason | null }
+  | { kind: "awaiting-approval"; step: string }
+  | { kind: "checkpoint"; pending: PendingTransition }
+  | { kind: "terminal"; state: string }
+  | { kind: "unknown"; state: string }
+  | { kind: "runnable"; step: WorkflowStep };
+
+export function classifySituation(state: EngineState, config: WorkflowConfig): Situation {
   if (state.status === "halted") {
-    return { action: "aiw resume", reason: `halted (${state.haltedReason}); fix inputs then resume, or escalate to a human.` };
+    return { kind: "halted", step: state.currentStep, reason: state.haltedReason };
   }
   if (state.pendingApproval) {
-    return { action: "aiw approve | aiw reject <reason>", reason: `step "${state.pendingApproval}" is awaiting human approval.` };
+    return { kind: "awaiting-approval", step: state.pendingApproval };
   }
   if (state.pendingTransition) {
-    return { action: "aiw resume", reason: "a post-action checkpoint is pending; resume to finish the transition." };
+    return { kind: "checkpoint", pending: state.pendingTransition };
   }
   const step = config.steps[state.currentStep];
   if (!step) {
     // Terminal states (e.g. "complete") are transition destinations with no step definition.
     // Derived from the config rather than hardcoded, so a renamed terminal keeps working.
-    if (isTerminalState(config, state.currentStep)) {
-      return { action: "aiw new-task", reason: `workflow reached the terminal state "${state.currentStep}"; reset for the next task.` };
+    return isTerminalState(config, state.currentStep)
+      ? { kind: "terminal", state: state.currentStep }
+      : { kind: "unknown", state: state.currentStep };
+  }
+  return { kind: "runnable", step };
+}
+
+// `aiw next`: suggest the action for the current state (does not auto-run claude/codex work).
+export function nextSuggestion(root: string, config: WorkflowConfig): { action: string; reason: string } {
+  const state = readState(root);
+  const situation = classifySituation(state, config);
+  switch (situation.kind) {
+    case "halted":
+      return { action: "aiw resume", reason: `halted (${situation.reason}); fix inputs then resume, or escalate to a human.` };
+    case "awaiting-approval":
+      return { action: "aiw approve | aiw reject <reason>", reason: `step "${situation.step}" is awaiting human approval.` };
+    case "checkpoint":
+      return { action: "aiw resume", reason: "a post-action checkpoint is pending; resume to finish the transition." };
+    case "terminal":
+      return { action: "aiw new-task", reason: `workflow reached the terminal state "${situation.state}"; reset for the next task.` };
+    case "unknown":
+      return { action: "aiw status", reason: `current step "${situation.state}" is unknown.` };
+    case "runnable": {
+      const step = situation.step;
+      // stale は状況ではなく、runnable の提案文を細かくするためだけに使う（上の classifySituation のコメント）。
+      const stale = staleStatusStep(root, config, state, state.currentStep);
+      if (stale) {
+        return {
+          action: `regenerate current-status.json for "${state.currentStep}", then aiw run ${state.currentStep}`,
+          reason: `current-status.json still declares the previous step "${stale}"; produce ${step.role} outputs + a fresh current-status.json for "${state.currentStep}" first.`
+        };
+      }
+      return {
+        action: `aiw run ${state.currentStep}`,
+        reason: `produce ${step.role} outputs + current-status.json for "${state.currentStep}", then run to process completion.`
+      };
     }
-    return { action: "aiw status", reason: `current step "${state.currentStep}" is unknown.` };
   }
-  const stale = staleStatusStep(root, config, state, state.currentStep);
-  if (stale) {
-    return {
-      action: `regenerate current-status.json for "${state.currentStep}", then aiw run ${state.currentStep}`,
-      reason: `current-status.json still declares the previous step "${stale}"; produce ${step.role} outputs + a fresh current-status.json for "${state.currentStep}" first.`
-    };
-  }
-  return {
-    action: `aiw run ${state.currentStep}`,
-    reason: `produce ${step.role} outputs + current-status.json for "${state.currentStep}", then run to process completion.`
-  };
 }

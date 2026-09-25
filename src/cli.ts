@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { Command } from "commander";
 import {
   approve as engineApprove,
+  classifySituation,
   execStep as engineExecStep,
   initRoot,
   loadConfig as engineLoadConfig,
@@ -576,25 +577,16 @@ async function runDrive(): Promise<void> {
       const root = engineRoot();
       const config = loadConfig(root);
       const state = readEngineState(root);
-      const step = config.steps[state.currentStep];
-
-      // terminal / unknown step
-      if (!step) {
-        if (state.currentStep === "complete") {
-          console.log("✅ ワークフロー完了。");
-          if (yes(await ask("新しいタスクを始めますか？ [y/N] "))) {
-            engineNewTaskCmd();
-            continue;
-          }
-        } else {
-          console.log(`current step "${state.currentStep}" は不明です。\`aiw status\` を確認してください。`);
-        }
-        break;
-      }
+      // 判定は next / auto と同じ classifySituation（優先順位の正本は docs/design-auto.md 課題E）。
+      // ⚠️ 以前の drive は「ステップ未定義」を最初に見ていたので、halt や承認待ちと同時に立つと
+      // 「不明」と言って終わっていた（Test 190）。終端も文字列 "complete" と比べていた（Test 191）。
+      // ここでは各状況の扱い（何を聞くか）だけを書き、**どの状況かは判定しない**。
+      // ⚠️ `switch` にしない: 分岐の中の `break` がループではなく switch を抜けてしまう。
+      const situation = classifySituation(state, config);
 
       // halted
-      if (state.status === "halted") {
-        console.log(`⛔ HALTED (${state.haltedReason}) at "${state.currentStep}".`);
+      if (situation.kind === "halted") {
+        console.log(`⛔ HALTED (${situation.reason}) at "${situation.step}".`);
         if (!yes(await ask("入力を直したうえで resume しますか？ [y/N] "))) {
           break;
         }
@@ -603,12 +595,13 @@ async function runDrive(): Promise<void> {
       }
 
       // approval gate
-      if (state.pendingApproval) {
+      if (situation.kind === "awaiting-approval") {
+        const gate = situation.step;
         // y/n を聞く前に判断材料を出す。**聞くだけのゲートにしない。**
         safe(() => console.log(`
-${formatBriefing(buildBriefing(root, config, state.pendingApproval as string))}
+${formatBriefing(buildBriefing(root, config, gate))}
 `));
-        if (yes(await ask(`承認ゲート: "${state.pendingApproval}" を承認しますか？ [y=承認 / n=却下] `))) {
+        if (yes(await ask(`承認ゲート: "${gate}" を承認しますか？ [y=承認 / n=却下] `))) {
           safe(() => printOutcome(engineApprove(root, config)));
         } else {
           const reason = await ask("却下理由: ");
@@ -618,11 +611,29 @@ ${formatBriefing(buildBriefing(root, config, state.pendingApproval as string))}
       }
 
       // post-action checkpoint
-      if (state.pendingTransition) {
+      if (situation.kind === "checkpoint") {
         console.log("postAction チェックポイントが残っています。続行します。");
         safe(() => printOutcome(engineResume(root, config)));
         continue;
       }
+
+      // terminal（config から導出。`complete` 以外の名前の終端でも終わる）
+      if (situation.kind === "terminal") {
+        console.log("✅ ワークフロー完了。");
+        if (yes(await ask("新しいタスクを始めますか？ [y/N] "))) {
+          engineNewTaskCmd();
+          continue;
+        }
+        break;
+      }
+
+      // unknown step
+      if (situation.kind === "unknown") {
+        console.log(`current step "${situation.state}" は不明です。\`aiw status\` を確認してください。`);
+        break;
+      }
+
+      const step = situation.step;
 
       // producing step (claude / codex): copy the prompt, wait for the outputs, then run.
       //
