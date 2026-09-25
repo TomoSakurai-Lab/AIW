@@ -34,3 +34,4 @@ import "./step-keys.test.js";
 import "./ac-schema.test.js";
 import "./feature-archive.test.js";
 import "./situation.test.js";
+import "./auto.test.js";
