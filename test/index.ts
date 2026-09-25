@@ -33,3 +33,4 @@ import "./settings-migration.test.js";
 import "./step-keys.test.js";
 import "./ac-schema.test.js";
 import "./feature-archive.test.js";
+import "./situation.test.js";
