@@ -421,3 +421,80 @@ test("58: recaptureBaseline is imported only by the interactive CLI", () => {
     `recaptureBaseline must not be reachable from engine/: ${offenders.join(", ")}`
   );
 });
+
+const FULL_DECLARATION_EXAMPLE = [
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/JikkouYosanSakuseiGrid.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetToolbar.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetPanel.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetSummaryTable.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/api/executionBudget.ts",
+  "Primal.Template.Web.Front/ClientApp/src/api/executionBudget.test.ts",
+  "Primal.Template.Web.Front/ClientApp/src/types/executionBudget.ts",
+  "Primal.Template.Web.Front/ClientApp/src/query/queryKeys.ts",
+  "Primal.Template.Web.Front/ClientApp/tests/e2e/execution-budget.spec.ts",
+  "Primal.Template.Web.Front/ClientApp/tests/e2e/IMPLEMENTED_COVERAGE.md",
+  "Primal.Template.Web.Front/Controllers/ExecutionBudgetController.cs",
+  "Primal.Template.Web.Back/Services/Persistence/InMemoryPersistenceStores.cs",
+  "Primal.Template.Web.Back/Models/ExecutionBudgetModels.cs"
+];
+
+const PREVIOUS_FALSE_POSITIVES = [
+  "Primal.Template.Web.Back/Models/ExecutionBudgetModels.cs",
+  "Primal.Template.Web.Back/Services/Persistence/InMemoryPersistenceStores.cs",
+  "Primal.Template.Web.Front/ClientApp/src/api/executionBudget.ts",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetPanel.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetSummaryTable.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/ExecutionBudgetToolbar.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/components/koushubetsuYosan/JikkouYosanSakuseiGrid.tsx",
+  "Primal.Template.Web.Front/ClientApp/src/query/queryKeys.ts",
+  "Primal.Template.Web.Front/ClientApp/src/types/executionBudget.ts"
+];
+
+// Test 181 — AC-06: 実例を規則どおり1行1フルパスにすれば13件すべて宣言になる。
+test("181: one-full-path-per-line preserves all 13 declarations from the false-positive example", () => {
+  const markdown = `## Modify\n${FULL_DECLARATION_EXAMPLE.map((p) => `- \`${p}\``).join("\n")}\n`;
+  const declared = parseDeclaredFiles(markdown, "## Modify");
+
+  assert.equal(declared.ok && declared.files.length, 13);
+  for (const path of PREVIOUS_FALSE_POSITIVES) {
+    assert.equal(isDeclared(path, declared, false), true, `${path} should be declared`);
+  }
+});
+
+// Test 182 — AC-07: 書式を正しても許可集合は宣言した13件から広がらない。
+test("182: a file outside the 13 full-path declarations remains undeclared", () => {
+  const markdown = `## Modify\n${FULL_DECLARATION_EXAMPLE.map((p) => `- \`${p}\``).join("\n")}\n`;
+  const declared = parseDeclaredFiles(markdown, "## Modify");
+  assert.equal(isDeclared("Primal.Template.Web.Front/Program.cs", declared, false), false);
+});
+
+// Test 184 — C2: 2個目以降のパスらしいインラインコードは report 用に記録する。
+test("184: a second inline path is reported as unresolved", () => {
+  const declared = parseDeclaredFiles("## Modify\n- `a/x.ts` / `a/y.ts`\n", "## Modify");
+  assert.deepEqual(declared.ok && declared.files, ["a/x.ts"]);
+  assert.deepEqual(declared.ok && declared.unresolved, ["a/y.ts"]);
+});
+
+// Test 185 — 行番号注記はパスではないので C2 と誤検出しない。
+test("185: a line-number annotation is not an unresolved declaration", () => {
+  const declared = parseDeclaredFiles("## Modify\n- `src/a.ts`（`:49-50`）\n", "## Modify");
+  assert.deepEqual(declared.ok && declared.unresolved, []);
+});
+
+// Test 186 — C3 は意図的にパーサで展開しない。継続行と散文を安全に区別できないため、
+// 将来も「バグだから展開する」のではなく、1行1パスの書式規則で防ぐ。
+test("186: a wrapped continuation path is intentionally not declared", () => {
+  const declared = parseDeclaredFiles("## Modify\n- `src/a.ts` /\n  `src/b.ts`\n", "## Modify");
+  assert.deepEqual(declared.ok && declared.files, ["src/a.ts"]);
+  assert.equal(isDeclared("src/b.ts", declared, false), false);
+});
+
+// Test 187 — 宣言ゼロは欠落でもスキップでもなく、空の許可集合のまま。
+test("187: an empty declaration has empty unresolved metadata and allows nothing", () => {
+  const declared = parseDeclaredFiles("## Modify\n\n## Reference\n", "## Modify");
+  assert.equal(declared.ok, true);
+  assert.deepEqual(declared.ok && declared.files, []);
+  assert.deepEqual(declared.ok && declared.dirPrefixes, []);
+  assert.deepEqual(declared.ok && declared.unresolved, []);
+  assert.equal(isDeclared("src/outside.ts", declared, false), false);
+});

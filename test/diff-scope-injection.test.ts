@@ -363,3 +363,42 @@ test("73: scope-violation-report.md is written on report and removed when clean"
   runStep(ctx.root, ctx.config, "implementation");
   assert.equal(existsSync(report), false, "古いレポートは残さない");
 });
+
+// Test 183 — C1: 実在しない略記は report するが、宣言件数と violation 判定には影響させない。
+test("183: unresolved shorthand is reported without changing diff-scope enforcement", () => {
+  const shorthand = arrangeImplementation(["KY/JikkouYosanSakuseiGrid.tsx", "declared.ts"]);
+  capture(shorthand, "implementation", 0);
+  put(shorthand.repoRoot, "leaked.ts", "outside\n");
+
+  const shorthandResult = diffScope(validate(shorthand, "implementation", 0));
+  assert.equal(shorthandResult.status, "failed");
+  const shorthandDetail = shorthandResult.detail as {
+    declaredCount: number;
+    unresolvedDeclarations: string[];
+    violations: Array<{ path: string }>;
+  };
+  assert.deepEqual(shorthandDetail.unresolvedDeclarations, ["KY/JikkouYosanSakuseiGrid.tsx"]);
+  assert.match(shorthandResult.message, /1 declared path\(s\) could not be resolved/);
+
+  const fullPaths = arrangeImplementation(["other.ts", "declared.ts"]);
+  capture(fullPaths, "implementation", 0);
+  put(fullPaths.repoRoot, "leaked.ts", "outside\n");
+  const fullPathResult = diffScope(validate(fullPaths, "implementation", 0));
+  const fullPathDetail = fullPathResult.detail as {
+    declaredCount: number;
+    unresolvedDeclarations: string[];
+    violations: Array<{ path: string }>;
+  };
+
+  assert.equal(shorthandDetail.declaredCount, fullPathDetail.declaredCount);
+  assert.deepEqual(shorthandDetail.violations, fullPathDetail.violations);
+  assert.deepEqual(fullPathDetail.unresolvedDeclarations, []);
+
+  const out = runStep(shorthand.root, shorthand.config, "implementation");
+  assert.equal(out.kind, "transitioned", "implementation remains report-only");
+  const report = readFileSync(path.join(shorthand.root, "scope-violation-report.md"), "utf8");
+  assert.match(report, /うち解決できなかった宣言: 1 件/);
+  assert.match(report, /## Declaration Issues/);
+  assert.match(report, /KY\/JikkouYosanSakuseiGrid\.tsx/);
+  assert.match(report, /1 行 1 パス・checkRepoRoot からのフルパス/);
+});

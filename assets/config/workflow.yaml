@@ -59,7 +59,7 @@ versions:
   templates:
     currentTask: 2
     currentResult: 2           # M1: 検証パッケージ化
-    currentReview: 5           # Verification Data を追加(fix が検証で使う実データ値の置き場)
+    currentReview: 6           # `### Files To Modify` の書式規則を HTML コメントで追加
     researchFindings: 1        # M1 で新設
   schemas:
     currentStatus: 1
@@ -69,10 +69,10 @@ versions:
   skills:
     implementation: 4         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     fix: 5                    # improve-check の判定範囲へ Fix Scope の Major を追加
-    review: 5                  # Fix 原因分類を3値へ（誤り/不足）+ パリティ指摘の既定を Backlog へ
+    review: 6                  # `### Files To Modify` に 1 行 1 パス・略記禁止の書式規則を追加
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 5             # context.md の索引を同時に更新する
-    research: 5               # 知識の取り込み節（context.md の索引を読む / 条件付き必読）
+    research: 6               # `## Modify` に 1 行 1 パス・略記禁止の書式規則を追加
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)

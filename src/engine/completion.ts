@@ -181,6 +181,7 @@ function writeScopeViolationReport(root: string, validation: ValidationOutcome):
         capturedAt?: string;
         headMoved?: { baselineSha: string | null; currentSha: string | null } | null;
         declaredCount?: number;
+        unresolvedDeclarations?: string[];
         violations?: Array<{ path: string; kind: string; state: string }>;
       }
     | undefined;
@@ -202,6 +203,7 @@ function writeScopeViolationReport(root: string, validation: ValidationOutcome):
     "",
     `- 宣言源: ${detail.declarationSource ?? "?"} の \`${detail.declarationSection ?? "?"}\``,
     `- 宣言件数: ${detail.declaredCount ?? 0}`,
+    `- うち解決できなかった宣言: ${detail.unresolvedDeclarations?.length ?? 0} 件`,
     `- baseline 取得時刻: ${detail.capturedAt ?? "?"}`,
     detail.headMoved
       ? `- タスク中に HEAD が動いた（${detail.headMoved.baselineSha ?? "(none)"} → ${detail.headMoved.currentSha ?? "(none)"}）。コミット自体は違反ではない`
@@ -215,7 +217,17 @@ function writeScopeViolationReport(root: string, validation: ValidationOutcome):
     "",
     "`modified-since` は baseline 取得時点で既に変更があったファイル。",
     "**人間の並行編集の可能性がある**（git は変更の作者を記録しないため帰属は判別できない）。",
-    ""
+    "",
+    ...(detail.unresolvedDeclarations?.length
+      ? [
+          "## Declaration Issues",
+          "",
+          ...detail.unresolvedDeclarations.map((p) => `- \`${p}\``),
+          "",
+          "`## Modify` は 1 行 1 パス・checkRepoRoot からのフルパスで書き、略記を使わない。",
+          ""
+        ]
+      : [])
   ];
   writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
 }

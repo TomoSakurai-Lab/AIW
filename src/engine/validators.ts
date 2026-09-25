@@ -467,6 +467,12 @@ function runDiffScope(root: string, config: WorkflowConfig, v: ValidatorRef, ctx
   }
 
   const cmp = compareToBaseline(baseline, current);
+  // 未解決宣言は report 専用。宣言集合や violations の計算には混ぜない。
+  const unresolvedDeclarations = [
+    ...declared.unresolved,
+    ...declared.files.filter((p) => !existsSync(path.resolve(resolved.repoRoot, p))),
+    ...declared.dirPrefixes.filter((p) => !existsSync(path.resolve(resolved.repoRoot, p)))
+  ].filter((p, index, all) => all.indexOf(p) === index);
   const exclude = config.settings.diffScope?.exclude ?? [];
   const violations = cmp.changed.filter(
     (c) => !isDeclared(c.path, declared, cmp.ignoreCase) && !isExcluded(c.path, exclude)
@@ -505,7 +511,9 @@ function runDiffScope(root: string, config: WorkflowConfig, v: ValidatorRef, ctx
 
   return failed(
     `${violations.length} file(s) changed outside the declaration in ${source}: ` +
-      `${violations.map((c) => c.path).join(", ")}; ${scopeSuffix(repoRoot)}.${uncertainNote}${headNote}${ageNote}`,
+      `${violations.map((c) => c.path).join(", ")}; ${scopeSuffix(repoRoot)}.` +
+      `${unresolvedDeclarations.length > 0 ? ` ${unresolvedDeclarations.length} declared path(s) could not be resolved (${unresolvedDeclarations.join(", ")}).` : ""}` +
+      `${uncertainNote}${headNote}${ageNote}`,
     undefined,
     {
       checkRepoRoot: repoRoot,
@@ -516,6 +524,7 @@ function runDiffScope(root: string, config: WorkflowConfig, v: ValidatorRef, ctx
       headMoved: cmp.headMoved,
       ignoreCase: cmp.ignoreCase,
       declaredCount: declared.files.length + declared.dirPrefixes.length,
+      unresolvedDeclarations,
       violations: violations.map((c) => ({ path: c.path, kind: c.kind, state: c.state }))
     }
   );

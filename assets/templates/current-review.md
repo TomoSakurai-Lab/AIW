@@ -53,6 +53,8 @@ AC ごとに、current-result.md の Status と Evidence が実在するかを�
 
 ### Files To Modify
 
+<!-- 1 行 1 パス。checkRepoRoot からのフルパスを使い、略記・折り返し・1 行への複数パス記載は禁止。 -->
+
 ### Critical
 
 ### Major

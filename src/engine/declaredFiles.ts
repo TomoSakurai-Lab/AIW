@@ -9,11 +9,12 @@
 import { extractSection, stripHtmlComments } from "./sections.js";
 
 export type DeclaredFiles =
-  | { ok: true; files: string[]; dirPrefixes: string[] }
+  | { ok: true; files: string[]; dirPrefixes: string[]; unresolved: string[] }
   | { ok: false; reason: "section-missing"; section: string };
 
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/;
 const INLINE_CODE = /`([^`]+)`/;
+const ALL_INLINE_CODE = /`([^`]+)`/g;
 
 // 実物の書式: - `path/to/file.ts`（`:49-50`）
 // list item の **最初のインラインコード内**をパスに採る。括弧・行番号などの付記は無視。
@@ -30,6 +31,19 @@ export function parseDeclaredLine(line: string): string | null {
   const code = body.match(INLINE_CODE);
   const raw = code ? code[1] : body.split(/\s+/)[0];
   return normalizePath(raw);
+}
+
+// 同じ箇条書き行の2個目以降にある「パスらしい」インラインコードは、宣言には採られない。
+// 判定には使わず、書式ミスを report するための副産物としてだけ返す。
+function unresolvedInlinePaths(line: string): string[] {
+  const item = line.match(LIST_ITEM);
+  if (!item) {
+    return [];
+  }
+  return [...item[1].matchAll(ALL_INLINE_CODE)]
+    .slice(1)
+    .map((match) => normalizePath(match[1]))
+    .filter((p): p is string => p !== null && p.includes("/") && !p.startsWith(":"));
 }
 
 function normalizePath(raw: string): string | null {
@@ -50,7 +64,9 @@ export function parseDeclaredFiles(markdown: string, section: string): DeclaredF
 
   const files: string[] = [];
   const dirPrefixes: string[] = [];
+  const unresolved: string[] = [];
   for (const line of stripHtmlComments(body).split(/\r?\n/)) {
+    unresolved.push(...unresolvedInlinePaths(line));
     const p = parseDeclaredLine(line);
     if (p === null) {
       continue;
@@ -66,7 +82,7 @@ export function parseDeclaredFiles(markdown: string, section: string): DeclaredF
   // 呼び出し側に「宣言が無いなら検査をスキップ」と書かせないため、欠落(ok:false)と
   // 宣言ゼロ(空配列)を型で区別する。宣言ゼロは「全変更ファイルが違反候補」であり、
   // 「何も変更しないはずの fix でファイルが変わった」を検出する正しい挙動（設計・罠5）。
-  return { ok: true, files, dirPrefixes };
+  return { ok: true, files, dirPrefixes, unresolved };
 }
 
 export function isDeclared(target: string, declared: DeclaredFiles, ignoreCase: boolean): boolean {
