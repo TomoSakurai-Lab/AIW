@@ -4,6 +4,8 @@
 承認時の注文（判定器の統一を独立コミットにし、挙動が変わる点を列挙する）と、
 反映作業中に見つかった初版の誤り2件（stale の判定位置・BL 番号）は本文へ反映済み。
 故障注入リスト（24件）の合意だけが実装の開始条件に残っている。
+**→ 2026-09-25: 段階1（判定器）・段階2（auto 本体）・段階3（表示）を実装し、実タスク1本（BL-214）を auto で流した。**
+記録は「段階2 の実装記録」（設計からの逸脱・未記述だった判断・実測表・待ち時間の before / after）。
 
 **目的**: 承認ゲートの後の無人区間を、人間が `aiw exec` / `aiw run` を叩き続けなくても
 完走させる。auto は**人間の代行**であり、判定には一切関与しない。
@@ -836,7 +838,127 @@ M0 の原則「AI が宣言し、エンジンが検証する」の価値は、�
 | 3 | この設計文書が承認されている | ✅ 2026-09-25（論点8件すべて決着・#6 は修正つき） |
 | 4 | 故障注入リスト（**24件**。承認時の修正で #23・#24 を追加）の合意 | ✅ 2026-09-25（「その進め方で承認。実装へどうぞ」） |
 | 5 | 未解決の論点 #1（区間の宣言方式）が決まっている | ✅ `auto: true`・research は付けない |
-| 6 | タスク境界にいる | 実装着手時に確認（2026-09-25 時点は research の途中） |
+| 6 | タスク境界にいる | ✅ 段階2 の着手時に `aiw status` で確認（task-planning / ready・lastCompletedStep reflection） |
+
+---
+
+# 段階2 の実装記録（2026-09-25）
+
+コミット: `5b1b011`（宣言と設定）/ `3c09624`（auto 本体）/ `ce1a97b`（テスト 195-220）/ 本コミット（記録）。
+`npm test` 261 / 261（段階1 の 235 + 新規 26）。
+
+## 設計からの逸脱
+
+**判定・停止条件・終了コード・再試行の方針に逸脱は無い。** 形の上での差は次の3点（どれも挙動は設計どおり）:
+
+| # | 設計文書 | 実装 | 理由 |
+| --- | --- | --- | --- |
+| 1 | ループは cli の `stepLoop(policy)`（課題E の図） | ループ本体は `engine/auto.ts`（表示しない）、CLI は表示・Ctrl+C・終了コードだけ | 故障注入 #1-#21 を CLI を起動せずに固定するため（`resetForNewTask` をエンジンに置いたのと同じ理由）。判定器は共有、drive / next は不変 |
+| 2 | `auto.retry` の message は `redactSession` を通す（課題D） | 先頭 200 字 + **UUID 形の文字列を一律に伏せる** | 生の session ID（SessionSecret）は executor の中にしか無く auto に渡らない（型で分離）。executor は result.error を作る時点で既に redactSession を通しているので、その上に網を重ねた |
+| 3 | 停止サマリの実行表の出どころは「Event Log の `auto.*` と `exec.*`」（課題F） | 実行表の行を `auto.stopped` の `executed` として Event Log へ書き、画面と `status --summary` はその同じ行を出す | 停止時点で画面に出す行と Event Log の行を同一にするため。`status --summary` は Event Log の `auto.stopped` から読む（auto のメモリは読まない） |
+
+## 未記述だったので決めたこと
+
+| # | 論点 | 決めたこと | 理由 |
+| --- | --- | --- | --- |
+| 1 | `auto` キーの「読まれないキー」の表への登録（BL-219） | `EXECUTOR_STEP_KEYS` ではなく別の表 `STEP_KEYS_INEFFECTIVE_ON`（`auto: ["clipboard"]`）に置く | `EXECUTOR_STEP_KEYS` は「その executor だけが読む」表で、auto を codex と claude の両方に載せると互いに「効かない」と誤表示する（Test 178 も executor の実装が `step.auto` を読むことを要求してしまう）。表示の経路は同じ `ineffectiveStepKeys` |
+| 2 | `auto` に真偽値以外を書いた | ロード時に落とす（`auto: "yes"` など） | 書き損じを黙って false に潰すと、区間に入れたつもりのステップで auto が止まり理由が見えない。未知の executor / effort と同じ規律 |
+| 3 | `failureKind` が無い失敗 | 再試行しない（A12・`unclassified` と表示） | 「transient と言われていないもの」を transient と推測しない。codex / claude は失敗時に必ず付けるので、到達するのは偽の executor か将来の executor だけ |
+| 4 | exec が ok で終わったが、その間に Ctrl+C が来ていた | run へ進まず A20 で止まる（fresh 再実行） | 成果物が完全か分からない。無駄は executor 1回分（課題B の「exec 完了〜run 前」と同じ扱い） |
+| 5 | run の結果が halt で、同時に Ctrl+C も来ていた | halt（A5-A9・終了コード 2）を優先する | 人が見るべきものが重い方を出す |
+| 6 | A23 / A24 の起動拒否の記録 | `auto.refused` イベントを足す（`auto.stopped` にはしない） | 2つ目の起動の拒否を `auto.stopped` にすると、`status --summary` の「直近の auto」が実行中の1つ目ではなく拒否された側を指してしまう |
+| 7 | 想定外の例外（A25） | `auto.stopped`（condition A25）を記録してから投げ直す。CLI が `error: …` と終了コード 1 | 無人運転中の異常終了の痕跡を Event Log に残す |
+| 8 | 構造検査と予算の不正値の順序 | 構造検査（A24）→ 予算・再試行設定の検証 → ロック（A23） | 壊れた設定ではロックも取らない |
+| 9 | `--json` のときの人間向け表示 | stderr へ出す（stdout は最後の1行の JSON だけ） | スクリプトが stdout をそのまま JSON として読めるように |
+| 10 | 読めないロック（書きかけ・壊れている） | 「使用中」とみなして拒否（A23。消すよう案内） | 安全側。引き継いでよいかを判断する材料が無い |
+| 11 | 設定 `settings.autoRetry` の未知のキー・不正値 / `settings.autoMaxSteps` の不正値 | 起動を拒否（終了コード 1） | 黙って既定値へ落とさない |
+| 12 | runtime の `versions.workflow` | 8 → 9（判定・validator・遷移は不変と注記） | v6 / v7 も判定を変えない変更で上げている既存の運用に合わせた。課題J のとおり Fix 率・validator の世代は切り替えない |
+
+## ⚠️ 見つかった設計との食い違い（直していない・報告）
+
+**故障注入 #5「abort 済みの signal で起動 → executor が起動しない（codex / claude の両方）」は、claude 側が満たしていない。**
+`claude.ts` は子プロセスを起動した**後で** `req.signal?.aborted` を見て即 kill する（`codex.ts` は起動前に返す・Test 173）。
+BL-221 (4) の対称化は codex 側だけだった。executor の変更は M5 のやらないことなので直していない。
+
+- auto への影響: auto は exec の前に自分の signal を見るので、この経路へ入るのは「exec を呼ぶ直前〜watchdog の生成」の瞬間に
+  Ctrl+C が来た場合だけ（Test 208 は auto 側の防衛を固定）。起動した claude は即 SIGTERM されるので実害は小さいが、
+  設計の前提（#5）とは違う
+- → BL-241 として起票（executor 整備の小枠。BL-238 と同じ枠で直せる）
+
+## 実測（実物の CLI・実物の executor・実物の watchdog）
+
+使い捨ての root（runtime の workflow.yaml を写し、一時 git リポジトリの中に置いたもの）と、本番の runtime の実タスクで測った。
+
+### 終了コード
+
+| 終了コード | 停止条件 | どこで | 実測 |
+| --- | --- | --- | --- |
+| 0 | A3 区間外 | 本番 runtime・research | `⏸ auto の対象外: research（executor: claude）` |
+| 0 | A1 承認待ち | 本番 runtime・実タスク | review（11分06秒）の後 `⏸ 承認待ち: review` ＋判断材料（07:34:18） |
+| 0 | A2 clipboard | 本番 runtime・実タスク | fix → improve-check を無人で通し、`⏸ 人の番: reflection は clipboard`（07:40:04） |
+| 1 | A23 同時実行 | scratch・1つ目が再試行の待機中 | `✖ 別の aiw auto が実行中（pid 23884, 開始 15:55）` |
+| 1 | A24 構造検査 | scratch・fix の retryPolicy を外す | `✖ auto の区間に retryPolicy を通らない循環がある: fix → improve-check → fix` |
+| 2 | A10 起動時に halt | scratch | state.json の md5 が前後で一致（resume しない） |
+| 3 | A11 予算 | 本番 runtime・実タスク（`--max-steps 1`） | implementation（8分47秒）の後、review の手前で `⛔ 予算超過: 1/1`（07:23:12）。直後の `aiw auto` が review から続けた |
+| 4 | A13b idle-timeout ×2 | scratch・無進行 1s | 1回目の失敗 06:55:45.474 → 再試行の exec.started 07:00:45.486（**300.0 秒待って1回**）→ 2回目も idle で停止 |
+| 4 | A13a total-timeout ×2 | scratch・総上限 3s | 1回目の失敗 06:56:09.285 → 再試行の exec.started 06:56:09.292（**7ms・即時に1回**）→ 2回目も total で停止 |
+| 5 | A19 state が外から変わった | scratch2・再試行の待機中に state.json を承認待ちへ書き換え | 待機明けの exec の前提検査で停止 |
+| 130 | A20 Ctrl+C（待機中） | scratch・隠しコンソールへ CTRL_C_EVENT | Ctrl+C から 518ms で終了・プロセスの終了コード 130・`再試行の待機を打ち切った` |
+
+### 再開の冪等性（kill → 再起動）
+
+scratch で `aiw auto`（fix を実物の codex で実行中）をプロセスツリーごと kill（`taskkill /T /F`）:
+
+1. kill 後: `runs/auto.lock` が残る・state.json の md5 は kill 前と一致（exec は state を書かない）
+2. 再起動: `⚠ 古いロックを引き継いだ（pid 9704 は存在しない）` → `▶ [1/8] fix` → 新しい exec.started（step fix）。
+   **死んだステップ（fix）から fresh で続く**。`auto.started` に `lockTakenOver` が残る
+3. 残った子プロセス: 無し（`codex.exe` はデスクトップアプリのもの・14:31 起動）
+
+終了コード 5 のうち A17（stale）・A18（state 不変）と、130 のうち exec 中の Ctrl+C（A20）・2回目の Ctrl+C（A21）・run 中（A22）は
+実物では発火させていない（Test 206・213・214 で固定）。
+
+### 実タスク1本（BL-214・`TASK-2026-09-25-aiw-log-claude`）の経過（Event Log）
+
+| 時刻 (UTC) | 出来事 |
+| --- | --- |
+| 07:00:12 | ゲート①承認 → `aiw auto` は research で A3（区間外）。research は人が `aiw exec` / `aiw run`（13分47秒） |
+| 07:14:24 | ゲート②承認 → `aiw auto --max-steps 1`: implementation（codex・8分47秒）→ A11 |
+| 07:23:12 | 直後の `aiw auto`: review（claude・11分06秒）→ fix-required → A1 |
+| 07:34:36 | ゲート③承認 → `aiw auto`: fix（codex・3分53秒）→ improve-check（claude・1分34秒・ready-for-reflection）→ A2 |
+| 07:46:20 | reflection は人（clipboard）→ feature-continue |
+
+承認と clipboard のステップは Claude（このセッション）が人の役を務めた（人間の指示による）。
+
+### 待ち時間の before / after（M5 の存在理由）
+
+**定義**（Event Log から機械的に出す。スクリプトは区間ステップだけを見る）:
+区間ステップ（implementation / review / fix / improve-check）ごとに
+(a) 着手待ち = `exec.started` − 直前のきっかけ（そのステップへの `transition`・却下・同じステップの exec の終わり）、
+(b) 検証待ち = `step.started`（`aiw run`）− 直前の `exec.completed`。
+**承認直後の着手待ち**（`approval.granted` から 5 秒以内の `transition` がきっかけのもの）は別枠にする——
+auto でも人が承認の後に `aiw auto` を打つ必要があり、auto が消す待ちではない。
+
+| | 対象 | (a)+(b) の合計 / タスク | 承認直後の着手待ち（別枠） |
+| --- | --- | --- | --- |
+| before | 2026-09-07〜09-25 の auto なしのタスク n=38 | 中央値 11分 / 平均 127分（夜間放置で裾が重い） | — |
+| before | うち待ちの合計が 240 分以下（人がいた）n=32 | **平均 20分 / 中央値 9分 / p75 23分** | 平均 3分 |
+| before | fix が codex になった 09-24 以降 n=6 | **平均 23分 / 中央値 11分 / p75 33分** | 平均 0分 |
+| **after** | **BL-214（auto）n=1** | **0分（合計約2秒）**: review 着手 1秒・implementation / review / fix / improve-check の検証 0秒・improve-check 着手 0秒 | implementation 0.6秒・fix 1.2秒（承認と起動を同じ操作で続けたため。人間なら数十秒〜数分） |
+
+- **区間の中の待ち（人が次のコマンドを打つまで）は消えた。** 人の手が要るのはゲート3つと clipboard の2ステップ、
+  research（区間外）の起動だけになった
+- 区間の無人の壁時計: ②→③ が 19分53秒（implementation + review）、③→ が 5分27秒（fix + improve-check）
+- ⚠️ after は n=1。before の「約 30 分」という見立ては、人がいたタスクの平均 20〜23 分・p75 23〜33 分と同じ桁だった
+- ⚠️ 実行そのものの所要（executor が働いている時間）は auto で変わらない。変わるのは人の待ちだけ（課題J のとおり）
+
+## その他に見つかったこと
+
+| # | 事実 | 扱い |
+| --- | --- | --- |
+| 1 | **M5 のテスト 26 本（実物の CLI の spawn と実物の watchdog を含む）で `npm test` 一式が約 180 秒になり、executor のコマンド上限（~120 秒）を超えた。** 実タスクの implementation は `npm test` が exit 124 で殺され、AC の証拠がゼロになった（review の M1）。fix がファイル単位の実行で取り直した | BL-241（Major deferred）。当面の運用を runtime `context.md` に記録 |
+| 2 | **`npm test` は全件 pass でも終了コード 1 のことがある**（Test 174 の後始末。そのファイルの単体実行は 6/6、一式は 2 回中 1 回。`b562360` の worktree で再現・M5 より前から既存）。これまでパイプ越しに `# pass` を読んでいたので表に出ていなかった | BL-243。判定は `# fail 0` で行う |
+| 3 | 停止サマリの末尾の `next:` は `nextSuggestion` をそのまま出すので、遷移の直後は「current-status.json を作り直してから run」と出る（課題E の表の3: next の提案文は変えない、の帰結）。auto の停止理由の1行とは食い違って見える | 設計どおり変えていない。auto の次の一手は停止理由の1行が正 |
+| 4 | コミットの分割は「宣言と設定」「auto 本体」「テスト」「記録」の**4つ**にした（指示は3つ） | 実タスクの前にテストをコミットしないと、未コミットのテストが diff-scope の baseline に「タスク外の変更」として混ざり、BL-214 が触る `test/index.ts` とも衝突するため |
 
 ---
 
@@ -863,6 +985,11 @@ M0 の原則「AI が宣言し、エンジンが検証する」の価値は、�
 | 2026-09-25 | **段階1 完了**（判定器の抽出と載せ替え） | `classifySituation` を engine に置き、`nextSuggestion` と drive を載せ替えた。統一で変わった点は**課題E の表の1・2だけで確定**（見落としの追加なし）。優先順位は Test 194（24通りの組み合わせ）で固定、終端2つは Test 191（drive）・193（next）で実証。npm test 235/235 | コミット `a7e668f`（統一前の挙動の固定）→ 次のコミット（抽出と載せ替え）。期待値の書き換えは 190 / 191 の2本だけ。変異テストで 3経路の固定を確認 |
 | 2026-09-25 | **初版の誤りの訂正 1**: stale の判定位置 | 判定器（exec の前）から外し、**exec の後・run の前**へ移す。故障注入 #24 を追加 | 遷移の直後は毎回 stale が成立する（`lastCompletedStep` = 遷移元・status は遷移元の宣言のまま）。初版のままだと auto は全ステップの手前で止まる |
 | 2026-09-25 | **初版の誤りの訂正 2**: BL 番号 | 本文の「BL-116」をすべて **BL-213** へ | 2026-09-17 の振り直し（旧 116 → 新 213）を反映していなかった。アプリ側には別件の BL-116（resolved）がある |
+| 2026-09-25 | **段階2・3 完了**（auto 本体・表示） | `engine/auto.ts` + `aiw auto`。停止条件 A1〜A25・終了コード 0/1/2/3/4/5/130・再試行（total 即時1回 / idle 5分待って1回 / transient 5・15・30分の3回 / 起動あたり6）・ロック・予算（導出 8）・構造検査。runtime の区間は implementation / review / fix / improve-check の4つ（research には付けない）。npm test 261/261 → BL-214 込みで 270/270 | **判定・停止条件・終了コード・再試行の方針に設計からの逸脱なし**。形の差3点と未記述だった判断12点は「段階2 の実装記録」 |
+| 2026-09-25 | 実測（実物の CLI・executor・watchdog） | 終了コード 0（A1/A2/A3）・1（A23/A24）・2（A10）・3（A11）・4（A13a/A13b）・5（A19）・130（A20）を発火。idle の再試行は **300.0 秒待って1回**、total は **7ms で即時1回**。kill → 再起動で古いロックを引き継ぎ、同じステップを fresh 再実行 | 「段階2 の実装記録」の実測表 |
+| 2026-09-25 | **待ち時間の before / after**（M5 の存在理由） | 区間内の人の待ち: before 平均 20分（人がいたタスク n=32）/ 23分（09-24 以降 n=6）→ **after 0分（約2秒・n=1）** | Event Log から同じ定義で算出。承認直後の着手待ちは別枠（auto でも人が起動する） |
+| 2026-09-25 | 設計の前提との食い違い（故障注入 #5） | **claude executor は abort 済みの signal でも一度起動してから kill する**（codex は起動しない）。executor の変更は M5 のやらないことなので直さず BL-242 | auto は exec の前に自分の signal を見るので実害は小さい（Test 208） |
+| 2026-09-25 | 実装で見つかった既存・副作用の問題 | `npm test` 一式が executor の上限 ~120 秒を超えた（M5 のテスト追加が決定打・BL-241）/ `npm test` は全件 pass でも終了コード 1 のことがある（既存・BL-243） | 実タスクの implementation で AC の証拠がゼロになった（review M1）ことで顕在化 |
 
 ---
 

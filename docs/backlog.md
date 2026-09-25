@@ -397,3 +397,40 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   auto の起動時の構造検査が「retryPolicy を通らない循環」として起動を拒否する（A24）。
   research の所要（実測 139 分の大半は人間の検討）と、対話の喪失（M4 課題C）も併せて見る。
 - Status: open
+
+## BL-241
+
+- Source: TASK-2026-09-25-aiw-log-claude / current-review.md `## Backlog`（review M1）。runtime の `backlog.md` にも reflection が同じ項目を転記している
+- Severity: Major (deferred)
+- Trigger: 次に `tools/aiw/test/` へテストを追加するタスクの着手前
+- Summary: **`npm test` 一式が executor のコマンド上限（~120 秒）を超える。** 2026-09-24 に 228 本・110.5 秒（上限の 92%）、
+  2026-09-25 に M5 の auto テスト 26 本（実物の CLI の spawn と実物の watchdog を含む）と BL-214 の 9 本で 270 本・約 180 秒。
+  executor の中で最終検証に `npm test` を使うと出力を残さず exit 124 で殺され、AC の証拠が全件ゼロになる（BL-214 の implementation で実際に起きた）。
+  対処は (a) スイート分割（`test/index.ts` を 2 つ以上へ。遅いもの〔CLI spawn / 実物の watchdog / git を使う fixture〕を分ける）/
+  (b) executor 側のコマンド上限の引き上げ、のどちらか。当面は executor の中ではファイル単位で実行する（runtime `context.md`「ワークフロー構成」末尾）。
+- Status: open
+
+## BL-242
+
+- Source: M5 段階2 の実装（`docs/design-auto.md` の故障注入 #5 の確認）/ 2026-09-25
+- Severity: Minor
+- Trigger: 次に `src/engine/executors/claude.ts` を触る枠（BL-238 の `transientCause` と同じ executor 整備の枠が最有力）
+- Summary: **claude executor は abort 済みの signal を渡されても子プロセスを起動し、起動した後で即 kill する。**
+  codex は起動前に返す（BL-221 (4)・Test 173）が、claude 側は同じ対称化がされていなかった（`claude.ts` は `launch()` の後で `req.signal?.aborted` を見る）。
+  設計の故障注入 #5「abort 済みの signal で起動 → executor が起動しない（codex / claude の両方）」は claude 側で満たされない。
+  auto への実害は小さい: auto は exec の前に自分の signal を見るので（Test 208）、この経路に入るのは exec 直前の瞬間に Ctrl+C が来た場合だけで、
+  起動した claude も即 SIGTERM される。**直すなら Test 173 と同じ形のテストを claude 側に足し、clipboard 経路のテストを同じコミットで通し直す**（不変条件5）。
+- Status: open
+
+## BL-243
+
+- Source: M5 段階2 の検証（`npm test` の終了コードを単体で確認）/ 2026-09-25
+- Severity: Minor
+- Trigger: 次に `test/codex-executor.test.ts` を触るとき、または `npm test` の終了コードで合否を判定する仕組み（CI・`&&` の連結）を入れるとき
+- Summary: **`npm test` は全件 pass でも終了コード 1 を返すことがある。** Test 174（外部 abort で codex を kill する）が、テスト終了後に
+  閉じたストリームへ書き込み（`ERR_STREAM_WRITE_AFTER_END`）、node:test が uncaughtException として扱うため。
+  実測（2026-09-25）: `test/codex-executor.test.ts` の単体実行は **6 回中 6 回 exit 1**、`npm test` 一式は **2 回中 1 回 exit 1**（タイミング依存）。
+  `b562360`（M5 段階1 の最終コミット）の worktree でも単体実行で exit 1 で、M5 より前から既存。
+  これまでの検証はパイプ越しに `# pass` / `# fail` を読んでいたので表に出ていなかった（CLAUDE.md の「パイプの終了コード」の罠と同型）。
+  当面は `# fail 0` で判定する。直すなら Test 174 の fake の stdout を、kill の後に書かないようにする。
+- Status: open

@@ -28,6 +28,7 @@ aiw --root <dir> reject <理由...>   # 却下（policy に応じ rerun / halt�
 aiw --root <dir> resume     # halt / 中断からの再開（postAction 失敗地点から冪等に）
 aiw --root <dir> prompt [step]      # ステップのフェーズプロンプトを stdout＋クリップボードへ（既定: 現在ステップ）
 aiw --root <dir> drive      # 対話 y/n ドライバ（各フェーズを誘導・プロンプトを自動コピー）
+aiw --root <dir> auto       # 承認ゲートの後の無人区間を exec → run で進める（M5。下記）
 aiw --root <dir> new-task   # 次タスク用にリセット（user-task.md + current-* をテンプレへ）
 ```
 
@@ -84,6 +85,33 @@ npm run aiw -- drive
 
 成果物の生成そのものは代行しない（クリップボードのプロンプトを AI に貼るのは人間の役目）が、
 「どのコマンドをどの順で打つか」の負担はゼロになる。
+
+## 承認の後を無人で進める: `aiw auto`（M5）
+
+承認ゲートを通した後、次のゲートまでの区間（`auto: true` を宣言したステップ）を、
+人間の代わりに `aiw exec` → `aiw run` と叩き続ける。**判定には関与しない**（承認・却下・halt の resume をしない）。
+設計の正本は `docs/design-auto.md`（停止条件 A1〜A25）。
+
+```powershell
+aiw auto              # 止まったら理由の1行・この起動の実行表・status --summary・次の一手を出す
+aiw auto --quiet      # ステップの見出しと停止の1行だけ
+aiw auto --json       # 最後に1行の JSON（stop / condition / step / reason / exitCode / executed）を stdout へ
+aiw auto --max-steps 3
+```
+
+| 終了コード | 意味 |
+| --- | --- |
+| 0 | 人の番（承認待ち / clipboard のステップ / 区間外のステップ / 完了） |
+| 1 | 起動拒否（別の auto が実行中 / 区間に retryPolicy を通らない循環 / 設定の誤り）・想定外のエラー |
+| 2 | halt（run と同じ意味。auto は resume しない） |
+| 3 | 予算超過（1回の起動でのステップ実行回数。既定は workflow.yaml から導出） |
+| 4 | executor 失敗で停止（再試行を使い切った / permanent / プロンプト組み立て失敗） |
+| 5 | 無進行（exec の後も status が前ステップのまま / 反復で state が変わらない / state が外から変わった） |
+| 130 | Ctrl+C（1回目は実行中のものの終了を待つ。2回目で即時終了） |
+
+- 再試行: 総上限タイムアウトは即時に1回、無進行タイムアウトは 5 分待って1回、その他の transient は 5 / 15 / 30 分待って3回
+- 同時実行は `runs/auto.lock` で拒否する（持ち主の pid が無ければ引き継ぐ）。drive や手動の exec はロックを見ない
+- 止まった地点から `aiw auto` を打ち直せば続きから（state.json だけから導く。exec の途中で止まったステップは fresh で再実行）
 
 ### `aiw new-task` — 次の単発タスクへリセット
 
