@@ -401,14 +401,25 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 ## BL-241
 
 - Source: TASK-2026-09-25-aiw-log-claude / current-review.md `## Backlog`（review M1）。runtime の `backlog.md` にも reflection が同じ項目を転記している
-- Severity: Major (deferred)
-- Trigger: 次に `tools/aiw/test/` へテストを追加するタスクの着手前
+- Severity: Major
+- Priority: **次の枠で対処**（2026-09-25 人間の判断で deferred から引き上げ）。放置すると aiw 側の全タスクで再発する——
+  implementation / fix がテストを流すたびに上限に当たり、AC の証拠がゼロになる
+- Trigger: **次の枠**（aiw 側のタスクを次に流す前）
+- 枠の名前: **「テスト実行の信頼性」**。**BL-243（全件 pass でも exit 1）を統合した**（2026-09-25 人間の判断）。どちらも「テストの結果を機械が正しく読めない」問題
 - Summary: **`npm test` 一式が executor のコマンド上限（~120 秒）を超える。** 2026-09-24 に 228 本・110.5 秒（上限の 92%）、
   2026-09-25 に M5 の auto テスト 26 本（実物の CLI の spawn と実物の watchdog を含む）と BL-214 の 9 本で 270 本・約 180 秒。
   executor の中で最終検証に `npm test` を使うと出力を残さず exit 124 で殺され、AC の証拠が全件ゼロになる（BL-214 の implementation で実際に起きた）。
   対処は (a) スイート分割（`test/index.ts` を 2 つ以上へ。遅いもの〔CLI spawn / 実物の watchdog / git を使う fixture〕を分ける）/
   (b) executor 側のコマンド上限の引き上げ、のどちらか。当面は executor の中ではファイル単位で実行する（runtime `context.md`「ワークフロー構成」末尾）。
-- Status: open
+- 枠のスコープ（2026-09-25 人間の判断）:
+  1. **方向を1つ選ぶ**: (a) テストの分割実行（ファイル単位）を implementation / fix の Skill の手順にする /
+     (b) executor のコマンド上限の引き上げ / (c) テストの高速化（遅いもの〔CLI の spawn・実物の watchdog・git の fixture〕を減らす・分ける）
+  2. **BL-243 の根治**（Test 174 がテスト終了後に書き込まないようにする）
+  3. ⚠️ **暫定運用「合否は終了コードではなく `# fail 0` で判定する」を Skill に明記する。** 今は runtime `context.md` と `learnings.md` にしか無く、
+     Skill に無いと次の implementation が exit 1 を FAIL と誤判定する（exit code を信用しない規律があっても、手順に書かれていなければ届かない）。
+     2 で根治しても、上限に当たった exit 124 を「FAIL ではなく NOT VERIFIED」と書き分ける手順は残す
+  - Skill を変えたら `versions` の更新と Test 88 を同じコミットで（不変条件7）
+- Status: open（次の枠）
 
 ## BL-242
 
@@ -433,4 +444,4 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   `b562360`（M5 段階1 の最終コミット）の worktree でも単体実行で exit 1 で、M5 より前から既存。
   これまでの検証はパイプ越しに `# pass` / `# fail` を読んでいたので表に出ていなかった（CLAUDE.md の「パイプの終了コード」の罠と同型）。
   当面は `# fail 0` で判定する。直すなら Test 174 の fake の stdout を、kill の後に書かないようにする。
-- Status: open
+- Status: **merged → BL-241**（2026-09-25 人間の判断。「テスト実行の信頼性」枠として1本にまとめた。対処は BL-241 の枠のスコープ 2・3）
