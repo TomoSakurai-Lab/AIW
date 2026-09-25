@@ -348,3 +348,48 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   （後者は「resume で取り直すと検査が無言で無効化される」既存の禁止事項と衝突しないか要検討）。
 - Note: ⚠️ **本ファイルの `BL-211`（旧 BL-114・assets↔runtime の宣言差分・done）とは別件。** アプリ側と番号が衝突するため新しい番号を振った。
 - Status: open
+
+## BL-238
+
+- Source: M5 設計（`docs/design-auto.md` 課題D2）/ 起票 2026-09-25・人間が承認
+- Severity: Minor
+- Trigger: **M5 の実装と並行してよい**（D2 のモデルフォールバックの前提。BL-221 と同種の executor 整備）
+- Summary: **executor の返り値に `transientCause`（`capacity` / `rate-limit` / `network` / `unknown`）を足す。**
+  今の `failureKind` は transient / permanent の二値で、容量不足（2026-09-18 の codex 2件
+  `Selected model is at capacity. Please try a different model.`）もネットワークエラーも理由不明の失敗も
+  同じ transient になる。D2 の発動条件「容量不足・rate limit のときだけ」を判定する欄が無い。
+  分類は**生のイベントを見た場所**（claude: `api_error_status` 429 / 529 と本文、codex: エラー本文）に置く。
+  auto やエンジンが `result.error` の文字列を正規表現で分類する案は採らない（分類が3箇所目になり、KI-01 型のずれの温床）。
+  ⚠️ `failureKind` の意味は変えない（transient / permanent の判定はそのまま。`transientCause` は transient の内訳）。
+  ⚠️ codex.ts を変えたら clipboard 経路のテストを**同じコミットで**通し直す（不変条件5）。
+- Status: open
+
+## BL-239
+
+- Source: M5 設計（`docs/design-auto.md` 課題I）/ 起票 2026-09-25・人間が承認
+- Severity: Minor
+- Trigger: **BL-213 が解消済み**、かつ M5 の運用で auto の区間に invalid-status が再び出たとき
+  （または research の語彙の書き損じ〔2026-09-11 の `researched` 型〕が再発したとき）
+- Summary: **status 宣言の機械導出。** 単一結果のステップ（implementation / fix / task-planning / review-audit）の result と、
+  research の既定値（research-complete）をエンジンが導出し、AI の宣言は判断を含む自己申告
+  （ux-decision-required、review / improve-check / reflection の判断）だけにする。
+  ⚠️ review の ready / fix-required と improve-check の二値は**判断であり導出しない**（契約の意味の解釈をエンジンへ移すことになる）。
+  **設計条件: `status.step` が担っていた「この宣言は今のステップのために書かれた」という鮮度の証明を失わないこと。**
+  2026-09-04 の事故（前タスクの status が一致検査を素通りし、古い計画が承認ゲートまで進んだ）が実例。
+  儀式を消すなら、この役割の代わり（例: 遷移の確定時にエンジンが status ファイルを消す）を同じ変更の中で用意する。
+  前提の BL-213 は、明示の完了申告を外すと research-findings の見出しだけのテンプレートが**完了扱いで素通り**するため。
+  見積もりと実測の根拠は設計文書の課題I（区間の invalid-status は executor 化以降 0件）。
+- Status: open
+
+## BL-240
+
+- Source: M5 設計（`docs/design-auto.md` 課題A の A3）/ 起票 2026-09-25・人間が承認
+- Severity: Minor
+- Trigger: auto を implementation / review / fix / improve-check の区間で運用し、停止挙動（A1〜A25 の発火と誤停止の有無）を実測できたとき
+- Summary: **research に `auto: true` を付けるか（無人区間へ組み入れるか）を判断する。** M5 の初期は付けない（段階制）。
+  research は `ux-decision-required` で自分に戻る唯一のステップで、無人で回すと「AI が UX 判断を保留したまま research を
+  再走し続ける」経路が理論上ある。判断の材料: (1) 現行の設定では research はゲート②を持つので、`ux-decision-required` でも
+  毎回承認待ちで止まり、周回ごとに人の承認が挟まる (2) ゲートを外した research に `auto: true` を付けると、
+  auto の起動時の構造検査が「retryPolicy を通らない循環」として起動を拒否する（A24）。
+  research の所要（実測 139 分の大半は人間の検討）と、対話の喪失（M4 課題C）も併せて見る。
+- Status: open
