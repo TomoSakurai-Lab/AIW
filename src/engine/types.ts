@@ -96,6 +96,20 @@ export const EXECUTOR_STEP_KEYS: Record<ExecutorName, readonly string[]> = {
   claude: ["model", "effort", "bashAllow"]
 };
 
+/**
+ * **executor 固有ではないが、特定の executor のステップでは効かない**ステップ設定キー（M5・BL-219 の表の続き）。
+ *
+ * `auto` は `aiw auto` が読む（区間の宣言。docs/design-auto.md 課題A の A3）。clipboard のステップでは
+ * auto は区間の判定より先に A2（人の番）で必ず止まるので、`auto: true` を書いても効かない。
+ * EXECUTOR_STEP_KEYS（「その executor だけが読む」）に載せると codex と claude の両方が持ち主になり、
+ * 互いに「効かない」と誤表示するので、別の表にしている。表示の経路は同じ（config.ineffectiveStepKeys）。
+ *
+ * ⚠️ ロード時エラーにしない理由も同じ（不変条件5: executor の 1 行を clipboard へ戻しても読めること）。
+ */
+export const STEP_KEYS_INEFFECTIVE_ON: Readonly<Record<string, readonly ExecutorName[]>> = {
+  auto: ["clipboard"]
+};
+
 export type WorkflowStep = {
   id: string; // ローダーが steps マップキーから注入(§7.1)
   // `cli` は testing ステップ専用だったが、testing ごと削除した（2026-08-07）。
@@ -130,6 +144,10 @@ export type WorkflowStep = {
    *  ⚠️ **宣言が無ければ Bash はツール集合ごと渡らない**（設計 課題B の表を宣言から導く）。
    *  未許可のコマンドは dontAsk が自動拒否し、result.permission_denials に残る。 */
   bashAllow?: string[];
+  /** M5: `aiw auto` の無人区間に入れるか（docs/design-auto.md 課題A の A3）。**既定 false**
+   *  （新しいステップが黙って無人区間に入らない）。clipboard のステップでは効かない（STEP_KEYS_INEFFECTIVE_ON）。
+   *  ⚠️ auto は判定に関与しない。この宣言が変えるのは「auto が人を呼ばずに exec → run を叩くか」だけ。 */
+  auto?: boolean;
   validators?: ValidatorRef[];
   retryPolicy?: RetryPolicy;
   postActions?: string[];

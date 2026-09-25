@@ -6,6 +6,7 @@ import {
   EFFORT_LEVELS,
   EXECUTOR_NAMES,
   EXECUTOR_STEP_KEYS,
+  STEP_KEYS_INEFFECTIVE_ON,
   type EffortLevel,
   type ExecutorName,
   type WorkflowConfig,
@@ -36,6 +37,18 @@ function resolveEffort(id: string, value: unknown): EffortLevel | undefined {
     throw new Error(`Step "${id}" declares an unknown effort "${String(value)}". Allowed: ${EFFORT_LEVELS.join(", ")}.`);
   }
   return value as EffortLevel;
+}
+
+// steps[].auto（M5）。真偽値だけを受け付ける。`auto: "yes"` のような書き損じを黙って false に潰すと、
+// 区間に入れたつもりのステップで auto が止まり、理由が見えなくなる。未知の executor と同じくロード時に落とす。
+function resolveAuto(id: string, value: unknown): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`Step "${id}" declares auto: ${JSON.stringify(value)}. Allowed: true or false.`);
+  }
+  return value;
 }
 
 /**
@@ -112,6 +125,16 @@ export function findIneffectiveStepKeys(steps: Record<string, WorkflowStep>): st
         }
       }
     }
+    // M5: executor 固有ではないが、特定の executor では効かないキー（types.ts の STEP_KEYS_INEFFECTIVE_ON）
+    for (const [key, executors] of Object.entries(STEP_KEYS_INEFFECTIVE_ON)) {
+      const value = (step as Record<string, unknown>)[key];
+      if (value !== undefined && value !== false && executors.includes(step.executor)) {
+        out.push(
+          `steps.${id}.${key} は executor "${step.executor}" では効かない（aiw auto は ${step.executor} のステップで必ず人の番として止まる）。` +
+            `削除するか executor を見直す（戻した直後なら残してよい・不変条件5）`
+        );
+      }
+    }
   }
   return out;
 }
@@ -154,6 +177,7 @@ export function loadWorkflow(root: string): WorkflowConfig {
       );
     }
     const effort = resolveEffort(id, step.effort);
+    resolveAuto(id, step.auto);
     steps[id] = {
       id,
       ...step,

@@ -205,6 +205,13 @@ artifacts:
 steps:
   # Step ID はマップキーとして表現する。WorkflowStep.id はローダーがキーから注入し、
   # YAML 本文には重複記載しない(§7.1)。
+  #
+  # M5: `aiw auto`（承認ゲートの後の無人区間を exec → run で進める。設計は tools/aiw/docs/design-auto.md）。
+  # 区間に入れるステップには `auto: true` を書く（既定 false = 新しいステップが黙って無人区間に入らない）。
+  # **この雛形では宣言しない**: どのステップも executor 未宣言（clipboard）で、clipboard のステップでは
+  # auto は必ず「人の番」として止まるので効かない（書くとローダーが効かないキーとして表示する）。
+  # executor を宣言した環境では、implementation / review / fix / improve-check に付ける想定
+  # （research には付けない・段階制）。予算・再試行の上書きは settings.autoMaxSteps / settings.autoRetry。
 
   task-planning:
     role: claude
