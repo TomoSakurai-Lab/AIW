@@ -82,6 +82,17 @@ export function autoIneligibility(step: WorkflowStep): "clipboard" | "out-of-zon
   return step.auto === true ? null : "out-of-zone";
 }
 
+/**
+ * drive の auto モードで、auto が止まった後に drive の対話へ戻るか（2026-09-25 の決定・課題E）。
+ *
+ * **人の番（終了コード 0: 承認待ち・clipboard・区間外・完了）なら戻る**——承認するのは人で、drive が判断材料を出して聞く。
+ * auto 自身は承認を呼ばない（前提5）。それ以外（halt・予算・executor 失敗・無進行・中断・起動拒否）は
+ * 異常なので drive も終わり、人が停止理由を見る。戻る先は drive に既にある分岐だけで、状態は増えない。
+ */
+export function returnsToDrive(stop: Pick<AutoStop, "exitCode">): boolean {
+  return stop.exitCode === AUTO_EXIT.humanTurn;
+}
+
 /** 無人区間のステップ: `auto: true` を宣言し、かつ clipboard でないもの（clipboard は A2 で必ず止まる） */
 export function autoZone(config: WorkflowConfig): WorkflowStep[] {
   return Object.values(config.steps).filter((s) => autoIneligibility(s) === null);

@@ -31,7 +31,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
-import { autoIneligibility, releaseAutoLock, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
+import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
 
@@ -317,7 +317,14 @@ function formatAutoRun(executed: AutoExecution[]): string[] {
  * **drive とは別コマンド**: drive は対話（stdin を読む）、auto は無対話で終了コードを返す
  * （同じコマンドのモードにすると、スクリプトから呼んだときに stdin 待ちで止まる経路が残る）。
  */
-async function engineAutoCmd(opts: { quiet?: boolean; verbose?: boolean; json?: boolean; maxSteps?: string }): Promise<void> {
+async function engineAutoCmd(opts: {
+  quiet?: boolean;
+  verbose?: boolean;
+  json?: boolean;
+  maxSteps?: string;
+  /** drive の auto モードから呼ぶ。停止サマリの後半（status --summary・判断材料・next）は drive 側が出すので省く */
+  fromDrive?: boolean;
+}): Promise<AutoResult> {
   const root = engineRoot();
   const config = loadConfig(root);
   // --json のときは stdout を最後の1行の JSON のために空け、人間向けの表示は stderr へ出す
@@ -411,15 +418,17 @@ async function engineAutoCmd(opts: { quiet?: boolean; verbose?: boolean; json?: 
     for (const line of formatAutoRun(result.executed)) {
       out(line);
     }
-    out("");
-    out(formatSummary(buildSummary(root), buildObserved(root)));
-    if (result.stop === "gate" && result.step) {
+    if (!opts.fromDrive) {
       out("");
-      out(formatBriefing(buildBriefing(root, config, result.step)));
+      out(formatSummary(buildSummary(root), buildObserved(root)));
+      if (result.stop === "gate" && result.step) {
+        out("");
+        out(formatBriefing(buildBriefing(root, config, result.step)));
+      }
+      const next = engineNext(root, config);
+      out("");
+      out(`next: ${next.action}`);
     }
-    const next = engineNext(root, config);
-    out("");
-    out(`next: ${next.action}`);
   }
   if (opts.json) {
     console.log(
@@ -435,6 +444,7 @@ async function engineAutoCmd(opts: { quiet?: boolean; verbose?: boolean; json?: 
     );
   }
   process.exitCode = result.exitCode;
+  return result;
 }
 
 // `aiw baseline capture`: 現在の作業ツリー状態を「タスク外」として再固定する。
@@ -753,6 +763,40 @@ async function runDrive(): Promise<void> {
     return new Promise((resolve) => waiters.push(resolve));
   };
   const yes = (a: string): boolean => /^y(es)?$/i.test(a);
+
+  // auto モード（`a` で入る。2026-09-25 の決定・docs/design-auto.md 課題E）。
+  // 一度入ったら、以後の無人区間のステップは確認なしで auto に任せ、**人の番（終了コード 0）で drive へ戻る**。
+  // 承認ゲートでは drive がふだんどおり判断材料を出して聞く——承認するのは人で、auto は承認を呼ばない。
+  // 異常停止（halt・予算・executor 失敗・無進行・中断・起動拒否）なら drive も終わる。
+  let autoMode = false;
+  // readline は開いたまま auto を走らせる（戻った後にまた聞くため）。端末では readline が Ctrl+C を吸うので、
+  // auto の中断（A20 / A21）へ中継する。
+  const forwardSigint = (): void => {
+    process.emit("SIGINT", "SIGINT");
+  };
+  /** 1区間ぶん auto を走らせる。戻り値は drive を続けるか */
+  const runAutoLeg = async (): Promise<boolean> => {
+    rl.on("SIGINT", forwardSigint);
+    let result: AutoResult;
+    try {
+      // ロックはここ（runAuto の中）で取る。drive はそれまでロックを見ない（既存の挙動のまま）。
+      result = await engineAutoCmd({ fromDrive: true });
+    } finally {
+      rl.off("SIGINT", forwardSigint);
+    }
+    // ⚠️ 端末では、auto の実行中に打たれた入力を捨てる。数十分の無人区間の間に押したキーが、
+    // 戻った直後の承認ゲートの答えとして読まれてしまう（承認を事前入力で通さない）。パイプ入力は意図した答えなので残す。
+    if (process.stdin.isTTY) {
+      buffer.length = 0;
+    }
+    if (!returnsToDrive(result)) {
+      console.log("drive を終了します（auto の停止理由を確認してから、再度 `aiw drive` か `aiw auto`）。");
+      return false;
+    }
+    console.log("\n↩ 人の番なので drive に戻ります。\n");
+    return true;
+  };
+
   const safe = (fn: () => void): void => {
     try {
       fn();
@@ -836,23 +880,31 @@ ${formatBriefing(buildBriefing(root, config, gate))}
       // 起動前に確認を挟み、n なら従来どおり clipboard へ逃がす（不変条件5 を運用面でも保つ）。
       const worker = step.role === "codex" ? "Codex" : "Claude";
       if (step.executor !== "clipboard") {
+        // auto モード中の無人区間のステップは聞かずに auto へ。区間の規則は auto と同じ関数で見る。
+        if (autoMode && autoIneligibility(step) === null) {
+          console.log(`▶ auto モード: "${state.currentStep}" から無人区間を進めます。`);
+          if (await runAutoLeg()) {
+            continue;
+          }
+          break;
+        }
         const answer = await ask(
-          `"${state.currentStep}" は executor: ${step.executor} で実行します。\n[y=実行 / n=クリップボードへ / a=ここから auto（無人区間の終わりまで）] `
+          `"${state.currentStep}" は executor: ${step.executor} で実行します。\n[y=実行 / n=クリップボードへ / a=ここから auto（人の番で drive に戻る）] `
         );
-        // a: drive → auto への**一方向の**合流（2026-09-25 の決定・docs/design-auto.md 課題E）。
-        // auto の停止条件・終了コード・ロック・再試行をそのまま使い、drive 用には何も複製しない。
-        // 逆方向（auto の途中から drive へ戻る）は作らない。止まった後の次の手は auto の停止理由が教える。
+        // a: auto モードに入る。auto の停止条件・終了コード・ロック・再試行をそのまま使い、drive 用には何も複製しない。
         if (/^a(uto)?$/i.test(answer)) {
-          // 区間の規則は auto と同じ関数で見る。drive から入っても auto: true でないステップは無人にしない。
+          // drive から入っても auto: true でないステップは無人にしない（既定 false・黙って無人区間に入らない）。
           if (autoIneligibility(step) !== null) {
             console.log(`"${state.currentStep}" は無人対象外です（auto: true の宣言が無い）。y/n で進めてください。`);
             continue;
           }
-          console.log(`▶ ここから aiw auto に切り替えます（停止条件・終了コードは aiw auto と同じ。止まったら drive も終わります）。`);
-          // readline を先に閉じる。開いたままだと Ctrl+C を readline が吸い、auto の中断（A20）に届かない。
-          // ロックはこの瞬間（runAuto の中）に取る。drive はそれまでロックを見ない（既存の挙動のまま）。
-          rl.close();
-          await engineAutoCmd({});
+          autoMode = true;
+          console.log(
+            "▶ auto モードに入ります: 無人区間は確認なしで進め、承認ゲート・clipboard のステップなど人の番で drive に戻ります（異常で止まったら drive も終わります）。"
+          );
+          if (await runAutoLeg()) {
+            continue;
+          }
           break;
         }
         const useExecutor = yes(answer);

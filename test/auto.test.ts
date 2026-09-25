@@ -19,6 +19,7 @@ import {
   AUTO_EXIT,
   acquireAutoLock,
   autoIneligibility,
+  returnsToDrive,
   autoLockFile,
   deriveAutoBudget,
   findUnboundedCycle,
@@ -801,7 +802,7 @@ function cli(root: string, ...args: string[]): { status: number | null; stdout: 
 }
 
 // ---------------------------------------------------------------------------------------------
-// drive → auto の合流（2026-09-25 の決定: 一方向だけ・auto: true のステップに限る）
+// drive の auto モード（2026-09-25 の決定: `a` で入る・auto: true のステップに限る・人の番で drive へ戻る）
 
 /**
  * 検証用のステップを2つ足した root。どちらも codex を宣言するが**プロンプトも Skill も持たない**:
@@ -840,16 +841,16 @@ test("230: drive's `a` is refused on a step without auto: true, by the same rule
 
   setStep(root, "probe");
   const out = driveCli(root, "a\n");
-  assert.match(out.stdout, /\[y=実行 \/ n=クリップボードへ \/ a=ここから auto（無人区間の終わりまで）\]/);
+  assert.match(out.stdout, /\[y=実行 \/ n=クリップボードへ \/ a=ここから auto（人の番で drive に戻る）\]/);
   assert.match(out.stdout, /"probe" は無人対象外です（auto: true の宣言が無い）。y\/n で進めてください。/);
-  assert.doesNotMatch(out.stdout, /aiw auto に切り替えます/);
+  assert.doesNotMatch(out.stdout, /auto モードに入ります/);
   assert.equal(autoEvents(root).length, 0, "auto は起動しない");
   assert.equal(existsSync(autoLockFile(root)), false, "ロックも取らない");
 });
 
-// Test 231 — `a` で auto に合流する。ロックは `a` の瞬間に取る（drive はそれまでロックを見ない）。
-// 合流した後は auto の停止条件・終了コードそのままで終わり、drive へは戻らない。
-test("231: drive's `a` joins auto on the spot: the lock is taken at that moment and auto's stop ends drive", () => {
+// Test 231 — `a` で auto モードに入る。ロックは `a` の瞬間に取る（drive はそれまでロックを見ない）。
+// **異常停止**（ここでは起動拒否 A23 と executor 失敗 A12）なら、auto の終了コードのまま drive も終わり、質問へ戻らない。
+test("231: drive's `a` enters auto on the spot: the lock is taken at that moment, and an abnormal stop ends drive", () => {
   const { root } = makeProbeRoot();
 
   // 別の auto がロックを持っている。drive は `a` までロックを見ないので、halt の対話はふだんどおり出る
@@ -862,8 +863,9 @@ test("231: drive's `a` joins auto on the spot: the lock is taken at that moment 
   // `a` の瞬間にロックを取りに行き、拒否される（A23・終了コード 1）。他人のロックは消さない
   setStep(root, "probe-auto");
   const refused = driveCli(root, "a\n");
-  assert.match(refused.stdout, /aiw auto に切り替えます/);
+  assert.match(refused.stdout, /auto モードに入ります/);
   assert.match(refused.stdout, /別の aiw auto が実行中（pid \d+/);
+  assert.match(refused.stdout, /drive を終了します/);
   assert.equal(refused.status, 1);
   assert.ok(existsSync(autoLockFile(root)));
   assert.ok(autoEvents(root).some((e) => e.event === "auto.refused" && e.condition === "A23"));
@@ -874,11 +876,52 @@ test("231: drive's `a` joins auto on the spot: the lock is taken at that moment 
   assert.equal(joined.status, AUTO_EXIT.execFailed);
   assert.match(joined.stdout, /▶ \[1\/\d+\] probe-auto/);
   assert.match(joined.stdout, /executor 失敗\(permanent\) probe-auto/);
-  assert.equal(joined.stdout.split("[y=実行 / n=クリップボードへ").length - 1, 1, "合流後に drive の質問へ戻らない");
+  assert.equal(joined.stdout.split("[y=実行 / n=クリップボードへ").length - 1, 1, "異常停止の後は drive の質問へ戻らない");
+  assert.doesNotMatch(joined.stdout, /人の番なので drive に戻ります/);
   const stopped = autoEvents(root).filter((e) => e.event === "auto.stopped");
   assert.equal(stopped.at(-1)?.condition, "A12");
   assert.equal(existsSync(autoLockFile(root)), false, "終わればロックを外す");
   assert.equal(readState(root).currentStep, "probe-auto", "state は変わらない");
+});
+
+// Test 232 — auto が止まった後に drive へ戻るか（returnsToDrive）。**人の番（終了コード 0）だけ戻る**。
+// 承認ゲート（review ③ / research ②）・clipboard・区間外・完了では drive がふだんどおり聞き、承認するのは人。
+// halt・予算・executor 失敗・無進行・中断・起動拒否では戻らない（drive も終わる）。
+// ⚠️ 戻る側をサブプロセスの drive で通すには無人ステップを**成功**させる必要があるが、executor の起動コマンドは
+//    node_modules に固定で偽物に差し替えられない。そこで判断をこの純関数に置いて表で固定し、drive はそれに従うだけにした。
+//    戻った先は drive に既にある分岐（承認ゲートは Test 190 など）。戻らない側の実物は Test 231。
+test("232: drive resumes asking only when auto stops on the human's turn (exit 0)", async () => {
+  const table: Array<[number, boolean]> = [
+    [AUTO_EXIT.humanTurn, true],
+    [AUTO_EXIT.refused, false],
+    [AUTO_EXIT.halted, false],
+    [AUTO_EXIT.budget, false],
+    [AUTO_EXIT.execFailed, false],
+    [AUTO_EXIT.noProgress, false],
+    [AUTO_EXIT.interrupted, false]
+  ];
+  for (const [exitCode, expected] of table) {
+    assert.equal(returnsToDrive({ exitCode: exitCode as (typeof AUTO_EXIT)[keyof typeof AUTO_EXIT] }), expected, `exit ${exitCode}`);
+  }
+  assert.equal(table.length, Object.keys(AUTO_EXIT).length, "終了コードをすべて表に載せた");
+
+  // 実際の停止で確かめる: 承認ゲート（review）・clipboard（reflection）・区間外（research）は人の番で、戻る
+  const { root, config } = makeRoot();
+  const cfg = zoned(config, (s) => {
+    s.research = { ...s.research, executor: "claude" };
+  });
+  const { executor } = fake(root);
+  setStep(root, "implementation");
+  writeIn(root, "context-package.md", "# Files\n## Modify\n- `x.ts`\n");
+  const gate = await runAuto(root, cfg, { executor });
+  assert.equal(gate.condition, "A1");
+  assert.equal(gate.step, "review");
+  assert.equal(returnsToDrive(gate), true, "review の承認ゲートでは drive に戻って人に聞く");
+  assert.equal(readState(root).pendingApproval, "review", "auto は承認しない");
+  setStep(root, "research");
+  assert.equal(returnsToDrive(await runAuto(root, cfg, { executor })), true, "research（区間外）でも戻る");
+  setStep(root, "fix", { status: "halted", haltedReason: "escalation" });
+  assert.equal(returnsToDrive(await runAuto(root, cfg, { executor })), false, "halt では戻らない");
 });
 
 // Test 220 — 実物の `aiw auto` の終了コード: 人の番 0（clipboard の task-planning ではクリップボードに触れる前に止まる）/
