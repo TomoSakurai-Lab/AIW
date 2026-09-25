@@ -19,6 +19,7 @@ import "./session-ref.test.js";
 import "./codex-executor.test.js";
 import "./codex-integration.test.js";
 import "./codex-log.test.js";
+import "./claude-log.test.js";
 import "./ac-lifecycle.test.js";
 import "./runtime-dir-name.test.js";
 import "./watchdog.test.js";

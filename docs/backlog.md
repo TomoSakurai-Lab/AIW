@@ -302,7 +302,11 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Severity: Minor
 - Trigger: `aiw log` を次に触るとき、または claude 実行の詳細を後から追う必要が出たとき
 - Summary: **`aiw log` が読めるのは `runs/codex/` だけ**で、claude executor が tee する `runs/claude/` の JSONL は整形できない。`codexLog.ts` の整形は codex のイベント語彙（`item.*` / `thread.started` / `turn.completed`）専用で、claude の語彙（`system:init` / `assistant` / `result`）とは別物のため。段階1-1 では「記録が無い」と言って終わらせないための最小対応として、claude の実行があればそのファイルパスを案内するようにした（`cli.ts`）。本対応は claude 側の整形（`summarize` と同じ対応表を読み取り側にも持つ）だが、**M4.4 の「イベント語彙を共通化するか」の判定と同じ論点**なので、判定の前に片側だけ実装しない。
-- Status: open
+- Note (2026-09-25 TASK-2026-09-25-aiw-log-claude): 前提の M4.4 は「語彙は provider 固有のまま・共通化しない」で決着済みだったので、
+  claude 専用の整形 `src/engine/claudeLog.ts` と、codex / claude から新しい方を選ぶ `src/engine/runLog.ts` を足した（`codexLog.ts` は不変）。
+  整形表示と `--json` は生の session ID を出さない（Test 221-229）。**M5 の `aiw auto` で区間を無人実行した最初のタスク**。
+  review の Backlog（`npm test` 一式が executor のコマンド上限を超える）は BL-241 へ。
+- Status: resolved (TASK-2026-09-25-aiw-log-claude)
 
 ## BL-213
 

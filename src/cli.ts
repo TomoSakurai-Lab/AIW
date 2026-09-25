@@ -19,7 +19,9 @@ import {
 } from "./engine/engine.js";
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, visibleOnScreen } from "./engine/executors/index.js";
 import type { ExecutorProgress, ExecutorResult } from "./engine/executors/types.js";
-import { findRunFile, formatRunLog, readRunLog } from "./engine/codexLog.js";
+import { formatRunLog, readRunLog } from "./engine/codexLog.js";
+import { formatClaudeRunLog, readClaudeRunLog } from "./engine/claudeLog.js";
+import { findLatestRun } from "./engine/runLog.js";
 import { resolveRoot, rootPaths, RUNTIME_DIR_NAME } from "./engine/paths.js";
 import { appendEvent } from "./engine/eventLog.js";
 import { readBaseline, recaptureBaseline, resolveCheckRepoRoot } from "./engine/gitScope.js";
@@ -193,39 +195,31 @@ function progressPrinter(opts: { quiet?: boolean; verbose?: boolean }): ((e: Exe
 }
 
 /**
- * `aiw log [step]` — 直近の codex 実行を読む（M3・課題I）。
+ * `aiw log [step]` — 直近の codex / claude 実行を読む。
  *
- * **読むだけ。** 情報源は `runs/codex/` の JSONL のみで、新しい記録は作らない。
+ * **読むだけ。** 情報源は `runs/codex/` / `runs/claude/` の JSONL で、新しい記録は作らない。
  * 画面の進行表示は発言だけに絞ってあるので、詳細を後から追う口がここになる。
  */
 function engineLogCmd(stepArg: string | undefined, opts: { raw?: boolean; json?: boolean }): void {
   const root = engineRoot();
   const step = stepArg ?? readEngineState(root).currentStep;
-  const file = findRunFile(root, step);
-  if (!file) {
-    console.error(`no codex run recorded for step "${step}" (looked in ${path.join(rootPaths(root).runsDir, "codex")}).`);
-    console.error(`runs are written by the codex executor — steps driven through clipboard leave none.`);
-    // ⚠️ claude executor（M4）の JSONL は `runs/claude/` へ tee されるが、この整形は
-    // codex のイベント語彙（item.* / thread.started）専用で読めない。
-    // **「記録が無い」と言って終わらせない**のが要点で、存在するなら場所を教える。
-    // claude 側の整形は BL-214（旧 BL-117。M4 後）。
-    const claudeDir = path.join(rootPaths(root).runsDir, "claude");
-    const claudeRuns = existsSync(claudeDir)
-      ? readdirSync(claudeDir).filter((f) => f.endsWith(`-${step}.jsonl`)).sort()
-      : [];
-    if (claudeRuns.length > 0) {
-      console.error(`→ claude の実行はあります: ${path.join(claudeDir, claudeRuns[claudeRuns.length - 1])}`);
-      console.error(`  （この整形は codex のイベント語彙専用なので、今は JSONL を直接読んでください）`);
-    }
+  const latest = findLatestRun(root, step);
+  if (!latest) {
+    console.error(
+      `no run recorded for step "${step}" (looked in ${path.join(rootPaths(root).runsDir, "codex")} and ${path.join(rootPaths(root).runsDir, "claude")}).`
+    );
+    console.error(`runs are written by codex and claude executors — steps driven through clipboard leave none.`);
     process.exitCode = 1;
     return;
   }
   if (opts.raw) {
-    process.stdout.write(readFileSync(file, "utf8")); // 一次資料をそのまま
+    process.stdout.write(readFileSync(latest.file, "utf8")); // 一次資料をそのまま
     return;
   }
-  const log = readRunLog(root, file);
-  console.log(opts.json ? JSON.stringify(log, null, 2) : formatRunLog(log));
+  const log =
+    latest.provider === "codex" ? readRunLog(root, latest.file) : readClaudeRunLog(root, latest.file);
+  const formatted = latest.provider === "codex" ? formatRunLog(log as ReturnType<typeof readRunLog>) : formatClaudeRunLog(log as ReturnType<typeof readClaudeRunLog>);
+  console.log(opts.json ? JSON.stringify(log, null, 2) : formatted);
 }
 
 async function engineExecCmd(stepArg?: string, opts: { quiet?: boolean; verbose?: boolean } = {}): Promise<void> {
@@ -560,7 +554,7 @@ program
 
 program
   .command("log [step]")
-  .description("Show the latest codex run for a step (default: current step). Reads runs/codex/ only")
+  .description("Show the latest codex or claude run for a step (default: current step)")
   .option("--raw", "生 JSONL をそのまま出す（一次資料）")
   .option("--json", "機械可読な構造化出力")
   .action((step: string | undefined, opts: { raw?: boolean; json?: boolean }) => {
