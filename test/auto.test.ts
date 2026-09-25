@@ -11,12 +11,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   AUTO_EXIT,
   acquireAutoLock,
+  autoIneligibility,
   autoLockFile,
   deriveAutoBudget,
   findUnboundedCycle,
@@ -293,7 +295,6 @@ test("200: invalid-status (A6) and validation-failed (A7) stop with exit 2 and a
     writeStatus(r2, { step: "fix", result: "fixed", reason: "x" });
     return { ok: true, outputs: [] };
   });
-  const { rmSync } = await import("node:fs");
   rmSync(path.join(r2, "current-result.md"));
   const a7 = await runAuto(r2, zoned(c2), { executor: noResult.executor });
   assert.equal(a7.condition, "A7");
@@ -798,6 +799,87 @@ function cli(root: string, ...args: string[]): { status: number | null; stdout: 
   assert.equal(r.error, undefined, `aiw auto を起動できない: ${r.error?.message}`);
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
+
+// ---------------------------------------------------------------------------------------------
+// drive → auto の合流（2026-09-25 の決定: 一方向だけ・auto: true のステップに限る）
+
+/**
+ * 検証用のステップを2つ足した root。どちらも codex を宣言するが**プロンプトも Skill も持たない**:
+ * - `probe` … auto: true なし（`a` を断る側）。断った後に clipboard へ落ちても "no-prompt" で OS のクリップボードに書かない
+ * - `probe-auto` … auto: true（`a` で合流する側）。テストの root には隔離 CODEX_HOME が無いので、
+ *   codex executor は**起動前に** permanent で返す（実物の codex を起動しない）
+ */
+function makeProbeRoot() {
+  const ctx = makeRoot();
+  const file = rootPaths(ctx.root).workflowYaml;
+  const doc = parseYaml(readFileSync(file, "utf8"));
+  const probe = { role: "codex", executor: "codex", inputs: [], outputs: [], transitions: { done: { next: "complete" } } };
+  doc.steps.probe = probe;
+  doc.steps["probe-auto"] = { ...probe, auto: true };
+  writeFileSync(file, stringifyYaml(doc), "utf8");
+  return { ...ctx, config: loadConfig(ctx.root) };
+}
+
+function driveCli(root: string, input: string): { status: number | null; stdout: string; stderr: string } {
+  const r = spawnSync(
+    process.execPath,
+    [path.join(PKG, "node_modules", "tsx", "dist", "cli.js"), path.join(PKG, "src", "cli.ts"), "--root", root, "drive"],
+    { input, encoding: "utf8", windowsHide: true, timeout: 120_000, cwd: PKG }
+  );
+  assert.equal(r.error, undefined, `aiw drive を起動できない: ${r.error?.message}`);
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+// Test 230 — `a` は auto: true のステップに限る。区間の規則は auto と同じ関数（autoIneligibility）で、
+// drive から入っても区間外（research など）は無人にしない。
+test("230: drive's `a` is refused on a step without auto: true, by the same rule auto uses", () => {
+  const { root, config } = makeProbeRoot();
+  assert.equal(autoIneligibility(config.steps.probe), "out-of-zone");
+  assert.equal(autoIneligibility(config.steps["probe-auto"]), null);
+  assert.equal(autoIneligibility(config.steps.reflection), "clipboard");
+
+  setStep(root, "probe");
+  const out = driveCli(root, "a\n");
+  assert.match(out.stdout, /\[y=実行 \/ n=クリップボードへ \/ a=ここから auto（無人区間の終わりまで）\]/);
+  assert.match(out.stdout, /"probe" は無人対象外です（auto: true の宣言が無い）。y\/n で進めてください。/);
+  assert.doesNotMatch(out.stdout, /aiw auto に切り替えます/);
+  assert.equal(autoEvents(root).length, 0, "auto は起動しない");
+  assert.equal(existsSync(autoLockFile(root)), false, "ロックも取らない");
+});
+
+// Test 231 — `a` で auto に合流する。ロックは `a` の瞬間に取る（drive はそれまでロックを見ない）。
+// 合流した後は auto の停止条件・終了コードそのままで終わり、drive へは戻らない。
+test("231: drive's `a` joins auto on the spot: the lock is taken at that moment and auto's stop ends drive", () => {
+  const { root } = makeProbeRoot();
+
+  // 別の auto がロックを持っている。drive は `a` までロックを見ないので、halt の対話はふだんどおり出る
+  writeFileSync(autoLockFile(root), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), runId: "auto-held" }), "utf8");
+  setStep(root, "probe-auto", { status: "halted", haltedReason: "validation-failed" });
+  const halted = driveCli(root, "n\n");
+  assert.match(halted.stdout, /HALTED \(validation-failed\) at "probe-auto"/);
+  assert.doesNotMatch(halted.stdout + halted.stderr, /別の aiw auto が実行中/);
+
+  // `a` の瞬間にロックを取りに行き、拒否される（A23・終了コード 1）。他人のロックは消さない
+  setStep(root, "probe-auto");
+  const refused = driveCli(root, "a\n");
+  assert.match(refused.stdout, /aiw auto に切り替えます/);
+  assert.match(refused.stdout, /別の aiw auto が実行中（pid \d+/);
+  assert.equal(refused.status, 1);
+  assert.ok(existsSync(autoLockFile(root)));
+  assert.ok(autoEvents(root).some((e) => e.event === "auto.refused" && e.condition === "A23"));
+
+  // ロックが空いていれば auto として走り、auto の停止（ここでは隔離 home が無いので A12・終了コード 4）で drive も終わる
+  rmSync(autoLockFile(root));
+  const joined = driveCli(root, "a\ny\ny\n"); // 余分な y は、drive が合流後も質問を続けていないかの見張り
+  assert.equal(joined.status, AUTO_EXIT.execFailed);
+  assert.match(joined.stdout, /▶ \[1\/\d+\] probe-auto/);
+  assert.match(joined.stdout, /executor 失敗\(permanent\) probe-auto/);
+  assert.equal(joined.stdout.split("[y=実行 / n=クリップボードへ").length - 1, 1, "合流後に drive の質問へ戻らない");
+  const stopped = autoEvents(root).filter((e) => e.event === "auto.stopped");
+  assert.equal(stopped.at(-1)?.condition, "A12");
+  assert.equal(existsSync(autoLockFile(root)), false, "終わればロックを外す");
+  assert.equal(readState(root).currentStep, "probe-auto", "state は変わらない");
+});
 
 // Test 220 — 実物の `aiw auto` の終了コード: 人の番 0（clipboard の task-planning ではクリップボードに触れる前に止まる）/
 // halt 2 / 同時実行 1 / 不明 1。`--json` は stdout の最後の1行。

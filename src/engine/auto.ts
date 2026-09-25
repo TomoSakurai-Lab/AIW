@@ -68,9 +68,23 @@ export type AutoStop = {
 // ---------------------------------------------------------------------------------------------
 // 区間・予算・構造検査（課題A の A3・課題C・課題H）
 
+/**
+ * このステップを auto が無人で実行してよいか。**区間の規則の唯一の置き場**（auto のループの A2 / A3 と、
+ * drive の `a=ここから auto` の両方がこれを見る）。drive から入っても同じ規則で守る——
+ * 「drive から入れば区間外も無人で回る」抜け道を作ると、既定 false（黙って無人区間に入らない）が骨抜きになる。
+ *
+ * @returns null なら区間内。clipboard は A2（人の番）、それ以外の auto: true でないステップは A3（区間外）
+ */
+export function autoIneligibility(step: WorkflowStep): "clipboard" | "out-of-zone" | null {
+  if (step.executor === "clipboard") {
+    return "clipboard";
+  }
+  return step.auto === true ? null : "out-of-zone";
+}
+
 /** 無人区間のステップ: `auto: true` を宣言し、かつ clipboard でないもの（clipboard は A2 で必ず止まる） */
 export function autoZone(config: WorkflowConfig): WorkflowStep[] {
-  return Object.values(config.steps).filter((s) => s.auto === true && s.executor !== "clipboard");
+  return Object.values(config.steps).filter((s) => autoIneligibility(s) === null);
 }
 
 /**
@@ -662,7 +676,8 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
 
     // runnable: ここから先は auto の方針（判定器の外・課題E）
     const step = situation.step;
-    if (step.executor === "clipboard") {
+    const outside = autoIneligibility(step);
+    if (outside === "clipboard") {
       return {
         stop: "clipboard",
         condition: "A2",
@@ -671,7 +686,7 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
         exitCode: AUTO_EXIT.humanTurn
       };
     }
-    if (step.auto !== true) {
+    if (outside === "out-of-zone") {
       return {
         stop: "out-of-zone",
         condition: "A3",

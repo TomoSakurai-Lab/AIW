@@ -31,7 +31,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
-import { releaseAutoLock, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
+import { autoIneligibility, releaseAutoLock, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
 
@@ -836,9 +836,26 @@ ${formatBriefing(buildBriefing(root, config, gate))}
       // 起動前に確認を挟み、n なら従来どおり clipboard へ逃がす（不変条件5 を運用面でも保つ）。
       const worker = step.role === "codex" ? "Codex" : "Claude";
       if (step.executor !== "clipboard") {
-        const useExecutor = yes(
-          await ask(`"${state.currentStep}" は executor: ${step.executor} を宣言しています。${step.executor} で実行しますか？ [y / n=クリップボードへ] `)
+        const answer = await ask(
+          `"${state.currentStep}" は executor: ${step.executor} で実行します。\n[y=実行 / n=クリップボードへ / a=ここから auto（無人区間の終わりまで）] `
         );
+        // a: drive → auto への**一方向の**合流（2026-09-25 の決定・docs/design-auto.md 課題E）。
+        // auto の停止条件・終了コード・ロック・再試行をそのまま使い、drive 用には何も複製しない。
+        // 逆方向（auto の途中から drive へ戻る）は作らない。止まった後の次の手は auto の停止理由が教える。
+        if (/^a(uto)?$/i.test(answer)) {
+          // 区間の規則は auto と同じ関数で見る。drive から入っても auto: true でないステップは無人にしない。
+          if (autoIneligibility(step) !== null) {
+            console.log(`"${state.currentStep}" は無人対象外です（auto: true の宣言が無い）。y/n で進めてください。`);
+            continue;
+          }
+          console.log(`▶ ここから aiw auto に切り替えます（停止条件・終了コードは aiw auto と同じ。止まったら drive も終わります）。`);
+          // readline を先に閉じる。開いたままだと Ctrl+C を readline が吸い、auto の中断（A20）に届かない。
+          // ロックはこの瞬間（runAuto の中）に取る。drive はそれまでロックを見ない（既存の挙動のまま）。
+          rl.close();
+          await engineAutoCmd({});
+          break;
+        }
+        const useExecutor = yes(answer);
         if (useExecutor) {
           console.log(`▶ "${state.currentStep}" を ${step.executor} で実行します（進行を1行ずつ表示）。`);
           // `safe` は同期専用なので、非同期の exec はここで受ける。

@@ -78,6 +78,10 @@ npm run aiw -- drive
 - **claude / codex ステップ**: そのフェーズのプロンプトを📋クリップボードにコピーして
   「作成できたら y」と聞く。プロンプトを Claude / Codex に貼って成果物 + `current-status.json` を
   作り、`y` を押すと `aiw run <step>` 相当を実行して次へ。
+- **executor を宣言したステップ**: `[y=実行 / n=クリップボードへ / a=ここから auto（無人区間の終わりまで）]` と聞く。
+  `a` を選ぶと、その場で `aiw auto` に切り替わり、次のゲート・clipboard のステップ・halt などで止まって drive も終わる
+  （止まった後は表示される次の一手に従い、また `aiw drive` か `aiw auto`）。`a` は `auto: true` のステップだけで、
+  それ以外（research など）では「無人対象外です」と断る。
 - **承認ゲート**: 「承認しますか？ [y=承認 / n=却下]」。`n` なら却下理由を聞いて `reject`。
 - **halt**: 理由を表示して「resume しますか？」。
 - **完了（complete）**: 「新しいタスクを始めますか？」→ `y` で `new-task`（下記）してループ継続。
