@@ -582,6 +582,7 @@ async function runDrive(): Promise<void> {
       // 「不明」と言って終わっていた（Test 190）。終端も文字列 "complete" と比べていた（Test 191）。
       // ここでは各状況の扱い（何を聞くか）だけを書き、**どの状況かは判定しない**。
       // ⚠️ `switch` にしない: 分岐の中の `break` がループではなく switch を抜けてしまう。
+      //    書き直すと、halt や終端で n と答えても drive が終わらず、同じ質問を繰り返すようになる。
       const situation = classifySituation(state, config);
 
       // halted

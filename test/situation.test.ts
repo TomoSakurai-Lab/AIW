@@ -5,6 +5,8 @@
 // drive のループには自動テストが無い（対話ループのため。Test 106 のコメント）。ここでは実物の runDrive を
 // サブプロセスで動かし、**分岐の中で終了する経路だけ**を固定する（ステップ不明 / 終端 / halt に n と答える）。
 // ⚠️ クリップボードや executor へ進む経路はサブプロセスで動かさない——ユーザーの OS クリップボードを汚すため。
+//    それらの経路（承認・チェックポイント・通常実行）の判定は、判定器 classifySituation の単体テスト（Test 194）で押さえる。
+//    drive はその判定結果に従うだけなので、判定の順序はここで固定できている（変異テストで 189 も同時に落ちることを確認済み）。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
