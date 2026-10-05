@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { initRoot, loadConfig } from "../src/engine/engine.js";
@@ -7,22 +7,37 @@ import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import { updateState } from "../src/engine/state.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
 
+// git の雛形（init + config + .gitignore + 初回コミット）。**プロセスで1回だけ作り、各テストへは複製を渡す**（BL-241・2026-10-05）。
+// 実測: makeRoot 1回 446ms のうち git のプロセス 6 回が 352ms で、約 250 回呼ばれる makeRoot が一式（166 秒）の大半を占めていた。
+// 複製は独立したリポジトリなので、テストが受け取る状態は以前と同じ（初回コミット済み・ランタイムルートは gitignore）。
+// ⚠️ 雛形そのものをテストに渡さない（どのテストも書き換えてよい自分の複製を持つ）。
+let gitTemplate: string | null = null;
+function gitTemplateRepo(): string {
+  if (gitTemplate && existsSync(gitTemplate)) {
+    return gitTemplate;
+  }
+  const repo = mkdtempSync(path.join(tmpdir(), "aiw-test-template-"));
+  const g = (...args: string[]): void => {
+    execFileSync("git", ["-C", repo, ...args], { windowsHide: true, stdio: "ignore" });
+  };
+  g("init", "-q", ".");
+  g("config", "user.email", "t@example.com");
+  g("config", "user.name", "t");
+  g("config", "commit.gpgsign", "false");
+  writeFileSync(path.join(repo, ".gitignore"), [`${RUNTIME_DIR_NAME}/`, ""].join("\n"), "utf8");
+  g("add", "-A");
+  g("commit", "-qm", "init");
+  gitTemplate = repo;
+  return repo;
+}
+
 // 実配置を再現する: 検査対象リポジトリ（git repo）の中にランタイムルートがあり、
 // ランタイムルートは gitignore されている。diff-scope は runtimeRoot の親から
 // `git rev-parse --show-toplevel` で検査対象を解決するので、この形でないと
 // テストと本番で検査の効き方が変わってしまう。
 export function makeRoot(): { root: string; config: WorkflowConfig; repoRoot: string } {
   const repoRoot = mkdtempSync(path.join(tmpdir(), "aiw-test-"));
-  const g = (...args: string[]): void => {
-    execFileSync("git", ["-C", repoRoot, ...args], { windowsHide: true, stdio: "ignore" });
-  };
-  g("init", "-q", ".");
-  g("config", "user.email", "t@example.com");
-  g("config", "user.name", "t");
-  g("config", "commit.gpgsign", "false");
-  writeFileSync(path.join(repoRoot, ".gitignore"), [`${RUNTIME_DIR_NAME}/`, ""].join("\n"), "utf8");
-  g("add", "-A");
-  g("commit", "-qm", "init");
+  cpSync(gitTemplateRepo(), repoRoot, { recursive: true });
 
   const root = path.join(repoRoot, RUNTIME_DIR_NAME);
   initRoot(root);
