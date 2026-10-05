@@ -66,6 +66,8 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(M3 追加)** 実装計画時に ac-manifest.json を書き、計測ごとに ac-result.json へ記録（失敗分析 Q6: 計画時の脱落への対処。ガードレール配線） | 手順 | Skill | ✅ |
 | **(M2 追加・後記)** Manual Verification / Unresolved Decisions を空にしたい誘惑への注意 | 手順 | Skill | ✅ |
 | `Manual Verification Required` / `Unresolved Decisions` を空にしたい誘惑への注意 | **新規追加**（Stage 3-1） | implementation Skill | ✅ |
+| **(2026-10-05 追加・BL-241)** 検証の段階制（開発中は関係するファイルを指定・一式は最後に1回）とコマンドの上限（約 120 秒。上限で打ち切られたら FAIL ではなく NOT VERIFIED・数値の理由・手段を変える） | **新規追加** | implementation Skill（v5） | ✅ |
+| ↑ のうち、aiw 自身のテストのファイル単位の実行コマンド | 環境固有 | **Skill に書かない**（runtime の `context.md`「ワークフロー構成」。assets は他環境へ配られる・不変条件7） | ✅ |
 
 新規追加の意図: 三値規律の強化。**M1 版の `implementation.md` には存在しない**。
 「常に空になるのは、実際に何も無いのではなく書いていないだけのことが多い」という
@@ -85,6 +87,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(M3 追加)** ac-result.json を作り直す（ガードレール配線） | 手順 | Skill | ✅ |
 | **(2026-09-02 追加)** Major を意図的に直さないときは対象と理由を current-result.md に明記する | **新規追加** | fix Skill | ✅ |
 | Read の `test-report.md` を「Testing 失敗経由」と説明 | **死んでいる** | 🗑 verify-local 失敗時へ修正 | 🗑 |
+| **(2026-10-05 追加・BL-241)** 検証の段階制にコマンドの上限の扱い（一式が上限に近ければファイル列挙で代える・上限で打ち切られたら NOT VERIFIED） | **新規追加** | fix Skill（v6） | ✅ |
 
 ### review.md
 

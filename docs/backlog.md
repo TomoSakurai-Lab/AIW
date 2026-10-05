@@ -444,7 +444,26 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
      Skill に無いと次の implementation が exit 1 を FAIL と誤判定する（exit code を信用しない規律があっても、手順に書かれていなければ届かない）。
      2 で根治しても、上限に当たった exit 124 を「FAIL ではなく NOT VERIFIED」と書き分ける手順は残す
   - Skill を変えたら `versions` の更新と Test 88 を同じコミットで（不変条件7）
-- Status: open（次の枠）
+- 対処（2026-10-05・テスト実行の信頼性の枠）:
+  - **計測で分かったこと: 遅いテストが一部に集中しているのではなかった。** 上位 10 件は一式の 16%（約 27 秒）で、全部外しても約 139 秒と上限を超える。
+    本体は**ほぼ全テストが使う準備処理 `makeRoot`**: 1 回 446ms のうち git のプロセス 6 回が 352ms、約 250 回呼ばれていた
+  - **実施 (c) テストの高速化**: `test/helpers.ts` の `makeRoot` が git の雛形（init + config + .gitignore + 初回コミット）を
+    プロセスで 1 回だけ作り、各テストへは複製を渡す。テストが受け取る状態は同じ（独立したリポジトリ・初回コミット済み・ランタイムルートは gitignore）。
+    **一式 166 秒 → 85 秒**（273 本）。テストの削除・弱体化はしていない
+  - **実施 (a) Skill の手順**: implementation v5 / fix v6 に「検証の段階制とコマンドの上限」（開発中は関係するファイルを指定・一式は最後に 1 回・
+    上限で打ち切られたら FAIL ではなく NOT VERIFIED で数値の理由・手段を変える）。aiw 固有の実行コマンドは Skill に書かず runtime の `context.md`
+  - **BL-243 の根治**（下記）。スコープ 3 の「`# fail 0` で判定する」暫定運用は**Skill には一度も書かれていなかった**（runtime の context.md と
+    learnings.md だけ）ので、Skill からの撤去は無く、context.md を「終了コードは信用してよい」へ書き換えた。exit 124 を NOT VERIFIED と書き分ける手順は Skill に残した
+  - 実測: 一式 10 回連続で全件 pass・**終了コード 0**（84〜87 秒・uncaughtException 0）。BL-214 と同型の手順を上限 120 秒の下で流すと、
+    関係するファイル単位 3.7 秒 / 2.4 秒（全件 pass）→ 最後の一式 85 秒（273 件 pass・exit 0）で、AC の証拠がすべて上限内に取れた
+  - 遅いテスト上位 10 件（高速化の前 → 後）: 172 feature-archive 5.0→4.8s / watchdog の閾値未満の沈黙 3.4→3.1s / 198 auto 3.4→2.7s /
+    27b task-metadata 2.7→2.4s / 183 diff-scope-injection 2.4→1.7s / 220 auto（実物の CLI）2.4→2.0s / 231 auto（drive の CLI）2.1→1.8s /
+    211 auto 2.1s / 1 fix-loop 1.9→1.6s / 188 situation（drive の CLI）1.8→1.6s。ファイル別の最大は auto.test.ts（28.8→16.5s）
+  - **提案止まり**: (1) 遅いテストの分離（slow suite）——上の計測のとおり今は効かないので入れない。CLI を spawn するテスト（auto / situation /
+    claude-log の約 10 本・各 1.5〜2.5 秒）が増えて一式が再び 100 秒を超えたら最初の候補 (2) ランナーの並列化——各テストは独立の一時ディレクトリを使うが、
+    `process.env` やカレントディレクトリに触れるテストの有無を洗う必要があり未調査 (3) 上限の引き上げ——不要（最後の手段のまま）
+  - ⚠️ **再発の見張り**: 一式の所要が 100 秒（上限の 83%）を超えたら、この枠を開け直す
+- Status: resolved (2026-10-05・テスト実行の信頼性の枠。BL-243 を含む)
 
 ## BL-242
 
@@ -469,7 +488,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   `b562360`（M5 段階1 の最終コミット）の worktree でも単体実行で exit 1 で、M5 より前から既存。
   これまでの検証はパイプ越しに `# pass` / `# fail` を読んでいたので表に出ていなかった（CLAUDE.md の「パイプの終了コード」の罠と同型）。
   当面は `# fail 0` で判定する。直すなら Test 174 の fake の stdout を、kill の後に書かないようにする。
-- Status: **merged → BL-241**（2026-09-25 人間の判断。「テスト実行の信頼性」枠として1本にまとめた。対処は BL-241 の枠のスコープ 2・3）
+- 根治（2026-10-05）: **原因は Test 174 の偽 codex（`fakeCodex`）が本物の子プロセスと違う順序でイベントを出していたこと。**
+  本物の ChildProcess は stdout が閉じた後にしか `close` を出さないが、偽物は kill で即座に `close` を呼び、その後で 1ms タイマーが出力を書いていた。
+  起動前の同期処理（git rev-parse など）が 30ms を超えると中断のタイマーが先に期限を迎え、executor が閉じた JSONL の記録先へ書き込んで
+  `write after end` → uncaughtException になっていた（単体で毎回・一式でタイミング次第、の実測と一致）。**本番の executor では起きない**。
+  偽 codex と、同じ形の偽 claude（`fakeClaude`）を「kill されたら以後書かない・stdout を閉じてから close」に直した。executor は変えていない。
+  実測: `codex-executor.test.ts` の単体実行 修正前 6/6 で exit 1 → 修正後 3/3 で exit 0、一式 10 回連続で exit 0
+- Status: resolved (2026-10-05・BL-241 の枠で根治)
 
 ## BL-272
 
