@@ -47,13 +47,24 @@ function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = 
     const stderr = new PassThrough();
     stdin.on("data", (c) => (captured.stdin += String(c)));
     const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};
+    // 本物の ChildProcess と同じ順序を守る（BL-243。codex-executor.test.ts の fakeCodex と同じ理由）:
+    // 'close' は stdout が閉じた後にしか来ず、kill された子は以後 stdout に書かない。
+    let dead = false;
+    let closed = false;
+    const close = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (closed) return;
+      closed = true;
+      if (!stdout.writableEnded) stdout.end();
+      setImmediate(() => handlers.close?.(code, signal));
+    };
     setTimeout(() => {
+      if (dead) return;
       for (const l of lines) {
         stdout.write(`${JSON.stringify(l)}\n`);
       }
       stdout.end();
       if (!opts.hang) {
-        handlers.close?.(opts.code ?? 0, null);
+        close(opts.code ?? 0, null);
       }
     }, 1);
     return {
@@ -62,7 +73,8 @@ function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = 
       stderr,
       kill: () => {
         captured.killed += 1;
-        handlers.close?.(null, "SIGTERM" as NodeJS.Signals);
+        dead = true;
+        close(null, "SIGTERM" as NodeJS.Signals);
       },
       on(event: string, cb: any) {
         if (event === "close") handlers.close = cb;

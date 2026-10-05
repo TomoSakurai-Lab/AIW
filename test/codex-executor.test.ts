@@ -35,13 +35,26 @@ function fakeCodex(lines: unknown[], opts: { code?: number; hang?: boolean } = {
     const stderr = new PassThrough();
     stdin.on("data", (c) => (captured.stdin += String(c)));
     const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};
+    // ⚠️ 本物の ChildProcess と同じ順序を守る（BL-243・2026-10-05）: 'close' は stdout が閉じた**後**にしか来ず、
+    // kill された子は以後 stdout に書かない。以前は kill が即座に close を呼び、その後で 1ms タイマーが出力を書いていた。
+    // 起動前の同期処理（git rev-parse など）が長いと中断のタイマーが先に期限を迎え、executor が閉じた JSONL の記録先へ
+    // 書き込んで uncaughtException（write after end）になり、全件 pass でも終了コード 1 になっていた。
+    let dead = false;
+    let closed = false;
+    const close = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (closed) return;
+      closed = true;
+      if (!stdout.writableEnded) stdout.end();
+      setImmediate(() => handlers.close?.(code, signal));
+    };
     setTimeout(() => {
+      if (dead) return;
       for (const l of lines) {
         stdout.write(`${JSON.stringify(l)}\n`);
       }
       stdout.end();
       if (!opts.hang) {
-        handlers.close?.(opts.code ?? 0, null);
+        close(opts.code ?? 0, null);
       }
     }, 1);
     return {
@@ -50,7 +63,8 @@ function fakeCodex(lines: unknown[], opts: { code?: number; hang?: boolean } = {
       stderr,
       kill: () => {
         captured.killed += 1;
-        handlers.close?.(null, "SIGTERM" as NodeJS.Signals);
+        dead = true;
+        close(null, "SIGTERM" as NodeJS.Signals);
       },
       on(event: string, cb: any) {
         if (event === "close") handlers.close = cb;
