@@ -376,6 +376,8 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   あわせて、容量不足が実運用で再発した: 10-05 の implementation（codex）で `Selected model is at capacity` が 5 回、約 50 分続いた。
   auto は設計どおり 5 分待って再試行したが、人が待機を 4 回打ち切り、最後は executor を通さずに成果物を作って `aiw run` した
   （Event Log に exec の記録が無い）。**D2（モデルフォールバック）があれば無人のまま越えられた事象の実例**。
+- Priority（2026-10-05 人間の決定）: **この実例で優先度を上げた。** 枠の中身は `transientCause` + BL-272 + D2。
+  順序はテスト実行の信頼性（BL-241）→ 判断インフレ対策（未起票）→ **この枠**
 - Status: open
 
 ## BL-239
