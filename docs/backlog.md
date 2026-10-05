@@ -215,6 +215,12 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   対処候補: `token-range` の violation メッセージに**現在値・上限・`##` セクション別の見積もり（どこを削れば収まるかの目安）**を
   含め、直す側（人間でも再実行でも）が 1 回で収束できるようにする。見積もりは validator 自身の関数を使うので複製にならない。
   ⚠️ validator の**緩和ではない**（上限は不変・不変条件4）が、M4 の前提「validator を変更しない」に触れるので M4 完了後の枠で。
+- 追記（2026-10-05・M5 段階4 の観測）: **research を auto で再走させていた期間（09-25〜10-05）に長さ超過の halt が 9 件増えた。**
+  09-26 02:07（~1738）/ 09-28 11:55（~1569）→ 12:02（~1569・削らずに resume）→ 12:07（~1542）→ 12:08（~1519）→ 12:08（~1505）/
+  13:02（~1695）→ 13:05（~1643）→ 13:05（~1622）（時刻は日本時間）。
+  **ux-decision の答えを追記する形の再走が、前の内容と重なって package を太らせる**（周を重ねて 1,500 を超える）。
+  そのあと人が resume のたびに少しずつ削って収束させており、上の「halt のたびに人間が手応えなしに手で削る」の実例が増えた。
+  ⚠️ BL-240 の再組み入れ条件②（research を無人区間へ戻す前に、この問題を対処する）。
 - Status: open
 
 ## BL-209
@@ -366,6 +372,10 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   auto やエンジンが `result.error` の文字列を正規表現で分類する案は採らない（分類が3箇所目になり、KI-01 型のずれの温床）。
   ⚠️ `failureKind` の意味は変えない（transient / permanent の判定はそのまま。`transientCause` は transient の内訳）。
   ⚠️ codex.ts を変えたら clipboard 経路のテストを**同じコミットで**通し直す（不変条件5）。
+- 追記（2026-10-05・M5 段階4 の観測）: **同じ枠で BL-272（claude が認証切れを transient に分類する）も直す**（人間の判断）。
+  あわせて、容量不足が実運用で再発した: 10-05 の implementation（codex）で `Selected model is at capacity` が 5 回、約 50 分続いた。
+  auto は設計どおり 5 分待って再試行したが、人が待機を 4 回打ち切り、最後は executor を通さずに成果物を作って `aiw run` した
+  （Event Log に exec の記録が無い）。**D2（モデルフォールバック）があれば無人のまま越えられた事象の実例**。
 - Status: open
 
 ## BL-239
@@ -396,7 +406,20 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   毎回承認待ちで止まり、周回ごとに人の承認が挟まる (2) ゲートを外した research に `auto: true` を付けると、
   auto の起動時の構造検査が「retryPolicy を通らない循環」として起動を拒否する（A24）。
   research の所要（実測 139 分の大半は人間の検討）と、対話の喪失（M4 課題C）も併せて見る。
-- Status: open
+- 決着（2026-10-05 人間の裁定）: **research を無人区間から外す**（runtime の `auto: true` を削除、`versions.workflow` 9 → 10）。
+  ⚠️ runtime では 09-25 17:21 から research にも `auto: true` が付いていた（version を上げず、設計の保留を先取りした状態）。実測
+  （09-25〜10-05・auto で回した 11 タスク。最初の1本〔BL-214〕の research 1 回は付く前で、区間外として手動実行）:
+  - research の実行 **44 回**（1 タスク平均 4.0 回・最大 10 回）、`ux-decision-required` の戻り **14 回**
+  - `context-package.md` の長さ超過による halt **9 回**（再走のたびに膨らんだ。BL-210 に追記）
+  - **起動直後の人の Ctrl+C 8 回**（2〜274 秒。auto が承認の直後に research を再起動し、人が手で止めた。理由は記録に無い）。
+    ほかに認証切れの再試行の待機を打ち切った Ctrl+C が 2 回（BL-272）
+  - 総上限 40 分の打ち切り 2 回・無進行の打ち切り 1 回、status を書かずに終わった（A17）2 回
+  これは設計（裁定 #1）が「判断を保留したまま再走し続ける」として保留にした経路そのもので、**人が機械と逆向きに戦った**。
+- 再組み入れ条件（2つとも入ってから、もう一度 n=5 で観測する）:
+  1. **承認の前に、Open Decisions へ決定が書かれたことを検査する仕組み**（例: ゲート②の時点の research-findings.md の `# Open Decisions` の
+     ハッシュを控え、`ux-decision-required` の後の再走の前に変化を確かめる）。⚠️ 2026-10-05 時点で設計も番号も無い（未設計）
+  2. **再走のたびに context-package.md が膨らむ問題（BL-210）の対処**
+- Status: resolved (2026-10-05・research を区間から外した。再組み入れは上の条件付き)
 
 ## BL-241
 
@@ -445,3 +468,20 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   これまでの検証はパイプ越しに `# pass` / `# fail` を読んでいたので表に出ていなかった（CLAUDE.md の「パイプの終了コード」の罠と同型）。
   当面は `# fail 0` で判定する。直すなら Test 174 の fake の stdout を、kill の後に書かないようにする。
 - Status: **merged → BL-241**（2026-09-25 人間の判断。「テスト実行の信頼性」枠として1本にまとめた。対処は BL-241 の枠のスコープ 2・3）
+
+## BL-272
+
+- Source: M5 段階4 の観測（Event Log 2026-09-30）/ 起票 2026-10-05・人間が承認
+- Severity: Major
+- Trigger: **BL-238（`transientCause`）の枠が立つとき、同じ枠で直す**（人間の判断）
+- Summary: **claude executor が認証切れ（`Failed to authenticate: OAuth session expired and could not be refreshed`）を transient に分類する。**
+  auto はこれを再試行対象として 5 分 / 15 分 待ち、待っても直らないので**人が Ctrl+C するまで待ち続けた**
+  （2026-09-30 の research で 4 回失敗・`auto.retry` 4 件・待機の打ち切り 2 回）。無人運転の約束の否定にあたる。
+  原因は `claude.ts` の `classifyFailure`: permanent にするのは `api_error_status` 401 / 403 と、本文の
+  `not logged in|authentication_failed|unauthorized|invalid api key|refus` だけで、`OAuth session expired` はどれにも当たらず、
+  最後の「分からないものは transient に倒す」に落ちる。codex 側（`codex.ts`）は `401|unauthorized|not authenticated|invalid api key` を
+  permanent にしている。**`failureKind` の型は共通・分類器は provider 固有（M4.4 の比較表）の、分類器側の穴**（executor 間の非対称）。
+  直し方: claude の分類器で認証切れ（`OAuth session expired` / `could not be refreshed` など）を permanent にし、
+  実際のエラー本文を fixture にした Test を足す。codex 側も同じ観点で見直す。
+  ⚠️ 分類の変更は executor の変更（M5 のやらないこと）なので M5 では直さない。clipboard 経路のテストを同じコミットで通し直す（不変条件5）。
+- Status: open（BL-238 と同じ枠）
