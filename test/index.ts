@@ -36,3 +36,4 @@ import "./ac-schema.test.js";
 import "./feature-archive.test.js";
 import "./situation.test.js";
 import "./auto.test.js";
+import "./tokens-cli.test.js";

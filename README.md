@@ -29,6 +29,7 @@ aiw --root <dir> resume     # halt / 中断からの再開（postAction 失敗�
 aiw --root <dir> prompt [step]      # ステップのフェーズプロンプトを stdout＋クリップボードへ（既定: 現在ステップ）
 aiw --root <dir> drive      # 対話 y/n ドライバ（各フェーズを誘導・プロンプトを自動コピー）
 aiw --root <dir> auto       # 承認ゲートの後の無人区間を exec → run で進める（M5。下記）
+aiw --root <dir> tokens <file...>  # token-range の validator と同じ見積もりでトークン数（合計・範囲・セクション別）を出す。読むだけ
 aiw --root <dir> new-task   # 次タスク用にリセット（user-task.md + current-* をテンプレへ）
 ```
 

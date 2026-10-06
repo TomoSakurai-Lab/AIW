@@ -31,6 +31,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
+import { estimateTokens, estimateTokensBySection } from "./engine/tokens.js";
 import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
@@ -220,6 +221,67 @@ function engineLogCmd(stepArg: string | undefined, opts: { raw?: boolean; json?:
     latest.provider === "codex" ? readRunLog(root, latest.file) : readClaudeRunLog(root, latest.file);
   const formatted = latest.provider === "codex" ? formatRunLog(log as ReturnType<typeof readRunLog>) : formatClaudeRunLog(log as ReturnType<typeof readClaudeRunLog>);
   console.log(opts.json ? JSON.stringify(log, null, 2) : formatted);
+}
+
+/**
+ * `aiw tokens <files...>` — token-range validator と**同じ見積もり関数**でトークン数を出す（読むだけ・2026-10-06）。
+ *
+ * 実測: research は上限に収めるために自前の `wc -c` などで近似して測っては少しずつ削るのを 16 周繰り返し、
+ * 1 回の実行の約 3 分の 1（推定 13 分）を使っていた。**書く側に別の見積もりを持たせない**（BL-210 の方針）ために、
+ * validator の estimateTokens / estimateTokensBySection をそのまま呼ぶ口を用意する（複製ではない）。
+ * そのファイルを target にする token-range の宣言があれば、範囲と残りも出す。終了コードは測れたら 0（判定はしない）。
+ */
+function tokensCmd(files: string[], opts: { json?: boolean }): void {
+  const root = engineRoot();
+  let config: ReturnType<typeof engineLoadConfig> | null = null;
+  try {
+    config = loadConfig(root);
+  } catch {
+    config = null; // 設定が読めなくても、見積もり自体は出す
+  }
+  const key = (p: string): string => path.resolve(p).toLowerCase();
+  const ranges = config
+    ? Object.values(config.steps).flatMap((s) =>
+        (s.validators ?? [])
+          .filter((v) => v.type === "token-range" && v.target)
+          .map((v) => ({ step: s.id, file: key(path.join(root, v.target!)), min: v.min ?? 0, max: v.max ?? Number.POSITIVE_INFINITY }))
+      )
+    : [];
+  const results: Array<Record<string, unknown>> = [];
+  for (const f of files) {
+    const file = [path.resolve(f), path.resolve(root, f)].find((p) => existsSync(p));
+    if (!file) {
+      console.error(`no such file: ${f}`);
+      process.exitCode = 1;
+      continue;
+    }
+    const text = readFileSync(file, "utf8");
+    const tokens = estimateTokens(text);
+    const sections = estimateTokensBySection(text);
+    const range = ranges.find((r) => r.file === key(file));
+    let status: string | null = null;
+    if (range) {
+      status =
+        tokens > range.max
+          ? `上限を ${tokens - range.max} 超過`
+          : tokens < range.min
+            ? `下限に ${range.min - tokens} 不足`
+            : `範囲内（上限まで ${range.max - tokens}・上限の ${Math.round((tokens / range.max) * 100)}%）`;
+    }
+    results.push({ file: path.relative(process.cwd(), file) || file, tokens, range: range ?? null, status, sections });
+    if (!opts.json) {
+      const label = path.relative(process.cwd(), file) || file;
+      console.log(
+        range
+          ? `${label} ~${tokens} tokens  token-range [${range.min}, ${range.max}]（${range.step}）: ${status}`
+          : `${label} ~${tokens} tokens  （token-range の宣言なし）`
+      );
+      console.log(`  セクション別の見積もり・大きい順: ${sections.map((s) => `${s.heading} ~${s.tokens}`).join(" / ")}`);
+    }
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(results, null, 2));
+  }
 }
 
 async function engineExecCmd(stepArg?: string, opts: { quiet?: boolean; verbose?: boolean } = {}): Promise<void> {
@@ -569,6 +631,14 @@ program
   .option("--json", "機械可読な構造化出力")
   .action((step: string | undefined, opts: { raw?: boolean; json?: boolean }) => {
     engineLogCmd(step, opts);
+  });
+
+program
+  .command("tokens <files...>")
+  .description("Estimate tokens with the token-range validator's own estimator (total + per `#` section). Read-only")
+  .option("--json", "機械可読な構造化出力")
+  .action((files: string[], opts: { json?: boolean }) => {
+    tokensCmd(files, opts);
   });
 
 program
