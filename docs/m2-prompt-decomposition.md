@@ -104,6 +104,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | 許可値 `ready` / `fix-required`、`approved` は無効 | 遷移条件 | **Step に残す** | ✅ |
 | 成果物をファイルに書くこと（970分停止の実測） | 手順 | Skill | ✅ |
 | `fix-package.md` を生成しない | **死んでいる** | 🗑 削除 | 🗑 |
+| **(2026-10-06 追加・判断インフレ対策)** 逆向きの網: `[要回答]` のうち一意に決まる / 推奨を立てられたものを `research起因（過剰）` として Minor で指摘（Fix 原因の分類3値には加えない）。既定採用が context-package に載り実装が従っているか | **新規追加**（人間の注文） | review Skill（v7） | ✅ |
 | 対象ディレクトリ（旧 `.ai-workflow` との識別） | **死んでいる** | 🗑 削除（2026-09-02。下記） | 🗑 |
 | 対象ディレクトリ（`.ai-workflow/` 配下） | 恒久規則 | Instructions（coding-rules と共有・1行へ縮約） | ✅ |
 
@@ -131,6 +132,8 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | backlog 書式例の見出しが `## BL-046`（実 ID） | **死んでいる** | 🗑 `## BL-001` へ | 🗑 |
 | 対象ディレクトリ | 恒久規則 | 🗑 削除（Input/Output を `.ai-workflow2/` 付きで書く） | 🗑 |
 | **(2026-09-02 追加)** fix が見送った Fix Scope の Major を backlog へ転記する | **新規追加** | reflection Skill（Trigger の例外は backlog-rules） | ✅ |
+| **(2026-10-06 追加・判断インフレ対策)** 既定採用（ゲート②承認）は「実装時に決定された」と同じ扱い。backlog へ転記しない | **新規追加**（人間の注文） | reflection Skill（v6） | ✅ |
+| **(2026-10-06 追加)** 棚卸しタスクの型（月1回 / open 20 件超。Trigger 成立・wontfix 候補・統合候補を提案として一覧化、Status の確定は人間） | 恒久規則 | Instructions（backlog-rules v5） | ✅ |
 
 ### codex-system.md
 
@@ -155,6 +158,9 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | `./tools/nrun.cmd` / BL-050 / BL-054 / 絶対パス（runtime のみ） | **環境固有** | **local-environment** | ✅ |
 | 対象ディレクトリ | 恒久規則 | 🗑 削除（Output を `.ai-workflow2/` 付きで書く） | 🗑 |
 | Prohibited: 実装しない / 広範な探索をしない | 禁止事項 | Skill（目的の節） | ✅ |
+| **(2026-10-06 追加・判断インフレ対策)** `# Open Decisions` を `[推奨あり]` / `[要回答]` に分ける（選択肢・推奨+根拠・採用時のリスク・タグ）。`ux-decision-required` は `[要回答]` があるときだけ。既定採用は context-package の `# Constraints` に1行ずつ | **新規追加**（人間の注文。遷移・契約・許可値は不変） | research Skill（v7） | ✅ |
+| **(2026-10-06 追加・BL-210)** 再実行では context-package を追記ではなく再構成する | **新規追加** | research Skill（v7） | ✅ |
+| **(2026-10-06 追加)** backlog の Trigger 照合（Modify のファイル名・識別子で open を grep し、拾える候補を `# Delta` に最大5件。不在も記録） | **新規追加**（パリティ棚卸しと同じ型） | research Skill（v7） | ✅ |
 
 ---
 
