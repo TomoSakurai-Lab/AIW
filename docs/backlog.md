@@ -538,7 +538,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   上限で打ち切られたコマンド 6 回のうち 4 回（#34 / 52 / 54 / 56）が、**テスト自体は通過した後**（例: 24 passed）に後始末で止まっていた。
   1 回あたり約 2 分、このタスクで約 8 分。research がこの手順を codex-prompt へそのまま写すので、e2e を流すタスクすべてに効く。
   直し方: 起動したプロセスを ID で控え、終了時にプロセスツリーごと止める（待たずに止める）。別ポートで検証してから反映する
-- Status: open
+- 対処（2026-10-06）: runtime の手順を `Start-Process -PassThru -WindowStyle Hidden` で起動し、`finally` で `taskkill /PID <Id> /T /F` に変えた
+  （`versions.instructions.local-environment` 5 → 6。runtime のみ・assets には環境固有ファイルを置かない＝不変条件7）。
+  手元の実測（ポート 5055・e2e の代わりに即終了するコマンド・同じバックエンド）: 準備完了まではどちらも約 49 秒、
+  **後始末は旧 `Stop-Job` 24.6 秒 → 新 `taskkill` 0.4 秒**、プロセス終了まで 74 秒 → 49 秒。どちらも 5000 番の解放・dotnet の残存なし。
+  今日の codex のログでも、手順書どおり `Start-Job` で起動した 4 回はすべて上限で打ち切られ、codex が自分で `Start-Process` に切り替えた 7 回はすべて上限前に戻っていた。
+  反映は research の実行が終わった後（17:42）。⚠️ その直前の research が書いた codex-prompt.md には旧手順が写っている（このタスクの implementation は旧手順のまま）
+- Status: resolved (2026-10-06・効果は次の e2e を流すタスクで観測)
 
 ## BL-279
 
