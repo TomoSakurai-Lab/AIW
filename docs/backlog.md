@@ -583,3 +583,21 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   ⚠️ 最終イベントが総上限の 120 秒前より後に来た場合は、猶予より先に総上限が撃つので従来どおり中断・即時再試行になる（残る穴）。
   (2) は未着手（設計の論点）
 - Status: open（(2) が残る）
+
+## BL-281
+
+- Source: 2026-10-06 の research（`runs/claude/2026-10-06T08-03-41-309Z-research.jsonl`・39 分）の所要の調査 / 起票 2026-10-06・人間が承認
+- Severity: Major
+- Trigger: すぐ（人間の判断で修正に着手）
+- Summary: **research が context-package を token-range の上限に収めるため、自前の近似で測っては少しずつ削るのを 16 周繰り返していた。**
+  ツール呼び出し 143 回のうち #94〜143（約 3 分の 1・往復の回数からの推定で約 13 分）が、`wc -c` / `grep -o "[ -~]" | wc` で見積もっては
+  50〜100 文字ずつ Edit で削る作業だった（自前の見積もり「約 3,340 トークン」から始めている）。research は aiw の見積もり関数を使えないので、
+  BL-210 の「書く側は測らない」の帰結として、validator と合わない近似で手探りしていた。
+  research の所要は出力トークンにほぼ比例（1 分あたり約 4,400 トークン）し、10-06 の 3 回は 27.5 / 35.9 / 39.0 分と総上限 40 分の手前まで伸びていた。
+- 対処（2026-10-06）:
+  1. **`aiw tokens <file...>`**（読むだけの CLI）: validator の `estimateTokens` / `estimateTokensBySection` をそのまま呼び、合計・宣言された範囲と残り・
+     セクション別の内訳（大きい順）を出す。見積もりの複製ではない（BL-210 の方針と整合）。Test 236
+  2. runtime の research の `bashAllow` に `node tools/aiw/dist/cli.js tokens:*`、local-environment（v7）に測り方の節（`cd` を挟まずルートから・BL-209）
+  3. research Skill v8: 「validator と同じ見積もりで測る・自前に近似しない」「上限の 8 割を超えたら内訳を見て一度でまとめて削る」
+  効果の観測は次の research（削り直しの周回数と所要）。⚠️ 上限そのもの（runtime で 1,500 → 3,000 に引き上げられたまま）の扱いは人間の判断待ち（BL-210）
+- Status: resolved (2026-10-06・効果は次の research で観測)

@@ -47,6 +47,14 @@ artifact-contract が halt する。
 
 ## context-package.md
 
+### 上限のあるファイルを書くとき（token-range）
+
+- **測るときは validator と同じ見積もりを使う**（Local Environment に測り方があればそれ）。`wc` などの文字数で自前に近似しない
+  ——validator と合わず、測っては削るを繰り返す原因になる
+- ⚠️ **上限の8割を超えたら、セクション別の内訳を見て、大きいセクションから一度でまとめて削る。小刻みに削っては測るを繰り返さない**
+  （実測 2026-10-06: 自前の近似で 16 周削り直し、research の約 3 分の 1・推定 13 分を使った）。
+  削る先は、実装に要らない背景と、`research-findings.md` / `codex-prompt.md` に既にある内容の重複
+
 ### `# Acceptance Criteria Matrix`
 
 次の表形式にする。ID は `AC-01` から連番。
