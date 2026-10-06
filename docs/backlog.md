@@ -544,6 +544,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   **後始末は旧 `Stop-Job` 24.6 秒 → 新 `taskkill` 0.4 秒**、プロセス終了まで 74 秒 → 49 秒。どちらも 5000 番の解放・dotnet の残存なし。
   今日の codex のログでも、手順書どおり `Start-Job` で起動した 4 回はすべて上限で打ち切られ、codex が自分で `Start-Process` に切り替えた 7 回はすべて上限前に戻っていた。
   反映は research の実行が終わった後（17:42）。⚠️ その直前の research が書いた codex-prompt.md には旧手順が写っている（このタスクの implementation は旧手順のまま）
+- 訂正（2026-10-06 同日）: 停止は `taskkill /T /F` ではなく、**codex がサンドボックスの中で 7 回すべて通した形**
+  （`Get-NetTCPConnection -LocalPort 5000` の持ち主と、起動した dotnet を `Stop-Process -Force`）に揃えた。
+  `taskkill` はサンドボックスの中で動くか未確認だったため。手元の実測でこの停止も約 1 秒・ポートの解放・残存なし。版は 6 のまま（v6 を使った実行はまだ無い）
 - Status: resolved (2026-10-06・効果は次の e2e を流すタスクで観測)
 
 ## BL-279
