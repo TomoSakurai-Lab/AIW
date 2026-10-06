@@ -6,7 +6,7 @@ import { checkMarkdownSections } from "./artifactContract.js";
 // Interop shim: under NodeNext, ajv v8's default export can arrive wrapped. Resolve the class.
 const Ajv: any = (AjvModule as any).default ?? AjvModule;
 import { resolveConfigRef } from "./paths.js";
-import { estimateTokens } from "./tokens.js";
+import { estimateTokens, estimateTokensBySection } from "./tokens.js";
 import { isDeclared, parseDeclaredFiles } from "./declaredFiles.js";
 import { compareToBaseline, readBaseline, readRepoState, resolveCheckRepoRoot } from "./gitScope.js";
 import { knownFailureHint, runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
@@ -181,12 +181,21 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       if (!existsSync(file)) {
         return failed(`${target} does not exist`, target);
       }
-      const tokens = estimateTokens(readFileSync(file, "utf8"));
+      const text = readFileSync(file, "utf8");
+      const tokens = estimateTokens(text);
       const min = v.min ?? 0;
       const max = v.max ?? Number.POSITIVE_INFINITY;
-      return tokens >= min && tokens <= max
-        ? passed(`${target} ~${tokens} tokens (in [${min}, ${max}])`, target)
-        : failed(`${target} ~${tokens} tokens outside [${min}, ${max}]`, target);
+      if (tokens >= min && tokens <= max) {
+        return passed(`${target} ~${tokens} tokens (in [${min}, ${max}])`, target);
+      }
+      // BL-210: 違反のときは「どこを削れば（足せば）収まるか」を1回の halt で分かる形にする。
+      // ⚠️ 上限・下限は変えない（緩和ではない・不変条件4）。先頭の `~N tokens outside [min, max]` は以前と同じ形のまま
+      // （Event Log や既存の記録を同じ文字列で検索できるように）。
+      const gap = tokens > max ? `上限を ${tokens - max} 超過` : `下限に ${min - tokens} 不足`;
+      const breakdown = estimateTokensBySection(text)
+        .map((s) => `${s.heading} ~${s.tokens}`)
+        .join(" / ");
+      return failed(`${target} ~${tokens} tokens outside [${min}, ${max}]（${gap}。セクション別の見積もり・大きい順: ${breakdown}）`, target);
     }
     case "diff-scope":
       return runDiffScope(root, config, v, ctx);

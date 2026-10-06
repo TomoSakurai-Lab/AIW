@@ -280,3 +280,33 @@ test("35: invalid result halt exposes the allowed transition keys", () => {
   const allowed = out.kind === "halted" ? (out.detail?.allowed as string[]) : [];
   assert.deepEqual([...allowed].sort(), ["fix-required", "ready"]);
 });
+
+// Test 233 — token-range の違反メッセージが「どこを削れば（足せば）収まるか」を1回で示す（BL-210・2026-10-06）。
+// 実測: 再走で太った context-package を、人が halt → resume のたびに手応えなしに少しずつ削っていた（09-28 に 1569 → 1542 → 1519 → 1505）。
+// ⚠️ 上限・下限は変えない（緩和ではない）。先頭の `~N tokens outside [min, max]` の形も以前のまま（記録の検索を壊さない）。
+test("233: a token-range violation names the overshoot and the per-section estimate, largest first", () => {
+  const { root, config } = makeRoot();
+  setStep(root, "research");
+  writeIn(root, "codex-prompt.md", validCodexPrompt);
+  writeIn(root, "research-findings.md", validResearchFindings);
+  writeStatus(root, { step: "research", result: "research-complete", reason: "x" });
+  const tokenRange = config.steps["research"].validators!.find((v) => v.type === "token-range")!;
+  const max = tokenRange.max!;
+
+  // 上限超え: # Files を膨らませる（契約の見出しはすべて揃えたまま）
+  const bloated = validContextPackage().replace("## Modify\ny", `## Modify\n${"- \`src/a.ts\` lorem ipsum dolor sit amet\n".repeat(220)}`);
+  writeIn(root, "context-package.md", bloated);
+  const total = estimateTokens(bloated);
+  assert.ok(total > max, "fixture は上限を超えている");
+  const over = runValidators(root, config, [tokenRange]).violations.find((v) => v.type === "token-range");
+  assert.ok(over, "上限超えで違反になる（上限は緩めていない）");
+  assert.match(over!.message, new RegExp(`^context-package\\.md ~${total} tokens outside \\[\\d+, ${max}\\]`), "先頭の形は以前のまま");
+  assert.match(over!.message, new RegExp(`上限を ${total - max} 超過`));
+  assert.match(over!.message, /セクション別の見積もり・大きい順: # Files ~\d+ \/ # Task Summary ~\d+/, "最大のセクションが先頭");
+
+  // 下限割れ: 見出しだけの package は「不足」と内訳を示す
+  writeIn(root, "context-package.md", SKELETON_PACKAGE);
+  const under = runValidators(root, config, [tokenRange]).violations.find((v) => v.type === "token-range");
+  assert.ok(under);
+  assert.match(under!.message, /下限に \d+ 不足。セクション別の見積もり・大きい順: /);
+});
