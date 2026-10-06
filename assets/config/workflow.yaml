@@ -67,8 +67,8 @@ versions:
     acResult: 1                # BL-113: 同上（enum は status の三値のみ）
   # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
   skills:
-    implementation: 5         # 2026-10-05: 検証の段階制とコマンドの上限（一式は最後に1回・上限で打ち切られたら NOT VERIFIED・BL-241）
-    fix: 6                    # 2026-10-05: 検証の段階制にコマンドの上限の扱いを追加（BL-241）
+    implementation: 6         # 2026-10-06: 絞った実行に入らない故障注入・防衛線は一式にしか無い。最後の一式を省いた完了報告は不完全（v5 2026-10-05: 検証の段階制とコマンドの上限・BL-241）
+    fix: 7                    # 2026-10-06: 同上（v6 2026-10-05: 検証の段階制にコマンドの上限の扱い・BL-241）
     review: 6                  # `### Files To Modify` に 1 行 1 パス・略記禁止の書式規則を追加
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 5             # context.md の索引を同時に更新する
