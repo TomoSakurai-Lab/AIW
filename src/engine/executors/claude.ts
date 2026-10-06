@@ -29,6 +29,7 @@ import { rootPaths } from "../paths.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
 import { redactSession, sessionSecret, toSessionRef, type SessionRef, type SessionSecret } from "../session.js";
 import type { ExecutorName, WorkflowStep } from "../types.js";
+import { createLingerGuard, DEFAULT_LINGER_GRACE_MS } from "./linger.js";
 import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
 
 /** 既定タイムアウト。review の実測中央値 13 分に対して 3 倍（設計 課題F）。
@@ -125,6 +126,8 @@ export type ClaudeDeps = {
   /** テスト用の差し替え口。既定は pin した claude.exe を shell 無しで直接起動する */
   launch?: (argv: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => ClaudeProcess;
   now?: () => number;
+  /** 最終イベント（result）の後、終了を待つ猶予（BL-279・codex と同じ）。テストで短くする。既定は DEFAULT_LINGER_GRACE_MS */
+  lingerGraceMs?: number;
 };
 
 export type ClaudeProcess = {
@@ -746,6 +749,16 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       } else {
         req.signal?.addEventListener("abort", onAbort, { once: true });
       }
+      // BL-279: result の後に終わらないときだけの猶予（codex.ts と同じ形。最終イベントより前は見張りの担当）
+      const lingerGraceMs = deps.lingerGraceMs ?? DEFAULT_LINGER_GRACE_MS;
+      const linger = createLingerGuard({
+        graceMs: lingerGraceMs,
+        kill: () => {
+          emit({ kind: "error", text: `claude は結果を報告したが ${Math.round(lingerGraceMs / 1000)}s 終了しなかったので止めた（結果どおりに扱う）` });
+          child.kill("SIGTERM");
+        }
+      });
+      finished.then(() => linger.dispose(), () => linger.dispose());
 
       // JSONL を1行ずつ: 保存（生のまま） + 要約を通知
       if (child.stdout) {
@@ -787,6 +800,7 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
             if (event.is_error === true) {
               firstError ??= redactSession(String(event.result ?? ""), secret);
             }
+            linger.finalSeen();
           }
           const lines = summarize(event, secret);
           for (const progress of lines) {
@@ -818,7 +832,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
 
       const durationMs = now() - startedAt;
       // KI-08 の二重判定。内部フラグだけを信じず、signal と実測時間からも裏を取る。
-      const interrupted = abortedFlag || outcome.signal !== null || durationMs >= timeoutMs;
+      // ⚠️ BL-279: result の後に自分で止めた（linger.fired）ときは中断ではない（見張りが先に撃った abortedFlag は従来どおり中断）
+      const lingered = linger.fired && !abortedFlag;
+      const interrupted = !lingered && (abortedFlag || outcome.signal !== null || durationMs >= timeoutMs);
 
       const meta: Record<string, unknown> = {
         executor: "claude",
@@ -850,7 +866,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         permissionDenials: denials,
         errorEvents: errorCount,
         // 送った本文の指紋。組み立て出力と一致することを故障注入 #6 で照合する
-        promptSha256: createHash("sha256").update(assembly.text).digest("hex")
+        promptSha256: createHash("sha256").update(assembly.text).digest("hex"),
+        // BL-279: result の後に終わらず、猶予で止めたとき（無ければキーごと無い）
+        ...(lingered ? { lingeringAfterCompletion: { graceMs: lingerGraceMs, killed: true } } : {})
       };
 
       if (outcome.spawnError) {
@@ -872,7 +890,8 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         };
       }
       // ⚠️ 成否の正は `is_error`。**`subtype` は認証失敗でも "success" を返す**（§3 観測5）。
-      if (resultIsError === true || outcome.code !== 0) {
+      // BL-279: 自分で止めたときは exit code が意味を持たない。成否は result の is_error だけで決める
+      if (resultIsError === true || (outcome.code !== 0 && !lingered)) {
         const text = `${firstError ?? ""} ${stderrTail}`;
         return {
           ok: false,

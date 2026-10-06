@@ -645,3 +645,48 @@ test("161: writes through a program's own arguments are always denied, without c
   const ba = bare.captured.argv.indexOf("--allowedTools");
   assert.deepEqual(bare.captured.argv.slice(bd + 1, ba), [...CLAUDE_BASH_DENY]);
 });
+
+// Test 235 — BL-279: claude も同じ形（codex の Test 234 と対称・BL-221 の規律）。result の後に終了しないとき、猶予で止めて
+// **result のとおりに**扱う（is_error:false なら完了、true なら従来どおり失敗）。result より前の固まりは見張りの担当のまま。
+test("235: a claude that does not exit after its result is stopped after the grace and judged by the result", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["improve-check"];
+
+  const ok = fakeClaude(OK_EVENTS, { hang: true });
+  const progress: ExecutorProgress[] = [];
+  const done = await createClaudeExecutor({ launch: ok.launch, lingerGraceMs: 30 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    timeoutMs: 60_000,
+    onProgress: (e) => progress.push(e)
+  });
+  assert.equal(done.ok, true);
+  assert.equal(ok.captured.killed, 1);
+  assert.deepEqual((done.meta as any).lingeringAfterCompletion, { graceMs: 30, killed: true });
+  assert.ok(progress.some((e) => e.kind === "error" && /終了しなかったので止めた/.test(e.text)));
+
+  // result が is_error なら、止めた後も失敗のまま（猶予は成否を変えない）
+  const failing = fakeClaude([INIT, { ...RESULT, is_error: true, result: "API Error: 529 overloaded", api_error_status: 529 }], { hang: true });
+  const bad = await createClaudeExecutor({ launch: failing.launch, lingerGraceMs: 30 }).execute({ root, config, step, projectRoot: root, timeoutMs: 60_000 });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.failureKind, "transient");
+  assert.deepEqual((bad.meta as any).lingeringAfterCompletion, { graceMs: 30, killed: true });
+
+  // result の前に固まった実行は、猶予では止めない
+  const stuck = fakeClaude([INIT], { hang: true });
+  const human = new AbortController();
+  setTimeout(() => human.abort(), 200);
+  const r = await createClaudeExecutor({ launch: stuck.launch, lingerGraceMs: 30 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    signal: human.signal,
+    timeoutMs: 60_000
+  });
+  assert.equal(r.ok, false);
+  assert.equal((r.meta as any).lingeringAfterCompletion, undefined);
+  assert.equal((r.meta as any).timedOut, true, "従来どおり中断として扱う");
+});

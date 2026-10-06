@@ -27,6 +27,7 @@ import { resolveCheckRepoRoot } from "../gitScope.js";
 import { redactSession, sessionSecret, toSessionRef, type SessionRef, type SessionSecret } from "../session.js";
 import type { ExecutorName } from "../types.js";
 import { DEFAULT_TOTAL_TIMEOUT_MS } from "../watchdog.js";
+import { createLingerGuard, DEFAULT_LINGER_GRACE_MS } from "./linger.js";
 import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
 
 // `CODEX_DEFAULT_TIMEOUT_MS`（30 分）と自前の setTimeout は 2026-09-17 に撤去した（BL-221 (3)）。
@@ -37,6 +38,8 @@ export type CodexDeps = {
   /** テスト用の差し替え口。既定は pin した @openai/codex の JS シムを node で起動する */
   launch?: (argv: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => CodexProcess;
   now?: () => number;
+  /** 最終イベント（turn.completed）の後、終了を待つ猶予（BL-279）。テストで短くする。既定は DEFAULT_LINGER_GRACE_MS */
+  lingerGraceMs?: number;
 };
 
 export type CodexProcess = {
@@ -362,6 +365,16 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       } else {
         req.signal?.addEventListener("abort", onAbort, { once: true });
       }
+      // BL-279: turn.completed の後に終わらないときだけの猶予（中断の見張りとは別。最終イベントより前は見張りの担当）
+      const lingerGraceMs = deps.lingerGraceMs ?? DEFAULT_LINGER_GRACE_MS;
+      const linger = createLingerGuard({
+        graceMs: lingerGraceMs,
+        kill: () => {
+          emit({ kind: "error", text: `codex は完了を報告したが ${Math.round(lingerGraceMs / 1000)}s 終了しなかったので止めた（完了として扱う）` });
+          child.kill("SIGTERM");
+        }
+      });
+      finished.then(() => linger.dispose(), () => linger.dispose());
 
       // JSONL を1行ずつ: 保存（生のまま） + 要約を通知
       if (child.stdout) {
@@ -396,6 +409,9 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
           if (u) {
             usage = u;
           }
+          if (event?.type === "turn.completed") {
+            linger.finalSeen();
+          }
           const progress = summarize(event, secret);
           if (progress) {
             emit(progress);
@@ -423,7 +439,10 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
 
       const durationMs = now() - startedAt;
       // KI-08 の二重判定。内部フラグだけを信じず、signal と実測時間からも裏を取る。
-      const timedOut = abortedFlag || outcome.signal !== null || durationMs >= timeoutMs;
+      // ⚠️ BL-279: 最終イベントの後に自分で止めた（linger.fired）ときは中断ではない。止めた signal で中断と誤判定しない
+      // （見張りが先に撃った abortedFlag は従来どおり中断）。
+      const lingered = linger.fired && !abortedFlag;
+      const timedOut = !lingered && (abortedFlag || outcome.signal !== null || durationMs >= timeoutMs);
 
       const meta: Record<string, unknown> = {
         executor: "codex",
@@ -441,7 +460,9 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
         session: sessionRef, // ⚠️ hash と末尾のみ。生 ID は載せない
         usage,
         checkRepoRoot: projectRoot,
-        addDir
+        addDir,
+        // BL-279: 最終イベントの後に終わらず、猶予で止めたとき（無ければキーごと無い）
+        ...(lingered ? { lingeringAfterCompletion: { graceMs: lingerGraceMs, killed: true } } : {})
       };
 
       if (outcome.spawnError) {
@@ -463,7 +484,8 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
           meta: { ...meta, timedOut: true }
         };
       }
-      if (outcome.code !== 0) {
+      // BL-279: 自分で止めたので exit code は意味を持たない（turn.completed は受け取っている）。完了として返す
+      if (outcome.code !== 0 && !lingered) {
         // 分類は exit code ではなく、観測されたイベントから導く（設計 C-1）。
         const text = `${firstError ?? ""} ${stderrTail}`;
         const permanent = /401|unauthorized|not authenticated|invalid api key/i.test(text);

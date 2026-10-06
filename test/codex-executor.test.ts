@@ -431,3 +431,53 @@ test("177: codex gets an allowlisted env, so credentials outside the isolated CO
   assert.equal(Object.keys(captured.env).some((k) => /^(OPENAI_|ANTHROPIC_|CLAUDE)/i.test(k)), false);
   assert.equal(path.basename(String(captured.env.CODEX_HOME)), ".codex-home");
 });
+
+// Test 234 — BL-279（2026-10-06 実測）: **turn.completed の後に codex が終了しないとき、猶予で止めて完了として扱う。**
+// 以前は close を待ち続け、見張りが撃つまで（または人が Ctrl+C を 2 回押すまで）何も記録されなかった。
+// 見張りに任せると「中断」扱いになり、auto が出来上がった成果物を作り直す再試行に入る（BL-280）。
+// ⚠️ 最終イベントより前に固まったものは猶予で止めない（見張りの担当のまま）。
+test("234: a codex that does not exit after turn.completed is stopped after the grace and treated as completed", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["implementation"];
+
+  const { launch, captured } = fakeCodex(OK_EVENTS, { hang: true });
+  const progress: ExecutorProgress[] = [];
+  const result = await createCodexExecutor({ launch, lingerGraceMs: 30 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    timeoutMs: 60_000,
+    onProgress: (e) => progress.push(e)
+  });
+  assert.equal(result.ok, true, "完了として扱う（成否は validator が決める）");
+  assert.equal(captured.killed, 1, "猶予が切れたら子を止める");
+  assert.deepEqual((result.meta as any).lingeringAfterCompletion, { graceMs: 30, killed: true }, "黙って直さない: meta に残す");
+  assert.equal((result.meta as any).timedOut, undefined, "中断ではない");
+  assert.ok(
+    progress.some((e) => e.kind === "error" && /終了しなかったので止めた/.test(e.text)),
+    "画面にも出す（error は既定でも表示される）"
+  );
+
+  // 普通に終わる実行には何も付かない
+  const normal = await createCodexExecutor({ launch: fakeCodex(OK_EVENTS).launch, lingerGraceMs: 30 }).execute({ root, config, step, projectRoot: root });
+  assert.equal(normal.ok, true);
+  assert.equal((normal.meta as any).lingeringAfterCompletion, undefined);
+
+  // 最終イベントの前に固まった実行は、猶予では止めない（中断を待つ）
+  const stuck = fakeCodex([{ type: "thread.started", thread_id: THREAD_ID }], { hang: true });
+  const human = new AbortController();
+  setTimeout(() => human.abort(), 200);
+  const r = await createCodexExecutor({ launch: stuck.launch, lingerGraceMs: 30 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    signal: human.signal,
+    timeoutMs: 60_000
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.failureKind, "transient", "従来どおり中断として扱う");
+  assert.equal((r.meta as any).lingeringAfterCompletion, undefined);
+  assert.equal(stuck.captured.killed, 1, "止めたのは中断（猶予ではない）");
+});
