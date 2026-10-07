@@ -850,6 +850,22 @@ null や欠落にしない。「未指定と記録した」と「記録が無い
 `-m` は `--approve-for-me` / `--ephemeral` / `--ignore-user-config` / `--strict-config` と
 **併用できる**（exit 0 で確認）。`--sandbox` のような排他は無い。
 
+### pin を 0.160.1 へ上げた（2026-10-07）
+
+runtime の `codexModel` を `gpt-6.1-sol` へ変えるため。**0.147.0 では新しいモデルを呼べなかった**
+（`Model metadata for gpt-6.1-sol not found` の警告のあと、サーバが 400
+`The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account`）。
+同じ隔離 CODEX_HOME・同じ ChatGPT ログインのまま、デスクトップアプリ同梱の 0.160.1 では応答した。
+
+- 0.160.1 の `exec --help` で、executor が渡すフラグ（`-m` / `--json` / `--ephemeral` /
+  `--ignore-user-config` / `--strict-config` / `--approve-for-me` / `-C` / `-o` / `--add-dir` / stdin の `-`）が
+  すべて残っていることを確認した
+- 上げた後の pin で、executor と同じ引数の形を実際に起動: exit 0・`agent_message` / `turn.completed` の形は不変・
+  `-o` の last-message も書かれた。`usage` のキー（`input_tokens` / `cached_input_tokens` / `cache_write_input_tokens` /
+  `output_tokens` / `reasoning_output_tokens`）は executor が読んでいる名前のまま
+- aiw のテスト 277 件 green（fake の codex なので、実物の差は上の起動確認だけが見ている）
+- ⚠️ 戻すときは `package.json` の pin と `codexModel` を**組で**戻す（0.147.0 に `gpt-6.1-sol` は通らない）
+
 ### model-policy.json との統合は見送る
 
 `config/model-policy.json` は step ごとにモデルを宣言しているが、
