@@ -72,7 +72,7 @@ versions:
     review: 7                  # 2026-10-06: 逆向きの網（[要回答] の過剰を research起因（過剰）として Minor で指摘・分類語彙は増やさない）と既定採用の確認（v6: `### Files To Modify` に 1 行 1 パス）
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 6             # 2026-10-06: 既定採用（ゲート②承認）は「実装時に決定された」と同じ扱い（v5: context.md の索引を同時に更新する）
-    research: 8               # 2026-10-06: 上限のあるファイルは validator と同じ見積もりで測り、8割を超えたら一度でまとめて削る（v7: Open Decisions の [推奨あり] / [要回答]・再構成・Trigger 照合）
+    research: 9               # 2026-10-09: やめ時は目標帯（上限の 75〜90%）。超えたら帯まで一度で削り、帯に入ったら・上限内なら削らない（BL-283。「8割を超えたら一度で」を置き換え）（v8 2026-10-06: validator と同じ見積もりで測る）（v7: Open Decisions の [推奨あり] / [要回答]・再構成・Trigger 照合）
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)

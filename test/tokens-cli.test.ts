@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { estimateTokens, estimateTokensBySection } from "../src/engine/tokens.js";
+import { describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "../src/engine/tokens.js";
 import { runValidators } from "../src/engine/validators.js";
 import { makeRoot, validContextPackage } from "./helpers.js";
 
@@ -59,4 +59,30 @@ test("236: aiw tokens reports the validator's own estimate, the declared range, 
 
   assert.equal(statSync(file).mtimeMs, before, "読むだけ（ファイルを書かない）");
   assert.equal(readFileSync(file, "utf8"), text);
+});
+
+// Test 238 — BL-283: 目標帯（上限の 75〜90%）。やめ時を与えるだけで、判定（validator の pass 条件）は上限・下限のまま。
+// 超過時は「超過分」ではなく「帯の上端まで」を一度に削る量として出す（1 回 20〜100 ずつ削って上限の 97〜99% に張り付く山登りを止める）。
+test("238: aiw tokens shows a target band derived from the max, without changing the validator's verdict", () => {
+  assert.deepEqual(tokenTargetBand(250, 1500), { low: 1125, high: 1350 });
+  assert.equal(tokenTargetBand(0, Number.POSITIVE_INFINITY), null, "上限の無い宣言には帯を出さない");
+
+  assert.equal(describeTokenRange(1700, 250, 1500), "上限を 200 超過。目標帯 1125〜1350 まで一度で削る（あと 350 以上・目安 約 1400 字）");
+  assert.equal(describeTokenRange(1450, 250, 1500), "範囲内（上限まで 50・上限の 97%）。目標帯 1125〜1350 より上だが上限内——削らなくてよい");
+  assert.equal(describeTokenRange(1300, 250, 1500), "範囲内（上限まで 200・上限の 87%）。目標帯 1125〜1350 の中——削るのをやめる");
+  assert.equal(describeTokenRange(900, 250, 1500), "範囲内（上限まで 600・上限の 60%）");
+  assert.equal(describeTokenRange(100, 250, 1500), "下限に 150 不足");
+
+  // 帯の外（上限内）のファイルも validator は通す——帯は判定に入っていない
+  const { root, config } = makeRoot();
+  const tokenRange = config.steps["research"].validators!.find((v) => v.type === "token-range")!;
+  const file = path.join(root, "context-package.md");
+  let text = validContextPackage();
+  while (estimateTokens(text) <= Math.floor(tokenRange.max! * 0.9)) text += "\nfiller filler filler filler";
+  assert.ok(estimateTokens(text) <= tokenRange.max!, "テストの前提: 帯より上・上限内");
+  writeFileSync(file, text, "utf8");
+  assert.equal(runValidators(root, config, [tokenRange]).violations.length, 0, "帯より上でも上限内なら pass");
+  const [r] = JSON.parse(aiw(root, "tokens", file, "--json").stdout);
+  assert.deepEqual(r.target, tokenTargetBand(tokenRange.min ?? 0, tokenRange.max!));
+  assert.match(r.status, /削らなくてよい$/);
 });

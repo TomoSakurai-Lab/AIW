@@ -31,7 +31,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
-import { estimateTokens, estimateTokensBySection } from "./engine/tokens.js";
+import { describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
 import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
@@ -259,16 +259,9 @@ function tokensCmd(files: string[], opts: { json?: boolean }): void {
     const tokens = estimateTokens(text);
     const sections = estimateTokensBySection(text);
     const range = ranges.find((r) => r.file === key(file));
-    let status: string | null = null;
-    if (range) {
-      status =
-        tokens > range.max
-          ? `上限を ${tokens - range.max} 超過`
-          : tokens < range.min
-            ? `下限に ${range.min - tokens} 不足`
-            : `範囲内（上限まで ${range.max - tokens}・上限の ${Math.round((tokens / range.max) * 100)}%）`;
-    }
-    results.push({ file: path.relative(process.cwd(), file) || file, tokens, range: range ?? null, status, sections });
+    const status = range ? describeTokenRange(tokens, range.min, range.max) : null;
+    const target = range ? tokenTargetBand(range.min, range.max) : null; // BL-283: やめ時の帯（判定には使わない）
+    results.push({ file: path.relative(process.cwd(), file) || file, tokens, range: range ?? null, target, status, sections });
     if (!opts.json) {
       const label = path.relative(process.cwd(), file) || file;
       console.log(
