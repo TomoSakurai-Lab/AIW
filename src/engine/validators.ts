@@ -303,6 +303,12 @@ function runConsumerPresenceFromManifest(root: string, config: WorkflowConfig, v
       failures.push(check.id + ": consumer root does not exist: " + check.root);
       continue;
     }
+    // BL-282: root はディレクトリを指す（manifest の意味論）。ファイルを渡されたら走査で ENOTDIR の例外になり、
+    // 稼働中の auto を止めていた。ファイル単体の検査には広げず、理由付きの failed で書き手へ返す。
+    if (!statSync(dir).isDirectory()) {
+      failures.push(check.id + ": consumer root must be a directory, not a file: " + check.root);
+      continue;
+    }
     let pattern: RegExp;
     try { pattern = new RegExp(check.pattern, "m"); } catch {
       failures.push(check.id + ": invalid consumer pattern");

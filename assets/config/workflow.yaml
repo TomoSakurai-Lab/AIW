@@ -67,7 +67,7 @@ versions:
     acResult: 1                # BL-113: 同上（enum は status の三値のみ）
   # M2: Skill / Instructions もバージョン分離の対象。Event Log にどの版で走ったかが残る。
   skills:
-    implementation: 6         # 2026-10-06: 絞った実行に入らない故障注入・防衛線は一式にしか無い。最後の一式を省いた完了報告は不完全（v5 2026-10-05: 検証の段階制とコマンドの上限・BL-241）
+    implementation: 7         # 2026-10-09: consumerChecks[].root はディレクトリを指す（BL-282）（v6 2026-10-06: 絞った実行に入らない故障注入・防衛線は一式にしか無い。最後の一式を省いた完了報告は不完全（v5 2026-10-05: 検証の段階制とコマンドの上限・BL-241））
     fix: 7                    # 2026-10-06: 同上（v6 2026-10-05: 検証の段階制にコマンドの上限の扱い・BL-241）
     review: 7                  # 2026-10-06: 逆向きの網（[要回答] の過剰を research起因（過剰）として Minor で指摘・分類語彙は増やさない）と既定採用の確認（v6: `### Files To Modify` に 1 行 1 パス）
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加

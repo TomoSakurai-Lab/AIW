@@ -79,6 +79,34 @@ test("consumer-presence: manifest checks zero, allowed, misreport, and missing m
   assert.match(outcome.results[0].message, /consumer root does not exist/);
 });
 
+// Test 237 — BL-282: root がファイルを指していたら、例外（ENOTDIR）で落ちずに理由付きの failed。
+// 2026-10-08 に implementation が `MotodumoriTab.tsx` を root に書き、走査の例外で auto が 2 回止まった。
+// ファイル単体の検査には広げない（manifest の意味論は「root はディレクトリ」のまま）。
+test("Test 237: consumer-presence: a root pointing at a file fails with a reason instead of throwing", () => {
+  const { root, repoRoot } = makeRoot();
+  mkdirSync(path.join(repoRoot, "src"), { recursive: true });
+  writeFileSync(path.join(repoRoot, "src", "consumer.ts"), "callApi();\n", "utf8");
+  const validator = { type: "consumer-presence", onViolation: "report", manifest: "ac-manifest.json", result: "ac-result.json" } as const;
+  const config = customConfig([validator]);
+  writeIn(
+    root,
+    "ac-manifest.json",
+    JSON.stringify({
+      consumerChecks: [
+        { id: "API-01", root: "src/consumer.ts", pattern: "\\bcallApi\\b" },
+        { id: "API-02", root: "src", pattern: "\\bcallApi\\b" }
+      ],
+      acceptanceCriteria: []
+    })
+  );
+
+  const outcome = runValidators(root, config, config.steps.implementation.validators);
+  assert.equal(outcome.results[0].status, "failed");
+  assert.match(outcome.results[0].message, /API-01: consumer root must be a directory, not a file: src\/consumer\.ts/);
+  assert.doesNotMatch(outcome.results[0].message, /API-02/, "ほかの check は続けて検査される");
+  assert.equal(outcome.halt, false, "report は halt しない");
+});
+
 // manifest が知らないパス基準を名乗ったら **検査せず skipped**。
 // 別基準で書かれた root を checkRepoRoot 起点で解決すると、存在しないパスを見て
 // 「consumer 0 件」と報告する——今回直した偽陽性そのものなので、走らせない側へ倒す。

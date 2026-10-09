@@ -68,6 +68,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | `Manual Verification Required` / `Unresolved Decisions` を空にしたい誘惑への注意 | **新規追加**（Stage 3-1） | implementation Skill | ✅ |
 | **(2026-10-05 追加・BL-241)** 検証の段階制（開発中は関係するファイルを指定・一式は最後に1回）とコマンドの上限（約 120 秒。上限で打ち切られたら FAIL ではなく NOT VERIFIED・数値の理由・手段を変える） | **新規追加** | implementation Skill（v5） | ✅ |
 | **(2026-10-06 追加)** 絞った実行に入らない故障注入・防衛線は一式にしか含まれない。最後の一式1回を省いた完了報告は不完全（分割実行は網の免除ではない） | **新規追加**（人間の注文。improve-check の確認項目にするかは数タスク見てから） | implementation Skill（v6） | ✅ |
+| **(2026-10-09 追加・BL-282)** `consumerChecks[].root` はディレクトリを指す（ファイルを書かない）。エンジン側は理由付きの failed を返す（ファイル単体の検査には広げない） | **新規追加**（書き手の規則。pathBase と同じ両面の型） | implementation Skill（v7） | ✅ |
 | ↑ のうち、aiw 自身のテストのファイル単位の実行コマンド | 環境固有 | **Skill に書かない**（runtime の `context.md`「ワークフロー構成」。assets は他環境へ配られる・不変条件7） | ✅ |
 
 新規追加の意図: 三値規律の強化。**M1 版の `implementation.md` には存在しない**。

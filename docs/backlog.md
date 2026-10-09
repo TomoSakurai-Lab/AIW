@@ -554,7 +554,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 訂正（2026-10-06 同日）: 停止は `taskkill /T /F` ではなく、**codex がサンドボックスの中で 7 回すべて通した形**
   （`Get-NetTCPConnection -LocalPort 5000` の持ち主と、起動した dotnet を `Stop-Process -Force`）に揃えた。
   `taskkill` はサンドボックスの中で動くか未確認だったため。手元の実測でこの停止も約 1 秒・ポートの解放・残存なし。版は 6 のまま（v6 を使った実行はまだ無い）
-- Status: resolved (2026-10-06・効果は次の e2e を流すタスクで観測)
+- 効果（2026-10-09 集計）: 10-07 以降の codex の実行 12 回で、e2e のコマンドが上限で打ち切られた（exit 124）のは **0 回**
+  （before: 10-06 の 1 タスクで 4 回・約 8 分）。**効果確定**
+- Status: closed (2026-10-09・効果確定)
 
 ## BL-279
 
@@ -607,4 +609,41 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   2. runtime の research の `bashAllow` に `node tools/aiw/dist/cli.js tokens:*`、local-environment（v7）に測り方の節（`cd` を挟まずルートから・BL-209）
   3. research Skill v8: 「validator と同じ見積もりで測る・自前に近似しない」「上限の 8 割を超えたら内訳を見て一度でまとめて削る」
   効果の観測は次の research（削り直しの周回数と所要）。⚠️ 上限そのもの（runtime で 1,500 → 3,000 に引き上げられたまま）の扱いは人間の判断待ち（BL-210）
-- Status: resolved (2026-10-06・効果は次の research で観測)
+- 効果（2026-10-09 集計・research 8 回）: **測り方は直った**（`aiw tokens` と validator の値は一致し、提出時の token-range は 7 タスクとも一発で通過）。
+  **削り直しの周回は残った**: `aiw tokens` の呼び出しは 16 / 3 / 22 / 13 / 12 / 12 / 14 / 6 回。どの回も 1,500〜2,000 で書いてから
+  1 回 20〜100 トークンずつ削り、上限の 97〜99%（1,483〜1,500）に着地している。Skill v8 の「8 割を超えたら一度でまとめて削る」は守られていない。
+  10-07 の 1 回は 2,930 から 16 周削る途中で総上限 40 分に当たって落ちた。→ **BL-283**
+- Status: resolved (2026-10-06)・効果は部分的（測り方は確定・周回は BL-283 へ）
+
+## BL-282
+
+- Source: 2026-10-08 の FEAT-review-feedback-1008 / TASK-2026-10-08-row-type の implementation（Event Log の `auto.stopped` A25 が 18:17 / 18:20・日本時間）/ 起票 2026-10-09・人間が承認
+- Severity: Major
+- Trigger: すぐ（人間の判断で修正に着手）
+- Summary: **consumer-presence が `ac-manifest.json` の `consumerChecks[].root` にファイル（`MotodumoriTab.tsx`）を渡され、
+  走査（`readdirSync`）が `ENOTDIR` の例外で落ちて、稼働中の auto を 2 回止めた。** 人が手で implementation を進めて回避した。
+  この validator は 2026-09-01 の修正後が初計測の期間で、クラッシュで落ちると検出力の計測自体を汚す。
+- 対処（2026-10-09）: 両面で直した（pathBase と同じ型）。
+  1. エンジン: root が実在するファイルなら、その check を `consumer root must be a directory, not a file: <root>` の**理由付き failed** として返し、
+     ほかの check は続けて検査する（`onViolation: report` のままなので halt しない）。**ファイル単体の検査には広げない**（manifest の意味論を広げる変更なので今はしない）
+  2. 書き手: implementation Skill v7 に「`root` はディレクトリを指す。ファイルを書かない」を1行
+  Test 237。修正を外すと本番と同じ `ENOTDIR` で落ちることを確認（変異）
+- Status: resolved (2026-10-09)
+
+## BL-283
+
+- Source: BL-281 の効果の集計（2026-10-09・research 8 回）/ 起票 2026-10-09・人間が承認
+- Severity: Major
+- Trigger: 今週中（人間の判断）
+- Summary: **research が context-package を上限の 97〜99% まで詰める山登りをやめない。** `aiw tokens` の呼び出しは 1 回の research で 3〜22 回。
+  1,500〜2,000 で書いてから 20〜100 トークンずつ削り、1,483〜1,500 に着地する。Skill v8 の「8 割を超えたら一度でまとめて削る」は守られていない。
+  10-07 の 1 回は 2,930 から 16 周削る途中で総上限 40 分に当たって落ちた（**周回の無駄がタスク落ちに及んだ初例**）。
+  ⚠️ 指示をもう1枚足す（「下書きを 1,200 に収めよ」等）**はしない**——既存の指示が守られていない実測の上に同種の指示を重ねるのは、
+  「ドキュメントは破られる」の教訓への逆行（人間の判断）。指示では止まらない圧（上限まで情報を詰めたい vs 超過は halt）として構造で扱う。
+- 方針（人間の決定・2026-10-09）: (b) を先に実測し、それから (a) を実装する
+  - (b) 1,500 が今の research に合っているかの再計測: 直近の research で**削られて消えた内容**をサンプルで見る。
+    価値ある情報が削られているなら上限を上げる（その場合も (a) は入れる）。9 月以降、パリティ表・Trigger 照合・推奨付き Open Decisions と
+    書く内容を増やしたのに器を据え置いた経緯がある
+  - (a) 上限に**目標帯**を併設: validator の pass 条件は上限のまま。`aiw tokens` に目標帯（例: 上限の 75〜90%）を表示し、
+    Skill は「目標帯に入ったら削るのをやめる」。山登りの終了条件を上限への漸近から帯への到達に変える（締めるのではなく、やめ時を与える）
+- Status: open

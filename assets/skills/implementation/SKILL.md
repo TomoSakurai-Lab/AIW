@@ -52,6 +52,8 @@ implementation ステップで毎回同じように行う手順。
   「古い manifest が黙って別の場所を検査する」ことを防ぐために書く
   （かつて validator 側が **runtimeRoot 起点**で解決しており、
   正しく書かれた manifest が全件「root does not exist」になっていた。実測 8 件の偽陽性）
+- **`root` はディレクトリを指す。ファイルを書かない**（consumer はその配下を走査して数える。
+  ファイルを書くと `root must be a directory` の違反になる。2026-10-08 に `MotodumoriTab.tsx` を書いた実例がある）
 - 計測しないと決めた AC も**行を消さず** `"notApplicable": true` と `"reason"` で残す
 
 ### タスク開始時に前タスクの ac-* が残っていたら
