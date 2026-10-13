@@ -660,3 +660,22 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   削られる内容の質は次の集計で見る
 - 効果の観測（次の research から）: `aiw tokens` の呼び出し回数・削り直しの Edit の回数・最終のトークン数（帯に入ったか）・research の所要
 - Status: resolved (2026-10-09・効果は次の research で観測)
+
+## BL-284
+
+- Source: 2026-10-13 の FEAT-tougai-yosan-design-align の fix（`runs/codex/2026-10-13T03-55-22-865Z-fix.jsonl`）/ 起票 2026-10-13・人間が承認
+- Severity: Critical（無人運転が黙って止まる）
+- Trigger: すぐ（人間の判断で修正に着手）
+- Summary: **codex は 13:22:34（日本時間）に `turn.completed` を出して作業を終えたのに、aiw は `exec.completed` を記録しないまま約 2 時間固まった。**
+  BL-279 の猶予（120 秒で子を止める）も、総上限（60 分）の見張りも効かず、`auto.stopped` も残らなかった。人が 15:16 に auto を再起動し、fix が最初からやり直しになった。
+  原因（実験で再現・確認済み）: executor は子の `close` だけを待っていた。`close` は「子が終了し、**かつ** stdio の口がすべて閉じた」ときにしか来ない。
+  codex がテスト中に起動した vite（`::1:5175` / `5176`・12:56〜57 起動）が生き残り、継承された出力の口を握ったため、子が終わっても `close` が来なかった
+  （最小の再現: 子は 299ms で `exit`、孫が生きている間 `close` は来ない）。止める相手の子はもう終わっているので、猶予の kill も見張りの abort も効かない。
+  ⚠️ BL-279 で「孫が口を握る」仮説を否定したのは、孫が子と一緒に終わる形だけを試したため。**孫が生き残る形**では成り立つ
+- 対処（2026-10-13）: `src/engine/executors/linger.ts` に `waitForChild`。終了は `exit` で知り、`close` は `exit` の後 10 秒（`DEFAULT_STDIO_DRAIN_MS`）だけ待つ。
+  来なければ口をこちらから閉じ、**終了コードどおり**（claude は result どおり）に返す。`meta.stdioHeldAfterExit: { drainMs }` を Event Log に残し、画面にも1行出す（黙って直さない）。
+  codex / claude の両方（対称・BL-221）。生き残った孫は止めない（誰のものか executor には分からない）。
+  Test 239（codex・**本物の子と孫**で再現）/ 240（claude）。直しを外すと 239 は孫の寿命（4 秒）まで返らず、240 は返らないまま固まることを確認（変異）
+- 残り: 猶予の kill / 見張りの abort が止めるのは中継役（`node codex.js`）だけで、`codex.exe` 本体と孫は残りうる（Windows はプロセスツリーを止めない）。
+  今回は実害を確認していないので起票のみ。残った vite は e2e の 5173 とは別ポートで、今回の再実行の邪魔はしていない
+- Status: resolved (2026-10-13)

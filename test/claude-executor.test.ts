@@ -36,7 +36,10 @@ import { makeRoot } from "./helpers.js";
 const SESSION_ID = "513affec-7f0d-4a5b-9d5e-1c2b3a4d5e6f";
 
 /** stream-json を流して閉じる偽 claude。`lines` を stdout へ、`code` で終了する。 */
-function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = {}) {
+/**
+ * `heldAfterExit`（BL-284）: 子は終了（'exit'）するが、生き残った孫が口を握っている体。stdout は EOF にならず 'close' も来ない。
+ */
+function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean; heldAfterExit?: boolean } = {}) {
   const captured = { stdin: "", argv: [] as string[], env: {} as NodeJS.ProcessEnv, cwd: "", killed: 0 };
   const launch = (argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv }) => {
     captured.argv = argv;
@@ -46,7 +49,10 @@ function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = 
     const stdout = new PassThrough();
     const stderr = new PassThrough();
     stdin.on("data", (c) => (captured.stdin += String(c)));
-    const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};
+    const handlers: {
+      close?: (c: number | null, s: NodeJS.Signals | null) => void;
+      exit?: (c: number | null, s: NodeJS.Signals | null) => void;
+    } = {};
     // 本物の ChildProcess と同じ順序を守る（BL-243。codex-executor.test.ts の fakeCodex と同じ理由）:
     // 'close' は stdout が閉じた後にしか来ず、kill された子は以後 stdout に書かない。
     let dead = false;
@@ -61,6 +67,10 @@ function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = 
       if (dead) return;
       for (const l of lines) {
         stdout.write(`${JSON.stringify(l)}\n`);
+      }
+      if (opts.heldAfterExit) {
+        setImmediate(() => handlers.exit?.(opts.code ?? 0, null)); // 口は開いたまま。'close' は来ない
+        return;
       }
       stdout.end();
       if (!opts.hang) {
@@ -78,6 +88,7 @@ function fakeClaude(lines: unknown[], opts: { code?: number; hang?: boolean } = 
       },
       on(event: string, cb: any) {
         if (event === "close") handlers.close = cb;
+        if (event === "exit") handlers.exit = cb;
       }
     };
   };
@@ -689,4 +700,32 @@ test("235: a claude that does not exit after its result is stopped after the gra
   assert.equal(r.ok, false);
   assert.equal((r.meta as any).lingeringAfterCompletion, undefined);
   assert.equal((r.meta as any).timedOut, true, "従来どおり中断として扱う");
+});
+
+// Test 240 — BL-284: claude も同じ形（codex の Test 239 と対称・BL-221 の規律）。子は終了したが孫が口を握って 'close' が来ないとき、
+// 'exit' の後の有界な待ちで返し、**result のとおりに**扱う。猶予の kill は撃たない（子は自分で終わっている）。
+test("240: when claude exits but its stdout stays held, the executor returns after a bounded drain and judges by the result", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["improve-check"];
+
+  const held = fakeClaude(OK_EVENTS, { heldAfterExit: true });
+  const progress: ExecutorProgress[] = [];
+  const done = await createClaudeExecutor({ launch: held.launch, stdioDrainMs: 30, lingerGraceMs: 60_000 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    timeoutMs: 60_000,
+    onProgress: (e) => progress.push(e)
+  });
+  assert.equal(done.ok, true);
+  assert.equal(held.captured.killed, 0, "止める相手はもう終わっている");
+  assert.deepEqual((done.meta as any).stdioHeldAfterExit, { drainMs: 30 });
+  assert.ok(progress.some((e) => e.kind === "error" && /出力の口を握っている/.test(e.text)));
+
+  // result が is_error なら失敗のまま（待ちを打ち切っても成否は変えない）
+  const failing = fakeClaude([INIT, { ...RESULT, is_error: true, result: "API Error: 529 overloaded", api_error_status: 529 }], { heldAfterExit: true });
+  const bad = await createClaudeExecutor({ launch: failing.launch, stdioDrainMs: 30 }).execute({ root, config, step, projectRoot: root, timeoutMs: 60_000 });
+  assert.equal(bad.ok, false);
+  assert.deepEqual((bad.meta as any).stdioHeldAfterExit, { drainMs: 30 });
 });

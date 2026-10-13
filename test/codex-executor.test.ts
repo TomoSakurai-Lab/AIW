@@ -10,11 +10,12 @@
 //   - タイムアウトの二重判定（C-2 / KI-08）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { execStep } from "../src/engine/engine.js";
-import { CODEX_ENV_ALLOWLIST, codexEnv, createCodexExecutor, summarize, usageFrom } from "../src/engine/executors/codex.js";
+import { CODEX_ENV_ALLOWLIST, codexEnv, createCodexExecutor, summarize, usageFrom, type CodexProcess } from "../src/engine/executors/codex.js";
 import { visibleOnScreen } from "../src/engine/executors/index.js";
 import { readEventLog } from "../src/engine/observed.js";
 import { assembleStepPrompt } from "../src/engine/promptAssembly.js";
@@ -480,4 +481,49 @@ test("234: a codex that does not exit after turn.completed is stopped after the 
   assert.equal(r.failureKind, "transient", "従来どおり中断として扱う");
   assert.equal((r.meta as any).lingeringAfterCompletion, undefined);
   assert.equal(stuck.captured.killed, 1, "止めたのは中断（猶予ではない）");
+});
+
+// Test 239 — BL-284（2026-10-13 実測）: **子は終了したのに、生き残った孫が出力の口を握って 'close' が来ないとき、
+// 'exit' の後の有界な待ちで完了として返す。** 以前は 'close' だけを待ち、猶予（BL-279）も総上限も効かずに 2 時間固まった
+// （止める相手の子はもう終わっているので kill が効かない）。偽物ではなく**本物の子と孫**で再現する:
+// 子は stdio を継承した孫（vite の代わり・数秒生きる）を残し、turn.completed を出して自分は終わる。
+test("239: when the child exits but a surviving grandchild holds stdout, the executor returns after a bounded drain", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["implementation"];
+  const script = path.join(root, "child-leaves-grandchild.cjs");
+  const events = [{ type: "thread.started", thread_id: THREAD_ID }, { type: "turn.completed", usage: {} }];
+  writeFileSync(
+    script,
+    [
+      'const { spawn } = require("child_process");',
+      'const g = spawn(process.execPath, ["-e", "setTimeout(() => {}, 4000)"], { stdio: "inherit", detached: true });',
+      "g.unref();",
+      ...events.map((e) => `console.log(${JSON.stringify(JSON.stringify(e))});`),
+      "setTimeout(() => process.exit(0), 100);"
+    ].join("\n"),
+    "utf8"
+  );
+  const launch = () =>
+    spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true }) as unknown as CodexProcess;
+
+  const progress: ExecutorProgress[] = [];
+  const started = Date.now();
+  const result = await createCodexExecutor({ launch, stdioDrainMs: 300, lingerGraceMs: 60_000 }).execute({
+    root,
+    config,
+    step,
+    projectRoot: root,
+    timeoutMs: 60_000,
+    onProgress: (e) => progress.push(e)
+  });
+  assert.ok(Date.now() - started < 3000, `孫（4 秒）の終了を待たずに返る: ${Date.now() - started}ms`);
+  assert.equal(result.ok, true, "終了コード 0 のとおり完了（成否は validator が決める）");
+  assert.deepEqual((result.meta as any).stdioHeldAfterExit, { drainMs: 300 }, "黙って直さない: meta に残す");
+  assert.equal((result.meta as any).lingeringAfterCompletion, undefined, "猶予の kill ではない（子は自分で終わっている）");
+  assert.ok(progress.some((e) => e.kind === "error" && /出力の口を握っている/.test(e.text)), "画面にも出す");
+
+  // 普通に終わる実行（偽物は 'exit' を出さない）には何も付かない
+  const normal = await createCodexExecutor({ launch: fakeCodex(OK_EVENTS).launch, stdioDrainMs: 300 }).execute({ root, config, step, projectRoot: root });
+  assert.equal(normal.ok, true);
+  assert.equal((normal.meta as any).stdioHeldAfterExit, undefined);
 });

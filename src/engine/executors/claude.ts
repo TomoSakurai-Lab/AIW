@@ -29,7 +29,7 @@ import { rootPaths } from "../paths.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
 import { redactSession, sessionSecret, toSessionRef, type SessionRef, type SessionSecret } from "../session.js";
 import type { ExecutorName, WorkflowStep } from "../types.js";
-import { createLingerGuard, DEFAULT_LINGER_GRACE_MS } from "./linger.js";
+import { createLingerGuard, DEFAULT_LINGER_GRACE_MS, DEFAULT_STDIO_DRAIN_MS, waitForChild } from "./linger.js";
 import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
 
 /** 既定タイムアウト。review の実測中央値 13 分に対して 3 倍（設計 課題F）。
@@ -128,6 +128,8 @@ export type ClaudeDeps = {
   now?: () => number;
   /** 最終イベント（result）の後、終了を待つ猶予（BL-279・codex と同じ）。テストで短くする。既定は DEFAULT_LINGER_GRACE_MS */
   lingerGraceMs?: number;
+  /** 子の終了（'exit'）の後、'close' を待つ上限（BL-284・codex と同じ）。テストで短くする。既定は DEFAULT_STDIO_DRAIN_MS */
+  stdioDrainMs?: number;
 };
 
 export type ClaudeProcess = {
@@ -135,7 +137,7 @@ export type ClaudeProcess = {
   stdout: NodeJS.ReadableStream | null;
   stderr: NodeJS.ReadableStream | null;
   kill(signal?: NodeJS.Signals): void;
-  on(event: "close", cb: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+  on(event: "close" | "exit", cb: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   on(event: "error", cb: (err: Error) => void): void;
 };
 
@@ -731,12 +733,16 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         }
       };
 
-      const finished = new Promise<{ code: number | null; signal: NodeJS.Signals | null; spawnError?: Error }>(
-        (resolve) => {
-          child.on("error", (err) => resolve({ code: null, signal: null, spawnError: err }));
-          child.on("close", (code, signal) => resolve({ code, signal }));
-        }
-      );
+      // BL-284: 'close' だけを待つと、生き残った孫が口を握ったときに永遠に返らない（codex と同じ）
+      const stdioDrainMs = deps.stdioDrainMs ?? DEFAULT_STDIO_DRAIN_MS;
+      const finished = waitForChild(child, {
+        drainMs: stdioDrainMs,
+        onStdioHeld: () =>
+          emit({
+            kind: "error",
+            text: `claude は終了したが、残った子プロセスが出力の口を握っているため ${Math.round(stdioDrainMs / 1000)}s で待つのをやめた（結果どおりに扱う）`
+          })
+      });
 
       // 中断は watchdog（総上限・無進行）と外部シグナルの両方から来る。**ここでタイマーは持たない。**
       let abortedFlag = false;
@@ -868,7 +874,9 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
         // 送った本文の指紋。組み立て出力と一致することを故障注入 #6 で照合する
         promptSha256: createHash("sha256").update(assembly.text).digest("hex"),
         // BL-279: result の後に終わらず、猶予で止めたとき（無ければキーごと無い）
-        ...(lingered ? { lingeringAfterCompletion: { graceMs: lingerGraceMs, killed: true } } : {})
+        ...(lingered ? { lingeringAfterCompletion: { graceMs: lingerGraceMs, killed: true } } : {}),
+        // BL-284: 子は終了したが残った孫が口を握り、こちらから閉じたとき（無ければキーごと無い・codex と同じ）
+        ...(outcome.stdioHeld ? { stdioHeldAfterExit: { drainMs: stdioDrainMs } } : {})
       };
 
       if (outcome.spawnError) {
