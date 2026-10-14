@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Status } from "./types.js";
+import { parseJsonText } from "./jsonText.js";
 
 export function statusPath(root: string, statusFile: string): string {
   return path.join(path.resolve(root), statusFile);
@@ -15,7 +16,8 @@ export function readStatus(root: string, statusFile: string): Status | null {
   const raw = readFileSync(file, "utf8");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // BL-285: validator（json-schema）と同じ口で読む。片方だけ BOM を許すと「検証は通ったのに遷移で落ちる」になる
+    parsed = parseJsonText(raw).value;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${statusFile} is not valid JSON: ${message}`);

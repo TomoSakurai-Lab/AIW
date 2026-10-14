@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync,
 import path from "node:path";
 import { currentTaskWindow, readEventLog } from "./observed.js";
 import { rootPaths } from "./paths.js";
+import { parseJsonText } from "./jsonText.js";
 import type { EngineState, Status, WorkflowConfig, WorkflowStep } from "./types.js";
 
 export type PostActionContext = {
@@ -108,7 +109,7 @@ function resolveFeatureId(root: string, draft: EngineState): string | null {
     return null;
   }
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const parsed: unknown = parseJsonText(readFileSync(file, "utf8")).value; // BL-285: 読む口を1つに
     const id = (parsed as { featureId?: unknown }).featureId;
     return typeof id === "string" && id.trim() ? id.trim() : null;
   } catch {

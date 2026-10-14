@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { runStep } from "../src/engine/engine.js";
+import { readEventLog } from "../src/engine/observed.js";
 import { KNOWN_PATH_BASES, runValidators } from "../src/engine/validators.js";
 import { schemaVersionKey, versionInfo } from "../src/engine/versions.js";
 import { makeRoot, setStep, validResult, writeIn, writeStatus } from "./helpers.js";
@@ -163,6 +164,43 @@ test("122: an absent optional target is skipped with its own reason; required ta
   ] as any, { stepId: "implementation", fixAttempts: 0 });
   assert.equal(outcome.results[0].status, "failed");
   assert.match(outcome.results[0].message, /does not exist/);
+});
+
+// Test 241 — BL-285（2026-10-13〜14 実測）: 先頭に UTF-8 BOM が付いた JSON（PowerShell 5.1 の書き込み）で halt しない。
+// BOM は中身ではないので無視するが、**判定は変えず**、無視したことをメッセージと detail.bomIgnored に残す（Event Log で件数を追う）。
+// 中身の誤り（BOM 付きでも schema 違反・BOM 以外の壊れた JSON）は従来どおり failed / halt。
+test("241: a UTF-8 BOM at the head of a JSON output is ignored and recorded, without weakening the schema check", () => {
+  const BOM = "﻿";
+  const { root, config } = makeRoot();
+  setStep(root, "implementation");
+  writeIn(root, "current-result.md", validResult);
+  writeIn(root, "ac-manifest.json", BOM + realManifest);
+  writeIn(root, "ac-result.json", realResult);
+  writeIn(root, "current-status.json", BOM + JSON.stringify({ step: "implementation", result: "implemented", reason: "x" }));
+
+  const out = runStep(root, config, "implementation");
+  assert.equal(out.kind, "transitioned", `BOM で halt しない（validator と遷移の読み込みが同じ口）: ${JSON.stringify(out)}`);
+  const log = readEventLog(root);
+  assert.ok(Array.isArray(log));
+  const results = (log as any[]).filter((r) => r.event === "validation.completed").flatMap((r) => r.results ?? []);
+  const bomTargets = results.filter((r: any) => r.detail?.bomIgnored === true).map((r: any) => r.target).sort();
+  assert.deepEqual(bomTargets, ["ac-manifest.json", "current-status.json"], "無視した件数を Event Log で数えられる");
+  assert.ok(results.filter((r: any) => r.detail?.bomIgnored).every((r: any) => /先頭の BOM を無視した/.test(r.message)));
+
+  const halt = [{ type: "json-schema", onViolation: "halt", target: "current-status.json", schema: "schemas/current-status.schema.json" }] as any;
+  // BOM 付きでも schema 違反は違反（BOM の無視は中身の検査を弱めない）
+  writeIn(root, "current-status.json", BOM + JSON.stringify({ step: "implementation", result: "no-such-result" }));
+  let outcome = runValidators(root, config, halt, { stepId: "implementation", fixAttempts: 0 });
+  assert.equal(outcome.results[0].status, "failed");
+  assert.equal(outcome.halt, true);
+  assert.equal(outcome.results[0].detail?.bomIgnored, true);
+
+  // BOM 以外の壊れ方は従来どおり
+  writeIn(root, "current-status.json", "{ not json");
+  outcome = runValidators(root, config, halt, { stepId: "implementation", fixAttempts: 0 });
+  assert.equal(outcome.results[0].status, "failed");
+  assert.match(outcome.results[0].message, /is not valid JSON/);
+  assert.equal(outcome.results[0].detail, undefined);
 });
 
 // Test 123 — schema ファイルが無い環境（この配線より前に init した環境相当）。

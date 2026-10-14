@@ -7,6 +7,7 @@ import { checkMarkdownSections } from "./artifactContract.js";
 const Ajv: any = (AjvModule as any).default ?? AjvModule;
 import { resolveConfigRef } from "./paths.js";
 import { estimateTokens, estimateTokensBySection } from "./tokens.js";
+import { parseJsonText } from "./jsonText.js";
 import { isDeclared, parseDeclaredFiles } from "./declaredFiles.js";
 import { compareToBaseline, readBaseline, readRepoState, resolveCheckRepoRoot } from "./gitScope.js";
 import { knownFailureHint, runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
@@ -76,7 +77,7 @@ function compileSchema(schemaPath: string) {
   if (cached) {
     return cached;
   }
-  const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+  const schema = parseJsonText(readFileSync(schemaPath, "utf8")).value as object;
   const validate = ajv.compile(schema);
   schemaCache.set(schemaPath, validate);
   return validate;
@@ -92,6 +93,10 @@ const passed = (message: string, target?: string): RunOne => ({ status: "passed"
 const failed = (message: string, target?: string, detail?: Record<string, unknown>): RunOne =>
   ({ status: "failed", message, target, detail });
 const skipped = (skipReason: string, message: string): RunOne => ({ status: "skipped", skipReason, message });
+
+/** BL-285: 先頭の BOM を無視して読んだことを、判定を変えずに結果へ残す（黙って直さない。detail.bomIgnored で件数を追う） */
+const withBom = (r: RunOne, bom: boolean): RunOne =>
+  bom ? { ...r, message: `${r.message}（先頭の BOM を無視した）`, detail: { ...(r.detail ?? {}), bomIgnored: true } } : r;
 
 function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: ValidationContext): RunOne {
   switch (v.type) {
@@ -120,8 +125,9 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
         return failed(`${target} does not exist`, target);
       }
       let data: unknown;
+      let bom = false;
       try {
-        data = JSON.parse(readFileSync(file, "utf8"));
+        ({ value: data, bom } = parseJsonText(readFileSync(file, "utf8")));
       } catch (error) {
         const m = error instanceof Error ? error.message : String(error);
         return failed(`${target} is not valid JSON: ${m}`, target);
@@ -140,9 +146,12 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       }
       const validate = compileSchema(schemaPath);
       const ok = validate(data);
-      return ok
-        ? passed(`${target} matches schema`, target)
-        : failed(`${target} schema violation: ${ajv.errorsText(validate.errors)}`, target);
+      return withBom(
+        ok
+          ? passed(`${target} matches schema`, target)
+          : failed(`${target} schema violation: ${ajv.errorsText(validate.errors)}`, target),
+        bom
+      );
     }
     case "artifact-contract": {
       const def = config.artifacts[v.artifact!];
@@ -163,17 +172,21 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       }
       // json-schema contract
       let data: unknown;
+      let bom = false;
       try {
-        data = JSON.parse(content);
+        ({ value: data, bom } = parseJsonText(content));
       } catch (error) {
         const m = error instanceof Error ? error.message : String(error);
         return failed(`${target} is not valid JSON: ${m}`, target);
       }
       const validate = compileSchema(resolveConfigRef(root, def.contract.schema));
       const ok = validate(data);
-      return ok
-        ? passed(`${target} matches contract schema`, target)
-        : failed(`${target} contract violation: ${ajv.errorsText(validate.errors)}`, target);
+      return withBom(
+        ok
+          ? passed(`${target} matches contract schema`, target)
+          : failed(`${target} contract violation: ${ajv.errorsText(validate.errors)}`, target),
+        bom
+      );
     }
     case "token-range": {
       const target = v.target!;
@@ -215,7 +228,7 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
 function jsonFile(root: string, rel: string): unknown | null {
   const file = abs(root, rel);
   if (!existsSync(file)) return null;
-  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
+  try { return parseJsonText(readFileSync(file, "utf8")).value; } catch { return null; } // BOM の記録は同じファイルの json-schema が持つ
 }
 
 function filesUnder(dir: string): string[] {

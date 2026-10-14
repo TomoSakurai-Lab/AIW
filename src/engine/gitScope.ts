@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { rootPaths } from "./paths.js";
+import { parseJsonText } from "./jsonText.js";
 import type { WorkflowConfig } from "./types.js";
 
 export class GitScopeError extends Error {}
@@ -168,7 +169,7 @@ export function readBaseline(runtimeRoot: string): Baseline | null {
     return null;
   }
   try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as Baseline;
+    const parsed = parseJsonText(readFileSync(file, "utf8")).value as Baseline; // BL-285: 読む口を1つに
     return parsed && parsed.version === 1 ? parsed : null;
   } catch {
     return null; // 壊れた baseline は「無い」と同じ扱い（欠損として課題4の分岐に乗る）

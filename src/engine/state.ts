@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { rootPaths } from "./paths.js";
+import { parseJsonText } from "./jsonText.js";
 import { DEFAULT_ENGINE_STATE, type EngineState } from "./types.js";
 
 export function readState(root: string): EngineState {
@@ -15,7 +16,7 @@ export function readState(root: string): EngineState {
     throw new Error(`Could not read state.json: ${asMessage(error)}`);
   }
   try {
-    const parsed = JSON.parse(raw) as Partial<EngineState>;
+    const parsed = parseJsonText(raw).value as Partial<EngineState>; // BL-285: 読む口を1つに（state.json は aiw が書くが、人が手で直すことがある）
     return { ...DEFAULT_ENGINE_STATE, ...parsed };
   } catch (error) {
     throw new Error(`state.json is not valid JSON: ${asMessage(error)}`);

@@ -23,6 +23,7 @@ import { classifySituation, EngineError, execStep, resume, runStep, staleStatusS
 import { appendEvent } from "./eventLog.js";
 import type { ExecutorProgress, ExecutorResult, StepExecutor } from "./executors/types.js";
 import { rootPaths } from "./paths.js";
+import { parseJsonText } from "./jsonText.js";
 import { PromptAssemblyError } from "./promptAssembly.js";
 import { readState } from "./state.js";
 import type { EngineState, HaltedReason, WorkflowConfig, WorkflowStep } from "./types.js";
@@ -383,7 +384,7 @@ export function acquireAutoLock(
   }
   let holder: AutoLock | null = null;
   try {
-    holder = JSON.parse(readFileSync(file, "utf8")) as AutoLock;
+    holder = parseJsonText(readFileSync(file, "utf8")).value as AutoLock; // BL-285: 読む口を1つに
   } catch {
     return { ok: false, holder: null };
   }
@@ -401,7 +402,7 @@ export function releaseAutoLock(root: string, runId: string): void {
     return;
   }
   try {
-    const held = JSON.parse(readFileSync(file, "utf8")) as AutoLock;
+    const held = parseJsonText(readFileSync(file, "utf8")).value as AutoLock;
     if (held.runId === runId) {
       rmSync(file, { force: true });
     }

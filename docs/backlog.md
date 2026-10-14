@@ -686,3 +686,19 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 残り: 猶予の kill / 見張りの abort が止めるのは中継役（`node codex.js`）だけで、`codex.exe` 本体と孫は残りうる（Windows はプロセスツリーを止めない）。
   今回は実害を確認していないので起票のみ。残った vite は e2e の 5173 とは別ポートで、今回の再実行の邪魔はしていない
 - Status: resolved (2026-10-13)
+
+## BL-285
+
+- Source: 2026-10-13〜14 の Event Log（`Unexpected token` の json-schema の失敗 6 件・halt 4 件）/ 起票 2026-10-14・人間が承認
+- Severity: Major（中身は正しいのに halt して auto が止まる）
+- Trigger: すぐ（人間の判断で修正に着手）
+- Summary: **codex が PowerShell 5.1 で書いた JSON の先頭に UTF-8 BOM が付き、`JSON.parse` が落ちて halt した。** BOM は文字コードの付け足しで中身ではない
+  （RFC 8259 も読む側が無視してよいとする）。書き手への指示を足す案は採らない——codex は既に BOM なしで書こうとして揺れており、指示では止まらない（BL-283 と同じ判断）。
+  10-13 から出始めた理由は特定できていない → **KI-10**（分かったこと・読めなかったことを分けて記録）
+- 対処（2026-10-14）: `src/engine/jsonText.ts` の `parseJsonText` に JSON を読む口を1つにまとめ、先頭の BOM を1つだけ取り除く
+  （validators の json-schema / artifact-contract / manifest の読み込み / schema 本体、status.ts の current-status、postActions、state.ts、gitScope の baseline、auto のロック）。
+  **読む口を1つにした理由**: validator だけ BOM を許すと「検証は通ったのに遷移の読み込みで落ちる」食い違いが生まれる（変異で確認: status.ts だけ戻すと本番と同じエラーで落ちる）。
+  判定は変えない（BOM 付きでも schema 違反は違反・BOM 以外の壊れた JSON も従来どおり）。無視したときはメッセージ「（先頭の BOM を無視した）」と
+  `detail.bomIgnored: true` を残す（黙って直さない）。Test 241
+- 観測: **BOM 検出件数/週**（`validation.completed` の `detail.bomIgnored`。KI-10 に数え方）
+- Status: resolved (2026-10-14・対症。原因は KI-10 で未特定)
