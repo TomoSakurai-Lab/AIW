@@ -435,6 +435,13 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
      ハッシュを控え、`ux-decision-required` の後の再走の前に変化を確かめる）。⚠️ 2026-10-05 時点で設計も番号も無い（未設計）
   2. **再走のたびに context-package.md が膨らむ問題（BL-210）の対処** → 2026-10-06 に対処（違反メッセージの内訳 + 再構成の規則）。**効果は未観測**
 - Status: resolved (2026-10-05・research を区間から外した。再組み入れは上の条件付き)
+- **再組み入れ（2026-10-14 人間の指示）**: runtime の research に `auto: true` を戻した（`versions.workflow` 11 → 12）。
+  条件②は対処済み（10-06〜10-08 の 7 タスクで長さ超過の halt 0 回・BL-283 で削り直しも対処）。判断インフレ対策で `ux-decision-required` は
+  0.14 回/タスクまで減った。⚠️ **条件①（承認の前に決定が書かれたことの検査）は未実装のまま**戻している——`ux-decision-required` の承認の直後に、
+  決定を書く前の research を auto が再起動しうる経路は残る（起きたら人が Ctrl+C で止め、決定を書いてから再開する）。
+  起動時の構造検査は通る（循環なし・予算 9 = research 1 + implementation 1 + review 1 + fix 3 + improve-check 3）。
+  **観測（n=5）**: research の実行回数/タスク・`ux-decision-required` の承認直後の自動再起動と人の Ctrl+C の回数・長さ超過の halt。
+  Ctrl+C が 10-05 以前のように出るなら条件①を設計する
 
 ## BL-241
 
