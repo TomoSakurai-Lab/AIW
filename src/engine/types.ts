@@ -220,6 +220,12 @@ export type WorkflowConfig = {
      *  （JSONL にモデル名は無く、`codex doctor` の表示も `<default>` のまま）。
      *  計測を世代間で比較するなら明示すること。詳細は docs/design-codex-executor.md の決定ログ。 */
     codexModel?: string;
+    /** D2（BL-238 段階2）: aiw auto が pin のモデルでの transient 再試行を使い切り、内訳が容量不足 / rate limit のときに
+     *  先頭から各1回・即時に試すモデル（順序付き）。範囲はその exec だけ（sticky にしない）。既定は空 = 発動しない。
+     *  ⚠️ 入れる前に、そのモデルが pin した CLI で呼べることを確かめる（2026-10-07: 古い CLI では新モデルが 400 になった） */
+    codexModelFallbacks?: string[];
+    /** D2: claude のステップ用。起点は steps.<id>.model ?? claudeModel。それ以外は codexModelFallbacks と同じ */
+    claudeModelFallbacks?: string[];
     /** claude executor（M4）。runtimeRoot からの相対、または絶対パス。
      *  ⚠️ 隔離した CLAUDE_CONFIG_DIR を指す。デスクトップアプリの ~/.claude とは別物にすること。
      *  隔離しないと (1) ユーザーの設定・skills・hooks・CLAUDE.md が実行へ混入し

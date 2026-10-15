@@ -433,6 +433,9 @@ async function engineAutoCmd(opts: {
           const when = waitMs > 0 ? `${formatWait(waitMs)}後に再試行` : "即時に再試行";
           out(`↻ ${step}: ${cause} — ${when} (${attempt}/${max})   Ctrl+C で中断`);
         },
+        fallingBack: ({ step, from, to, attempt, max, transientCause }) => {
+          out(`⇄ ${step}: ${transientCause} が続くため ${from ?? "(既定)"} → ${to} で試す（このステップだけ・${attempt}/${max}）   Ctrl+C で中断`);
+        },
         outcome: (outcome, { step, durationMs }) => {
           const took = formatDuration(durationMs);
           if (outcome.kind === "transitioned") {

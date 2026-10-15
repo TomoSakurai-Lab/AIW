@@ -28,6 +28,8 @@ export type EventType =
   // ⚠️ auto は判定に関与しないので、ここに判定の結果は無い（判定の記録は run の既存イベント）。
   | "auto.started"
   | "auto.retry"
+  // D2（BL-238 段階2）: pin のモデルでの再試行を使い切り、別のモデルで試す直前。from / to / transientCause
+  | "auto.fallback"
   | "auto.stopped"
   | "auto.refused";
 

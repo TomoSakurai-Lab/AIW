@@ -25,6 +25,7 @@ import {
   findUnboundedCycle,
   resolveAutoBudget,
   resolveAutoRetry,
+  resolveModelFallbacks,
   runAuto,
   type AutoOptions
 } from "../src/engine/auto.js";
@@ -955,4 +956,81 @@ test("220: the real `aiw auto` exits 0 / 2 / 1 and prints one JSON line with --j
   const bad = cli(root, "--max-steps", "0");
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /--max-steps must be a positive integer/);
+});
+
+// Test 244 — D2（BL-238 段階2）: pin のモデルでの transient 再試行を使い切り、内訳が容量不足 / rate limit なら、
+// フォールバックのモデルを先頭から**各1回・即時**に試す。範囲はその exec だけ（次のステップは pin から）。
+// 容量不足 / rate limit 以外（unknown・timeout 等）ではモデルを替えない。使い切りは終了コード 4（state は変わらない）。
+test("244: model fallback kicks in only for capacity / rate-limit after same-model retries, once each, and never sticks", async () => {
+  const capacity = (): ExecutorResult => ({ ...transient(), transientCause: "capacity" });
+  const withFallbacks = (config: WorkflowConfig, list: string[]): WorkflowConfig =>
+    zoned({ ...config, settings: { ...config.settings, codexModel: "pin-a", claudeModel: "pin-c", codexModelFallbacks: list } });
+
+  // (1) 2 つ目のフォールバックで通る → 続くステップは pin のまま
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const seen: string[] = [];
+    const { executor } = fake(root, (req) => {
+      const model = req.step.executor === "codex" ? String(req.config.settings.codexModel) : String(req.step.model ?? req.config.settings.claudeModel);
+      seen.push(`${req.step.id}@${model}`);
+      if (req.step.id === "fix" && model !== "fb-2") return capacity();
+      return produce(root, req.step.id, RESULT_OF[req.step.id]);
+    });
+    const { waits, sleep } = recordingSleep();
+    const r = await runAuto(root, withFallbacks(config, ["fb-1", "fb-2"]), { executor, sleep });
+    assert.deepEqual(seen, [
+      "fix@pin-a", "fix@pin-a", "fix@pin-a", "fix@pin-a", "fix@fb-1", "fix@fb-2", "improve-check@pin-c"
+    ], "pin で 4 回（再試行 3）→ フォールバックを各1回 → 次のステップは pin");
+    assert.deepEqual(waits, [300_000, 900_000, 1_800_000], "フォールバックは待たない（即時）");
+    assert.notEqual(r.exitCode, AUTO_EXIT.execFailed, "通ったので executor 失敗では止まらない");
+    const fb = autoEvents(root).filter((e) => e.event === "auto.fallback");
+    assert.deepEqual(fb.map((e) => [e.from, e.to, e.attempt, e.transientCause]), [["pin-a", "fb-1", 1, "capacity"], ["pin-a", "fb-2", 2, "capacity"]]);
+    const started = autoEvents(root).find((e) => e.event === "auto.started")!;
+    assert.deepEqual(started.modelFallbacks, { codex: ["fb-1", "fb-2"], claude: [] }, "設定値を auto.started に残す");
+  }
+
+  // (2) 全部容量不足 → 使い切りで 4（state は変わらない）
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const before = stateText(root);
+    const { executor, calls } = fake(root, () => capacity());
+    const r = await runAuto(root, withFallbacks(config, ["fb-1", "fb-2"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(r.condition, "A14");
+    assert.equal(r.exitCode, AUTO_EXIT.execFailed);
+    assert.match(r.line, /フォールバック 2 件を使い切り/);
+    assert.equal(calls.length, 6);
+    assert.equal(stateText(root), before, "exec の失敗は state を変えない（halt にしない）");
+  }
+
+  // (3) 内訳が unknown ならモデルを替えない（従来どおり A14）
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const { executor, calls } = fake(root, () => ({ ...transient("odd"), transientCause: "unknown" }));
+    const r = await runAuto(root, withFallbacks(config, ["fb-1"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(r.condition, "A14");
+    assert.equal(calls.length, 4, "フォールバックは発動しない");
+    assert.equal(autoEvents(root).filter((e) => e.event === "auto.fallback").length, 0);
+  }
+
+  // (4) フォールバックが容量不足以外で落ちたら次へ進まずに止める
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const { executor, calls } = fake(root, (req) =>
+      req.config.settings.codexModel === "fb-1" ? { ...transient("socket hang up"), transientCause: "network" } : capacity()
+    );
+    const r = await runAuto(root, withFallbacks(config, ["fb-1", "fb-2"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(r.exitCode, AUTO_EXIT.execFailed);
+    assert.match(r.line, /フォールバック fb-1 が network で失敗/);
+    assert.equal(calls.length, 5, "fb-2 へは進まない");
+  }
+
+  // (5) 既定（空）は D2 が眠ったまま。不正な値は起動を拒否する
+  const { config } = makeRoot();
+  assert.deepEqual(resolveModelFallbacks(config), { codex: [], claude: [] });
+  assert.throws(() => resolveModelFallbacks({ ...config, settings: { ...config.settings, codexModelFallbacks: "fb-1" } }), /must be a list of model names/);
+  assert.throws(() => resolveModelFallbacks({ ...config, settings: { ...config.settings, claudeModelFallbacks: [""] } }), EngineError);
 });

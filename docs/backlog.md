@@ -396,7 +396,12 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   429 → rate-limit・接続系 → network・529 以外の 5xx は unknown）、codex は `classifyCodexFailure`（実物 14 件の `Selected model is at capacity` → capacity）。
   codex の 400 `invalid_request_error`（2026-10-07 に古い CLI で新しいモデルを呼んだときの実物）は再試行しても同じなので permanent にした。
   エンジンは `exec.failed` に `transientCause` を記録する。`failureKind` の意味と auto の再試行は不変。Test 243。BL-272 も同じ段階で対処
-- Status: open（段階2 = D2 のモデルフォールバックが残る）
+- 段階2（2026-10-15）: D2 のモデルフォールバック（`docs/design-auto.md` 課題D2 の仕様表どおり・決定ログに実装時の判断2つ）。
+  `settings.codexModelFallbacks` / `claudeModelFallbacks`、記録は `auto.fallback`。Test 244（モデルの差し替えを外すと落ちることを確認）。
+  既定は空。どのモデルへ逃がすかは比較可能性に関わるので人間が決める。
+- runtime の値（2026-10-15 人間の決定）: `codexModelFallbacks: [gpt-6-sol]`（workflow v13）。候補 3 つ（gpt-6-sol / gpt-5.6-sol / gpt-6-astra）が
+  pin した codex 0.160.1 + 隔離 CODEX_HOME で応答することを最小の呼び出しで確認済み。claude 側は空のまま
+- Status: resolved (2026-10-15)
 
 ## BL-239
 

@@ -117,6 +117,9 @@ aiw auto --max-steps 3
 | 130 | Ctrl+C（1回目は実行中のものの終了を待つ。2回目で即時終了） |
 
 - 再試行: 総上限タイムアウトは即時に1回、無進行タイムアウトは 5 分待って1回、その他の transient は 5 / 15 / 30 分待って3回
+- モデルフォールバック（D2）: transient の再試行を使い切っても**容量不足 / rate limit** が続くとき、`settings.codexModelFallbacks` /
+  `settings.claudeModelFallbacks`（順序付き）のモデルを先頭から各1回・即時に試す。そのステップの exec だけで、次のステップは pin したモデルに戻る。
+  既定は空（発動しない）。入れるモデルは、pin した CLI で呼べることを先に確かめる。記録は Event Log の `auto.fallback`
 - 同時実行は `runs/auto.lock` で拒否する（持ち主の pid が無ければ引き継ぐ）。drive や手動の exec はロックを見ない
 - 止まった地点から `aiw auto` を打ち直せば続きから（state.json だけから導く。exec の途中で止まったステップは fresh で再実行）
 

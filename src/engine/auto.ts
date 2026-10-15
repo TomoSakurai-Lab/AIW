@@ -279,6 +279,43 @@ export function resolveAutoRetry(config: WorkflowConfig, override: Partial<AutoR
   return { ...merged, transientWaitsMs: [...merged.transientWaitsMs] };
 }
 
+// ---------------------------------------------------------------------------------------------
+// モデルフォールバック（課題D2・BL-238 段階2・2026-10-15）
+
+/**
+ * `settings.codexModelFallbacks` / `settings.claudeModelFallbacks`（順序付き・既定は空 = D2 は眠ったまま）。
+ * 不正な値は起動を拒否する（resolveAutoRetry と同じ。黙って空へ落とさない）。
+ */
+export type ModelFallbacks = { codex: string[]; claude: string[] };
+
+export function resolveModelFallbacks(config: WorkflowConfig): ModelFallbacks {
+  const read = (key: "codexModelFallbacks" | "claudeModelFallbacks"): string[] => {
+    const raw = config.settings[key];
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw) || raw.some((m) => typeof m !== "string" || m.trim() === "")) {
+      throw new EngineError(`settings.${key} must be a list of model names (got ${JSON.stringify(raw)}).`);
+    }
+    return raw.map((m: string) => m.trim());
+  };
+  return { codex: read("codexModelFallbacks"), claude: read("claudeModelFallbacks") };
+}
+
+/** フォールバックを発動する transient の内訳。timeout・permanent・network・unknown は含めない（設計 D2 の「除外」） */
+const FALLBACK_CAUSES: ReadonlySet<string> = new Set(["capacity", "rate-limit"]);
+
+/** そのステップが今使うモデル（pin）。codex は settings、claude は step.model ?? settings */
+function pinnedModel(config: WorkflowConfig, step: WorkflowStep): string | null {
+  const m = step.executor === "codex" ? config.settings.codexModel : (step.model ?? config.settings.claudeModel);
+  return typeof m === "string" && m !== "" ? m : null;
+}
+
+/** モデルだけを差し替えた config の写し（executor はモデルを config から読む・設計 D2）。元の config は変えない */
+function withModel(config: WorkflowConfig, step: WorkflowStep, model: string): WorkflowConfig {
+  return step.executor === "codex"
+    ? { ...config, settings: { ...config.settings, codexModel: model } }
+    : { ...config, steps: { ...config.steps, [step.id]: { ...step, model } } };
+}
+
 export type RetryCause = "total-timeout" | "idle-timeout" | "transient";
 
 /**
@@ -461,6 +498,8 @@ export type AutoReporter = {
   stepStarted?(info: { index: number; budget: number; step: WorkflowStep; model: string | null; effort: string | null }): void;
   progress?(event: ExecutorProgress): void;
   retrying?(info: { step: string; cause: RetryCause; attempt: number; max: number; waitMs: number; message: string }): void;
+  /** D2: pin のモデルでの再試行を使い切り、別のモデルで試す直前 */
+  fallingBack?(info: { step: string; from: string | null; to: string; attempt: number; max: number; transientCause: string }): void;
   /** run の結果（exec → run の1サイクルの終わり） */
   outcome?(outcome: PipelineOutcome, info: { step: string; durationMs: number }): void;
   /** チェックポイントの resume の結果 */
@@ -569,6 +608,7 @@ export async function runAuto(root: string, config: WorkflowConfig, opts: AutoOp
   }
   const budget = resolveAutoBudget(config, opts.maxSteps);
   const retry = resolveAutoRetry(config, opts.retry);
+  const fallbacks = resolveModelFallbacks(config);
 
   const runId = `auto-${randomUUID().slice(0, 8)}`;
   const lock = acquireAutoLock(root, { pid: opts.pid ?? process.pid, startedAt: new Date().toISOString(), runId }, opts.isAlive);
@@ -588,6 +628,7 @@ export async function runAuto(root: string, config: WorkflowConfig, opts: AutoOp
       budgetDerived: budget.derived,
       budgetBreakdown: budget.breakdown,
       retry,
+      modelFallbacks: fallbacks,
       ...(lock.takenOver ? { lockTakenOver: lock.takenOver } : {})
     });
     opts.reporter?.started?.({ runId, budget, retry, takenOver: lock.takenOver });
@@ -595,7 +636,7 @@ export async function runAuto(root: string, config: WorkflowConfig, opts: AutoOp
     const executed: AutoExecution[] = [];
     let result: AutoStop;
     try {
-      result = await loop(root, config, opts, { runId, budget, retry, executed });
+      result = await loop(root, config, opts, { runId, budget, retry, fallbacks, executed });
     } catch (error) {
       // 想定外の例外（A25）。CLI が `error: …` と終了コード 1 にする。ここでは記録だけ残す
       appendEvent(root, "auto.stopped", {
@@ -628,7 +669,7 @@ export async function runAuto(root: string, config: WorkflowConfig, opts: AutoOp
   }
 }
 
-type LoopContext = { runId: string; budget: AutoBudget; retry: AutoRetrySettings; executed: AutoExecution[] };
+type LoopContext = { runId: string; budget: AutoBudget; retry: AutoRetrySettings; fallbacks: ModelFallbacks; executed: AutoExecution[] };
 
 async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx: LoopContext): Promise<AutoStop> {
   const { signal, reporter } = opts;
@@ -811,10 +852,10 @@ async function execWithRetry(
     stop: { stop: "exec-failed", condition, step: step.id, line: `⛔ executor 失敗(${label}) ${step.id}${detail ? `: ${detail}` : ""}`, exitCode: AUTO_EXIT.execFailed }
   });
 
-  for (;;) {
-    let result: ExecutorResult;
+  /** exec を1回。例外は停止へ写す（A15 / A19）。cfg はモデルを差し替えた写しのことがある（D2） */
+  const execOnce = async (cfg: WorkflowConfig): Promise<ExecutorResult | ExecAttempt> => {
     try {
-      result = await execStep(root, config, step.id, { signal, executor: opts.executor, onProgress: reporter?.progress });
+      return await execStep(root, cfg, step.id, { signal, executor: opts.executor, onProgress: reporter?.progress });
     } catch (error) {
       if (error instanceof PromptAssemblyError) {
         return fail(null, "A15", "assembly", sanitizeMessage(error.message));
@@ -829,6 +870,55 @@ async function execWithRetry(
       }
       throw error;
     }
+  };
+  const isAttempt = (r: ExecutorResult | ExecAttempt): r is ExecAttempt => "stop" in r && "label" in r;
+
+  /**
+   * D2（BL-238 段階2）: pin のモデルでの transient 再試行を使い切った（または起動あたりの上限に当たった）とき、
+   * 内訳が容量不足 / rate limit なら、フォールバックのモデルを先頭から**各1回・即時**に試す。
+   * ⚠️ 範囲はこの exec だけ（sticky にしない）。次のステップは pin から始める（設計 D2: 混雑は一時的、pin が正）。
+   * ⚠️ 容量不足 / rate limit 以外で落ちたら（timeout を含む）次へ進まずに止める——モデルを替える理由にならない。
+   * 使い切りは auto の停止（終了コード 4・state は変わらない）。halt にはしない（exec の失敗は state を変えない・不変条件1）。
+   */
+  const fallBack = async (last: ExecutorResult, condition: string, label: string): Promise<ExecAttempt> => {
+    const list = step.executor === "codex" ? ctx.fallbacks.codex : step.executor === "claude" ? ctx.fallbacks.claude : [];
+    const from = pinnedModel(config, step);
+    const models = list.filter((m) => m !== from);
+    const lastCause = last.transientCause;
+    if (models.length === 0 || !lastCause || !FALLBACK_CAUSES.has(lastCause)) {
+      return fail(last, condition, label, sanitizeMessage(last.error));
+    }
+    let current = last;
+    for (const [i, model] of models.entries()) {
+      const transientCause = String(current.transientCause);
+      appendEvent(root, "auto.fallback", { runId: ctx.runId, step: step.id, from, to: model, attempt: i + 1, max: models.length, transientCause });
+      reporter?.fallingBack?.({ step: step.id, from, to: model, attempt: i + 1, max: models.length, transientCause });
+      retries++;
+      const r = await execOnce(withModel(config, step, model));
+      if (isAttempt(r)) {
+        return r;
+      }
+      if (r.ok) {
+        return { result: r, retries, stop: null, label: `ok(fallback ${model})` };
+      }
+      if (signal?.aborted) {
+        return { result: r, retries, label: "interrupted", stop: interrupted("A20", step.id, "state は変更なし。aiw auto で fresh 再実行") };
+      }
+      const cause = classifyExecFailure(r);
+      if (cause !== "transient" || !r.transientCause || !FALLBACK_CAUSES.has(r.transientCause)) {
+        return fail(r, condition, `${label}・フォールバック ${model} が ${r.transientCause ?? cause} で失敗`, sanitizeMessage(r.error));
+      }
+      current = r;
+    }
+    return fail(current, condition, `${label}・フォールバック ${models.length} 件を使い切り`, sanitizeMessage(current.error));
+  };
+
+  for (;;) {
+    const attempt = await execOnce(config);
+    if (isAttempt(attempt)) {
+      return attempt;
+    }
+    const result = attempt;
     if (result.ok) {
       return { result, retries, stop: null, label: "ok" };
     }
@@ -843,10 +933,14 @@ async function execWithRetry(
     }
     const condition = cause === "total-timeout" ? "A13a" : cause === "idle-timeout" ? "A13b" : "A14";
     if (counts[cause] >= limits[cause]) {
-      return fail(result, condition, `${cause} ×${counts[cause] + 1}`, message);
+      return cause === "transient"
+        ? fallBack(result, condition, `${cause} ×${counts[cause] + 1}`)
+        : fail(result, condition, `${cause} ×${counts[cause] + 1}`, message);
     }
     if (retriesUsedBefore + retries >= ctx.retry.maxPerRun) {
-      return fail(result, condition, `${cause} ・起動あたりの再試行上限 ${ctx.retry.maxPerRun}`, message);
+      return cause === "transient"
+        ? fallBack(result, condition, `${cause} ・起動あたりの再試行上限 ${ctx.retry.maxPerRun}`)
+        : fail(result, condition, `${cause} ・起動あたりの再試行上限 ${ctx.retry.maxPerRun}`, message);
     }
 
     counts[cause]++;
