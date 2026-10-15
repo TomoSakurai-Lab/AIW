@@ -18,6 +18,7 @@ import {
   claudeEntrypoint,
   claudeEnv,
   classifyFailure,
+  classifyTransientCause,
   createClaudeExecutor,
   allowRules,
   denialSummary,
@@ -728,4 +729,40 @@ test("240: when claude exits but its stdout stays held, the executor returns aft
   const bad = await createClaudeExecutor({ launch: failing.launch, stdioDrainMs: 30 }).execute({ root, config, step, projectRoot: root, timeoutMs: 60_000 });
   assert.equal(bad.ok, false);
   assert.deepEqual((bad.meta as any).stdioHeldAfterExit, { drainMs: 30 });
+});
+
+// Test 242 — BL-272 / BL-238: 認証切れは permanent、transient には内訳（transientCause）が付く。
+// fixture は 2026-09-30 の research の実物（runs/claude/2026-09-30T07-35-32-246Z-research.jsonl）: assistant の error は "authentication_failed"、
+// result は subtype "success"・is_error true・api_error_status null・本文 "Failed to authenticate: OAuth session expired and could not be refreshed"。
+// 以前はどの判定にも当たらず transient に落ち、auto が 5 / 15 分待って再試行し続けた（人が Ctrl+C するまで）。
+test("242: claude classifies an expired OAuth session as permanent and attaches a transient cause otherwise", async () => {
+  const AUTH_TEXT = "Failed to authenticate: OAuth session expired and could not be refreshed";
+  assert.equal(classifyFailure({ apiErrorStatus: null, subtype: "success", errorCode: "authentication_failed", text: AUTH_TEXT }), "permanent");
+  assert.equal(classifyFailure({ apiErrorStatus: null, subtype: "success", text: AUTH_TEXT }), "permanent", "構造化された error が無くても本文で拾う");
+
+  // transient の内訳
+  assert.equal(classifyTransientCause({ apiErrorStatus: 529, text: "" }), "capacity");
+  assert.equal(classifyTransientCause({ apiErrorStatus: null, text: "API Error: 529 overloaded" }), "capacity");
+  assert.equal(classifyTransientCause({ apiErrorStatus: 429, text: "" }), "rate-limit");
+  assert.equal(classifyTransientCause({ apiErrorStatus: null, text: "request failed: ECONNRESET" }), "network");
+  assert.equal(classifyTransientCause({ apiErrorStatus: 500, text: "internal error" }), "unknown", "529 以外の 5xx は容量に寄せない");
+
+  // executor を通して: 認証切れは permanent で transientCause は付かない
+  const { root, config } = readyRoot();
+  const step = config.steps["improve-check"];
+  const authEvents = [
+    INIT,
+    { type: "assistant", error: "authentication_failed", message: { role: "assistant", content: [{ type: "text", text: AUTH_TEXT }] }, session_id: SESSION_ID },
+    { ...RESULT, subtype: "success", is_error: true, api_error_status: null, result: AUTH_TEXT }
+  ];
+  const auth = await createClaudeExecutor({ launch: fakeClaude(authEvents, { code: 1 }).launch }).execute({ root, config, step, projectRoot: root });
+  assert.equal(auth.ok, false);
+  assert.equal(auth.failureKind, "permanent", "認証切れは待っても直らない（人の手当が要る）");
+  assert.equal(auth.transientCause, undefined);
+
+  // 529 の失敗は transient・capacity
+  const busy = fakeClaude([INIT, { ...RESULT, is_error: true, result: "API Error: 529 overloaded", api_error_status: 529 }], { code: 1 });
+  const r = await createClaudeExecutor({ launch: busy.launch }).execute({ root, config, step, projectRoot: root });
+  assert.equal(r.failureKind, "transient");
+  assert.equal(r.transientCause, "capacity");
 });

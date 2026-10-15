@@ -30,7 +30,7 @@ import { resolveCheckRepoRoot } from "../gitScope.js";
 import { redactSession, sessionSecret, toSessionRef, type SessionRef, type SessionSecret } from "../session.js";
 import type { ExecutorName, WorkflowStep } from "../types.js";
 import { createLingerGuard, DEFAULT_LINGER_GRACE_MS, DEFAULT_STDIO_DRAIN_MS, waitForChild } from "./linger.js";
-import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
+import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor, TransientCause } from "./types.js";
 
 /** 既定タイムアウト。review の実測中央値 13 分に対して 3 倍（設計 課題F）。
  *  ⚠️ 通常は engine が解決した `req.timeoutMs` が来るので、ここが効くのは直接呼び出しのときだけ。 */
@@ -568,10 +568,21 @@ function k(n: unknown): string {
 export function classifyFailure(input: {
   apiErrorStatus?: unknown;
   subtype?: unknown;
+  /** assistant イベントの構造化された `error`（例: "authentication_failed"）。本文より先に見る（BL-272） */
+  errorCode?: unknown;
   text: string;
 }): "transient" | "permanent" {
   const status = typeof input.apiErrorStatus === "number" ? input.apiErrorStatus : null;
   if (status === 401 || status === 403) {
+    return "permanent";
+  }
+  // BL-272（2026-09-30 実測）: 認証切れは api_error_status が null・result の subtype は "success"・本文は
+  // `Failed to authenticate: OAuth session expired and could not be refreshed` で、どの判定にも当たらず transient に落ちていた。
+  // auto は 5 / 15 分待って再試行し、人が Ctrl+C するまで待ち続けた。構造化された error を正とし、本文は保険にする
+  if (input.errorCode === "authentication_failed") {
+    return "permanent";
+  }
+  if (/failed to authenticate|oauth session expired|could not be refreshed/i.test(input.text)) {
     return "permanent";
   }
   if (status === 429 || (status !== null && status >= 500)) {
@@ -589,6 +600,24 @@ export function classifyFailure(input: {
   // 分からないものは transient に倒す（再試行の余地を残す）。permanent は「再試行しても
   // 同じ」と言い切れるときだけ——言い切れない失敗を人間送りにすると無人運転が止まる。
   return "transient";
+}
+
+/**
+ * transient の内訳（BL-238）。classifyFailure が transient と言ったものにだけ使う。
+ * 529（overloaded）は容量、429 は rate limit。それ以外の 5xx は区別できないので unknown（容量に寄せない）。
+ */
+export function classifyTransientCause(input: { apiErrorStatus?: unknown; text: string }): TransientCause {
+  const status = typeof input.apiErrorStatus === "number" ? input.apiErrorStatus : null;
+  if (status === 529 || /overloaded|at capacity/i.test(input.text)) {
+    return "capacity";
+  }
+  if (status === 429 || /rate.?limit|too many requests/i.test(input.text)) {
+    return "rate-limit";
+  }
+  if (/econnreset|etimedout|econnrefused|enotfound|eai_again|socket hang up|fetch failed|network/i.test(input.text)) {
+    return "network";
+  }
+  return "unknown";
 }
 
 export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
@@ -716,6 +745,7 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       let resultIsError: boolean | null = null;
       let apiErrorStatus: unknown = null;
       let resultSubtype: unknown = null;
+      let assistantErrorCode: string | null = null;
       let errorCount = 0;
       let firstError: string | null = null;
 
@@ -795,6 +825,10 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
           }
           for (const name of knowledgeTargets(event)) {
             knowledgeRead.add(name);
+          }
+          // BL-272: assistant の構造化された error（"authentication_failed" 等）。最初の1つを分類器へ渡す
+          if (event.type === "assistant" && typeof event.error === "string") {
+            assistantErrorCode ??= event.error;
           }
           if (event.type === "result") {
             usage = usageFrom(event) ?? usage;
@@ -901,10 +935,12 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       // BL-279: 自分で止めたときは exit code が意味を持たない。成否は result の is_error だけで決める
       if (resultIsError === true || (outcome.code !== 0 && !lingered)) {
         const text = `${firstError ?? ""} ${stderrTail}`;
+        const failureKind = classifyFailure({ apiErrorStatus, subtype: resultSubtype, errorCode: assistantErrorCode, text });
         return {
           ok: false,
           outputs: [],
-          failureKind: classifyFailure({ apiErrorStatus, subtype: resultSubtype, text }),
+          failureKind,
+          ...(failureKind === "transient" ? { transientCause: classifyTransientCause({ apiErrorStatus, text }) } : {}),
           error: `claude executor: 失敗しました（exit ${outcome.code}）。${truncate(firstError ?? firstLine(stderrTail), 200)}`,
           meta
         };

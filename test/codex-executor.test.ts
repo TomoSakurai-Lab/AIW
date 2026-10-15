@@ -15,7 +15,7 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { execStep } from "../src/engine/engine.js";
-import { CODEX_ENV_ALLOWLIST, codexEnv, createCodexExecutor, summarize, usageFrom, type CodexProcess } from "../src/engine/executors/codex.js";
+import { CODEX_ENV_ALLOWLIST, classifyCodexFailure, codexEnv, createCodexExecutor, summarize, usageFrom, type CodexProcess } from "../src/engine/executors/codex.js";
 import { visibleOnScreen } from "../src/engine/executors/index.js";
 import { readEventLog } from "../src/engine/observed.js";
 import { assembleStepPrompt } from "../src/engine/promptAssembly.js";
@@ -526,4 +526,39 @@ test("239: when the child exits but a surviving grandchild holds stdout, the exe
   const normal = await createCodexExecutor({ launch: fakeCodex(OK_EVENTS).launch, stdioDrainMs: 300 }).execute({ root, config, step, projectRoot: root });
   assert.equal(normal.ok, true);
   assert.equal((normal.meta as any).stdioHeldAfterExit, undefined);
+});
+
+// Test 243 — BL-238: codex の異常終了に transient の内訳が付き、Event Log の exec.failed に残る。
+// fixture は実物: 容量不足は 14 件すべて `Selected model is at capacity. Please try a different model.`（error イベント + turn.failed）。
+// 2026-10-07 に古い CLI で新しいモデルを呼んだときの 400（invalid_request_error）は、再試行しても同じなので permanent。
+test("243: codex attaches a transient cause from the raw error text, and the engine logs it", async () => {
+  const CAPACITY = "Selected model is at capacity. Please try a different model.";
+  assert.deepEqual(classifyCodexFailure(CAPACITY), { failureKind: "transient", transientCause: "capacity" });
+  assert.deepEqual(
+    classifyCodexFailure(
+      '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}'
+    ),
+    { failureKind: "permanent" }
+  );
+  assert.deepEqual(classifyCodexFailure("401 Unauthorized"), { failureKind: "permanent" });
+  assert.deepEqual(classifyCodexFailure("429 Too Many Requests"), { failureKind: "transient", transientCause: "rate-limit" });
+  assert.deepEqual(classifyCodexFailure("stream disconnected before completion"), { failureKind: "transient", transientCause: "network" });
+  assert.deepEqual(classifyCodexFailure("something odd"), { failureKind: "transient", transientCause: "unknown" }, "分からないものは unknown");
+
+  const { root, config } = readyRoot();
+  setStep(root, "implementation");
+  const events = [
+    { type: "thread.started", thread_id: THREAD_ID },
+    { type: "turn.started" },
+    { type: "error", message: CAPACITY },
+    { type: "turn.failed", error: { message: CAPACITY } }
+  ];
+  const result = await execStep(root, config, "implementation", { executor: createCodexExecutor({ launch: fakeCodex(events, { code: 1 }).launch }) });
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "transient");
+  assert.equal(result.transientCause, "capacity");
+  const log = readEventLog(root);
+  assert.ok(Array.isArray(log));
+  const failed = (log as Array<Record<string, any>>).filter((r) => r.event === "exec.failed").pop();
+  assert.equal(failed?.transientCause, "capacity", "Event Log で内訳を数えられる");
 });

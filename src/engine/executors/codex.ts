@@ -28,7 +28,7 @@ import { redactSession, sessionSecret, toSessionRef, type SessionRef, type Sessi
 import type { ExecutorName } from "../types.js";
 import { DEFAULT_TOTAL_TIMEOUT_MS } from "../watchdog.js";
 import { createLingerGuard, DEFAULT_LINGER_GRACE_MS, DEFAULT_STDIO_DRAIN_MS, waitForChild } from "./linger.js";
-import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor } from "./types.js";
+import type { ExecutorProgress, ExecutorRequest, ExecutorResult, StepExecutor, TransientCause } from "./types.js";
 
 // `CODEX_DEFAULT_TIMEOUT_MS`（30 分）と自前の setTimeout は 2026-09-17 に撤去した（BL-221 (3)）。
 // エンジン経由では必ず req.timeoutMs が埋まるので、2026-09-02 の時点で「死んでいると証明された既定」だった。
@@ -496,11 +496,12 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       if (outcome.code !== 0 && !lingered) {
         // 分類は exit code ではなく、観測されたイベントから導く（設計 C-1）。
         const text = `${firstError ?? ""} ${stderrTail}`;
-        const permanent = /401|unauthorized|not authenticated|invalid api key/i.test(text);
+        const { failureKind, transientCause } = classifyCodexFailure(text);
         return {
           ok: false,
           outputs: [],
-          failureKind: permanent ? "permanent" : "transient",
+          failureKind,
+          ...(transientCause ? { transientCause } : {}),
           error: `codex executor: 異常終了しました（exit ${outcome.code}）。${truncate(firstError ?? firstLine(stderrTail), 200)}`,
           meta
         };
@@ -511,6 +512,34 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       return { ok: true, outputs: [], meta };
     }
   };
+}
+
+/**
+ * codex の異常終了の分類（設計 C-1・BL-238）。入力は観測されたエラー本文（error イベントと stderr の末尾）。exit code は使わない。
+ *
+ * - permanent: 認証（401 等）と、**要求そのものが通らない 400**（2026-10-07 実測: CLI が古いと
+ *   `The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account` の invalid_request_error。再試行しても同じ）
+ * - transient の内訳: 容量（実測 14 件すべて `Selected model is at capacity. Please try a different model.`）/ rate limit / network / unknown
+ * ⚠️ 分からないものは transient・unknown（claude と同じ。言い切れない失敗を人間送りにすると無人運転が止まる）。
+ * ⚠️ BL-272 の観点（認証切れの取りこぼし）: codex の実行記録に認証切れの実例は無い（2026-10-15 時点の 194 実行）。実例が出たら fixture を足す
+ */
+export function classifyCodexFailure(text: string): { failureKind: "transient" | "permanent"; transientCause?: TransientCause } {
+  if (/401|unauthorized|not authenticated|invalid api key/i.test(text)) {
+    return { failureKind: "permanent" };
+  }
+  if (/invalid_request_error|is not supported when using/i.test(text)) {
+    return { failureKind: "permanent" };
+  }
+  if (/at capacity|try a different model|overloaded/i.test(text)) {
+    return { failureKind: "transient", transientCause: "capacity" };
+  }
+  if (/rate.?limit|too many requests|\b429\b/i.test(text)) {
+    return { failureKind: "transient", transientCause: "rate-limit" };
+  }
+  if (/econnreset|etimedout|econnrefused|enotfound|eai_again|socket hang up|stream disconnected|network/i.test(text)) {
+    return { failureKind: "transient", transientCause: "network" };
+  }
+  return { failureKind: "transient", transientCause: "unknown" };
 }
 
 function defaultLaunch(argv: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }): CodexProcess {

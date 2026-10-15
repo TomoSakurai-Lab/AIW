@@ -50,6 +50,9 @@ export type ExecutorRequest = {
   onProgress?: (event: ExecutorProgress) => void;
 };
 
+/** transient の内訳（BL-238）。分からないものは unknown（推測で capacity / rate-limit に寄せない） */
+export type TransientCause = "capacity" | "rate-limit" | "network" | "unknown";
+
 export type ExecutorResult = {
   /** 成果物の生成（または人手への受け渡し）に成功したか */
   ok: boolean;
@@ -66,6 +69,15 @@ export type ExecutorResult = {
    * 「プロセスが完走したか」だけ。分類は JSONL の error イベントと成果物の有無から導く。
    */
   failureKind?: "transient" | "permanent";
+  /**
+   * transient の内訳（BL-238・2026-10-15）。D2（モデルフォールバック）の発動条件「容量不足・rate limit のときだけ」を判定する欄。
+   *
+   * ⚠️ 分類は**生のイベントを見た executor の中**で行う（claude: `api_error_status` と本文、codex: エラー本文）。
+   * auto やエンジンが `error` の文字列を解析して分類しない（分類が3箇所目になり KI-01 型のずれの温床になる）。
+   * ⚠️ `failureKind` の意味は変えない。付くのは failureKind が transient のときだけで、
+   * 中断（総上限・無進行・外部）には付けない——そちらの内訳は timeoutKind（エンジンが書く）が持つ。
+   */
+  transientCause?: TransientCause;
   /** 実行メタ情報。Event Log にそのまま載せる想定（生の session ID は入れない） */
   meta?: Record<string, unknown>;
 };

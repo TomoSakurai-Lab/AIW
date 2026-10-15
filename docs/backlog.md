@@ -391,7 +391,12 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   （Event Log に exec の記録が無い）。**D2（モデルフォールバック）があれば無人のまま越えられた事象の実例**。
 - Priority（2026-10-05 人間の決定）: **この実例で優先度を上げた。** 枠の中身は `transientCause` + BL-272 + D2。
   順序はテスト実行の信頼性（BL-241）→ 判断インフレ対策（未起票）→ **この枠**
-- Status: open
+- 段階1（2026-10-15）: `ExecutorResult.transientCause`（`capacity` / `rate-limit` / `network` / `unknown`）。付くのは failureKind が transient のときだけで、
+  中断には付けない（timeoutKind が持つ）。分類は生のイベントを見た executor の中: claude は `classifyTransientCause`（529 / overloaded → capacity・
+  429 → rate-limit・接続系 → network・529 以外の 5xx は unknown）、codex は `classifyCodexFailure`（実物 14 件の `Selected model is at capacity` → capacity）。
+  codex の 400 `invalid_request_error`（2026-10-07 に古い CLI で新しいモデルを呼んだときの実物）は再試行しても同じなので permanent にした。
+  エンジンは `exec.failed` に `transientCause` を記録する。`failureKind` の意味と auto の再試行は不変。Test 243。BL-272 も同じ段階で対処
+- Status: open（段階2 = D2 のモデルフォールバックが残る）
 
 ## BL-239
 
@@ -540,7 +545,12 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   直し方: claude の分類器で認証切れ（`OAuth session expired` / `could not be refreshed` など）を permanent にし、
   実際のエラー本文を fixture にした Test を足す。codex 側も同じ観点で見直す。
   ⚠️ 分類の変更は executor の変更（M5 のやらないこと）なので M5 では直さない。clipboard 経路のテストを同じコミットで通し直す（不変条件5）。
-- Status: open（BL-238 と同じ枠）
+- 対処（2026-10-15・BL-238 の枠の段階1）: 実物（`runs/claude/2026-09-30T07-35-32-246Z-research.jsonl`）を読むと、assistant イベントに
+  **構造化された `error: "authentication_failed"`** が載っていた（result は subtype "success"・api_error_status null）。分類器はこの欄を見ておらず、
+  本文の `authentication_failed` の照合は本文にその語が無いので当たらなかった。`classifyFailure` に `errorCode`（assistant の `error`）を渡して正とし、
+  本文の `failed to authenticate|oauth session expired|could not be refreshed` を保険に足した。Test 242（実物の fixture）。判定を外すと 242 が落ちることを確認（変異）。
+  codex 側は同じ観点で見直した: 実行記録 194 回に認証切れの実例は無く、パターンは据え置き（実例が出たら fixture を足す）
+- Status: resolved (2026-10-15)
 
 ## BL-278
 

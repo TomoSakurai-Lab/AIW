@@ -312,6 +312,8 @@ export async function execStep(
     ...tokenFields(decorated),
     outputs: decorated.outputs,
     failureKind: decorated.failureKind ?? null,
+    // BL-238: transient の内訳（executor が生のイベントから分類したもの）。無いときは null（中断・成功・permanent）
+    transientCause: decorated.transientCause ?? null,
     message: decorated.error ?? null,
     meta: { ...(decorated.meta ?? {}), ...idleMeta(watchdog) }
   });
