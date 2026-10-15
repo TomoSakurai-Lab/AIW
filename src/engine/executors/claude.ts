@@ -630,6 +630,18 @@ export function createClaudeExecutor(deps: ClaudeDeps = {}): StepExecutor {
       // ⚠️ 通常は engine（watchdog）が解決した値が来る。executor は独自タイマーを持たない。
       const timeoutMs = req.timeoutMs ?? numberSetting(req.config.settings.executorTimeoutMs) ?? CLAUDE_DEFAULT_TIMEOUT_MS;
 
+      // --- 起動前に中断済みなら起動しない（BL-242・codex の BL-221 (4) と対称） ---
+      // 以前は launch() の後で signal を見ていたので、abort 済みでも子を起動してから即 kill していた（故障注入 #5 を満たさない）。
+      if (req.signal?.aborted) {
+        return {
+          ok: false,
+          outputs: [],
+          failureKind: "transient",
+          error: "claude executor: 起動前に中断されました（プロセスは起動していない）。",
+          meta: { executor: "claude", stage: "aborted-before-launch", launched: false, timedOut: true }
+        };
+      }
+
       // --- 実行体（pin）。自動更新で消えた実績があるので、起動前に実在を確かめる ---
       const entry = claudeEntrypoint();
       if (!existsSync(entry)) {

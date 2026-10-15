@@ -514,7 +514,10 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   設計の故障注入 #5「abort 済みの signal で起動 → executor が起動しない（codex / claude の両方）」は claude 側で満たされない。
   auto への実害は小さい: auto は exec の前に自分の signal を見るので（Test 208）、この経路に入るのは exec 直前の瞬間に Ctrl+C が来た場合だけで、
   起動した claude も即 SIGTERM される。**直すなら Test 173 と同じ形のテストを claude 側に足し、clipboard 経路のテストを同じコミットで通し直す**（不変条件5）。
-- Status: open
+- ⚠️ 取りこぼし（2026-10-15）: Trigger の「BL-238 の枠」で `claude.ts` を触ったのに、この項目を確認せずに枠を閉じた（Claude の見落とし）。同日の後追いで対処
+- 対処（2026-10-15）: `claude.ts` の execute の冒頭（実行体の確認より前）で abort 済みなら起動せずに返す（codex と同じ文言・`meta.launched: false`）。
+  Test 245（Test 173 と同じ形）。チェックを外すと 245 が落ちることを確認（変異）。全件を同じコミットで通し直した
+- Status: resolved (2026-10-15)
 
 ## BL-243
 

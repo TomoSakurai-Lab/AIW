@@ -766,3 +766,34 @@ test("242: claude classifies an expired OAuth session as permanent and attaches 
   assert.equal(r.failureKind, "transient");
   assert.equal(r.transientCause, "capacity");
 });
+
+// Test 245 — BL-242: abort 済みの signal を渡されたら claude も起動しない（codex の Test 173 と対称・故障注入 #5）。
+// 以前は launch() の後で signal を見ていたので、子を起動してから即 kill していた。
+test("245: an already-aborted signal never launches claude", async () => {
+  const { root, config } = readyRoot();
+  const { launch, captured } = fakeClaude(OK_EVENTS);
+  let launched = 0;
+  const counting = (argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv }) => {
+    launched += 1;
+    return launch(argv, o);
+  };
+  const stopped = new AbortController();
+  stopped.abort();
+
+  const result = await createClaudeExecutor({ launch: counting }).execute({
+    root,
+    config,
+    step: config.steps["improve-check"],
+    projectRoot: root,
+    signal: stopped.signal,
+    timeoutMs: 60_000
+  });
+
+  assert.equal(launched, 0, "プロセスを起動しない");
+  assert.equal(captured.stdin, "", "プロンプトも送らない");
+  assert.equal(captured.killed, 0, "起動していないので止めもしない");
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "transient", "failureKind の語彙は増やさない（中断は transient）");
+  assert.equal((result.meta as any).launched, false);
+  assert.match(result.error ?? "", /起動前に中断/);
+});
