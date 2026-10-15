@@ -68,7 +68,8 @@ test("238: aiw tokens shows a target band derived from the max, without changing
   assert.equal(tokenTargetBand(0, Number.POSITIVE_INFINITY), null, "上限の無い宣言には帯を出さない");
 
   assert.equal(describeTokenRange(1700, 250, 1500), "上限を 200 超過。目標帯 1125〜1350 まで一度で削る（あと 350 以上・目安 約 1400 字）");
-  assert.equal(describeTokenRange(1450, 250, 1500), "範囲内（上限まで 50・上限の 97%）。目標帯 1125〜1350 より上だが上限内——削らなくてよい");
+  // ⚠️ 上限内でも帯より上なら削る（2026-10-15 訂正。「削らなくてよい」が出口になり、上限の直下で止まり続けた）
+  assert.equal(describeTokenRange(1450, 250, 1500), "範囲内（上限まで 50・上限の 97%）。目標帯 1125〜1350 まで一度で削る（あと 100 以上・目安 約 400 字）");
   assert.equal(describeTokenRange(1300, 250, 1500), "範囲内（上限まで 200・上限の 87%）。目標帯 1125〜1350 の中——削るのをやめる");
   assert.equal(describeTokenRange(900, 250, 1500), "範囲内（上限まで 600・上限の 60%）");
   assert.equal(describeTokenRange(100, 250, 1500), "下限に 150 不足");
@@ -84,5 +85,6 @@ test("238: aiw tokens shows a target band derived from the max, without changing
   assert.equal(runValidators(root, config, [tokenRange]).violations.length, 0, "帯より上でも上限内なら pass");
   const [r] = JSON.parse(aiw(root, "tokens", file, "--json").stdout);
   assert.deepEqual(r.target, tokenTargetBand(tokenRange.min ?? 0, tokenRange.max!));
-  assert.match(r.status, /削らなくてよい$/);
+  assert.match(r.status, /目標帯 \d+〜\d+ まで一度で削る/, "上限内でも帯より上なら削る量を出す（判定は pass のまま）");
+  assert.doesNotMatch(r.status, /削らなくてよい/);
 });

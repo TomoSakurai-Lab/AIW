@@ -26,22 +26,27 @@ export function tokenTargetBand(min: number, max: number): { low: number; high: 
   return { low: Math.max(min, Math.floor(max * TOKEN_TARGET_BAND.low)), high: Math.floor(max * TOKEN_TARGET_BAND.high) };
 }
 
-/** `aiw tokens` の判定文。超過時は「超過分」ではなく「帯の上端まで」を一度に削る量として出す。字数は estimateTokens の 4 字/トークンからの目安 */
+/**
+ * `aiw tokens` の判定文。帯より上なら（上限の内外を問わず）「帯の上端まで」を一度に削る量として出す。字数は estimateTokens の 4 字/トークンからの目安。
+ *
+ * ⚠️ 2026-10-15 訂正（BL-283）: 初版は上限内・帯より上を「削らなくてよい」と出していた。これが出口になり、research は上限の直下まで
+ * 小刻みに削ったところで止まり続けた（10-09〜15 の 12 回中、帯に入ったのは 1 回）。設計は「帯に入ったら削るのをやめる」で、上限内に出口は無い。
+ */
 export function describeTokenRange(tokens: number, min: number, max: number): string {
   const band = tokenTargetBand(min, max);
   const bandText = band ? `目標帯 ${band.low}〜${band.high}` : null;
+  const cutToBand = (t: number, b: { high: number }): string => {
+    const cut = t - b.high;
+    return `${bandText} まで一度で削る（あと ${cut} 以上・目安 約 ${cut * 4} 字）`;
+  };
   if (tokens > max) {
     const over = `上限を ${tokens - max} 超過`;
-    if (!band) return over;
-    const cut = tokens - band.high;
-    return `${over}。${bandText} まで一度で削る（あと ${cut} 以上・目安 約 ${cut * 4} 字）`;
+    return band ? `${over}。${cutToBand(tokens, band)}` : over;
   }
   if (tokens < min) return `下限に ${min - tokens} 不足`;
   const inRange = `範囲内（上限まで ${max - tokens}・上限の ${Math.round((tokens / max) * 100)}%）`;
   if (!band || tokens < band.low) return inRange;
-  return tokens <= band.high
-    ? `${inRange}。${bandText} の中——削るのをやめる`
-    : `${inRange}。${bandText} より上だが上限内——削らなくてよい`;
+  return tokens <= band.high ? `${inRange}。${bandText} の中——削るのをやめる` : `${inRange}。${cutToBand(tokens, band)}`;
 }
 
 /**
