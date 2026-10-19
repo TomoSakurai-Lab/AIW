@@ -766,3 +766,23 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
      手元で3つの分岐（.cs なし / .cs あり・IIS なし / .cs あり・IIS あり〔node.exe を iisexpress.exe の名前で動かした代役〕）を確認
   Test 246（A26・exec しない・drive へ戻る・実行できないコマンド・書き損じ）/ 247（A17 の表示）。preflight を外すと 246 が落ちることを確認（変異）
 - Status: resolved (2026-10-19)
+
+## BL-287
+
+- Source: 人間の次の枠の指定（小枠B: task-planning の executor 化 + 整形契約）/ 起票 2026-10-19・人間が承認
+- Severity: Major
+- Trigger: すぐ（設計 → 承認 → 実装）
+- Summary: **task-planning を claude executor で無人実行し、依頼の整形に契約を付ける。** 設計は `docs/design-task-planning.md`。
+  M4 完了の記録の「自動化しない判断済み」は task-planning については理由なきスコープ外だった（design-claude-executor の決定ログで訂正）
+- 対処（2026-10-19）:
+  1. 整形契約: `current-task.md` に R / O / AC の ID・`## Request Mapping`（依頼 → 写像先）・`### Added Requirements`（依頼に由来しない要件を根拠つきで）。
+     新しい validator 型 `request-mapping`（halt）が表の完全性だけを縛る: 表がある・写像先が空でない・ID が実在する・書式と重複・
+     どの行からも指されず Added にも無い R（依頼にない要件）。内容の妥当性はゲート①で人間。テンプレートだけでは通らない（BL-213 の教訓）
+  2. executor: runtime の task-planning を claude（Read / Grep / Glob / Edit・Bash なし・Edit は current-task.md / current-status.json / feature.md）・effort high・**auto なし**
+  3. スタブ: new-task の後も claude の task-planning ならスタブを作る（`via: new-task`）。feature.md は `stub: true` の opt-in（0 バイトは単一タスクと同じ意味）
+  4. Skill: task-planning v1 新設 / prompts v5（見出しの一覧の再記述を削除）/ research v12（照合の分担・AC の ID の引き継ぎ）/ review v8（G の逃げ道の1句）/ templates.currentTask v3
+  5. Test 248（契約の故障注入3ケース: 写像漏れ / 架空 ID / 依頼にない要件・テンプレートは通らない）/ 249（task-planning の halt と、clipboard の設定でも同じ契約）/
+     250（new-task のスタブ・clipboard では作らない）。検査を外すと 248・249 が落ちることを確認（変異 2 種）。旧書式の current-task を使う既存テストを新書式へ
+- 観測（executor 化の後・目安 n=5）: ゲート①の却下率と理由（対応表の取りこぼしか）/ request-mapping の halt の件数と内訳 / task-planning の所要。
+  その後に `auto: true` への組み入れを別に判定する（research と同じ段階制）
+- Status: resolved (2026-10-19・観測待ち)

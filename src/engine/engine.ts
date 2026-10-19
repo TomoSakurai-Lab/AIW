@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  createOutputStubsFor,
   processCompletion,
   resume as resumePipeline,
   writeRejectionNote,
@@ -111,6 +112,10 @@ export function resetForNewTask(root: string, config: WorkflowConfig): { restore
   }
   const prev = readState(root);
   writeState(root, { ...DEFAULT_ENGINE_STATE, cleanReviewStreak: prev.cleanReviewStreak });
+  // 小枠B: task-planning が claude executor なら、遷移で入るときと同じ 0 バイトスタブを作る（Edit は既存ファイルしか書けない）。
+  // current-status.json は上で消したので、ここで 0 バイトになる——空の JSON は json-schema が halt するので「まだ誰も宣言していない」は保たれる。
+  // clipboard のときは何もしない（createOutputStubsFor が executor を見る）。記録は遷移のときと同じ stub.created
+  createOutputStubsFor(root, config, DEFAULT_ENGINE_STATE.currentStep, { via: "new-task" });
   return { restored, discarded };
 }
 

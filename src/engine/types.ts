@@ -5,6 +5,12 @@ import type { PreflightCheck } from "./preflight.js";
 export type FileRef = {
   path: string;
   optional?: boolean;
+  /**
+   * 小枠B（2026-10-19）: `optionalOutputs` の項目にだけ意味を持つ。claude のステップへ入るとき、無ければ 0 バイトのスタブを作る。
+   * 既定では optionalOutputs はスタブにしない（不在が正常なものに存在を作ると skipped を握り潰す・completion.ts の規律）。
+   * 0 バイトが「不在」と同じ意味になると確かめたファイルだけに付ける（例: feature.md は Phase の一覧が無ければ単一タスク扱い）。
+   */
+  stub?: boolean;
 };
 
 export type ValidatorType =
@@ -16,7 +22,9 @@ export type ValidatorType =
   | "verify-local"
   | "command-exit-code"
   | "consumer-presence"
-  | "measurement-completeness";
+  | "measurement-completeness"
+  // 小枠B（2026-10-19）: task-planning の整形契約。依頼の対応表の完全性（src/engine/requestMapping.ts）
+  | "request-mapping";
 
 export type ValidatorRef = {
   type: ValidatorType;

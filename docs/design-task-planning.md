@@ -1,6 +1,6 @@
 # 設計: task-planning の executor 化と整形契約（小枠B）
 
-状態: **設計案・人間の承認待ち**（2026-10-19）。承認後に実装する。末尾の「未解決の論点」に判断の要る点をまとめた。
+状態: **承認済み・実装済み**（2026-10-19）。末尾の「論点の決着」と「実装で設計から変えた点」を併せて読むこと。
 
 ## 1. 位置づけと境界
 
@@ -154,7 +154,32 @@ research が持つのはコードの言葉（`## Modify` のファイル名・�
 - task-planning の所要（手貼りの時間は記録が無いので before は取れない。after だけ記録する）
 - 数本（目安 n=5）観測してから、`auto: true` への組み入れを別に判定する
 
-## 未解決の論点（承認時に決めてほしいもの）
+## 論点の決着（2026-10-19 人間の裁定）
+
+1. **backlog 照合の分担: 承認。** task-planning は**依頼の言葉**（画面名・コンポーネント名・依頼に書かれた BL-ID）で、research は **`## Modify` のファイル名**で照合する。
+   **照合の鍵が違うので二度打ちではない**（research の廃止は、ファイル名でしか当たらない BL を拾えなくするので採らない）。research Skill v12
+2. **写像先に `G` を許す: 承認（条件つき）。** ⚠️ **G へ写像された文は実装への拘束力を持たない**——G 行きは「取りこぼしていない」の証明であって要求化ではない。
+   この意味論をテンプレートと Skill に明記した。何でも G へ流して R を薄くする抜け道を塞ぐため、review の Specification Coverage Audit の既存項目に
+   「G へ写された行に要求らしき文が落ちていないか」を1句足した（review Skill v8）
+3. **feature.md のスタブ: 承認。**（実装は下の「変えた点」1 のとおり、`stub: true` の宣言で opt-in）
+4. **effort: high を承認。** runtime の `steps.task-planning.effort: high`
+5. **逆方向（依頼に由来しない要件）: 「見送り」ではなく「表の形式で無料にする」へ修正。** `### Added Requirements` を必須の節にし、
+   依頼に由来しない R を根拠1行つきで自己申告させる（無ければ「なし」）。**表のどの行からも指されず、この節にも無い R は halt**——
+   validator を増やさず、request-mapping の表の完全性の一部として扱う。task-planning が依頼に無い要件を勝手に足す（整形が創作になる）のは
+   executor 化の固有リスクで、それを形式で可視化する
+
+## 実装で設計から変えた点（2026-10-19）
+
+1. **feature.md のスタブは opt-in にした。** 設計案は「`optionalOutputs` もスタブの対象に含める」と書いたが、スタブ作成には既存の規律
+   「optionalOutputs は含めない（不在が正常なものに存在を作ると skipped を握り潰す）」がある（`completion.ts`）。全体を変えるとこの規律が一般に壊れるので、
+   `FileRef.stub: true` を宣言した optionalOutputs だけを対象にした（task-planning の feature.md だけに付けた）
+2. **review の1句は「パリティ監査」ではなく「Specification Coverage Audit」に入れた。** パリティ監査は兄弟機能の棚卸しの検査で、
+   G の逃げ道は要求の網羅の検査なので、意味の合う既存項目へ足した
+3. research の AC Matrix は「ID は `current-task.md` の AC の ID をそのまま引き継ぐ（足す AC は続きの番号）」に変えた（設計 §2 の「AC の ID は research まで引き継ぐ」の実装）
+4. new-task のスタブは `createOutputStubsFor` を再利用し、記録は `stub.created`（`via: "new-task"`）。空の current-status.json は json-schema が halt するので、
+   「まだ誰も宣言していない」は保たれる
+
+## （承認前の）未解決の論点
 
 1. **research の照合の扱い**: 上の整理案（research は task-planning の候補を引き継ぎ、`## Modify` のファイル名でだけ追加照合）でよいか。
    それとも research の照合の節を**廃止**するか。廃止すると、依頼の言葉に出ずコードを読んで初めて分かる候補（実例: ファイル名でしか当たらない BL）は拾えなくなる

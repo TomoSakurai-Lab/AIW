@@ -46,9 +46,10 @@ defaults:
 # --------------------------------------------------------
 # 変更対象ごとにバージョンを持ち、Event Log に使用バージョンを記録する。
 versions:
-  workflow: 5
+  workflow: 6                  # 2026-10-19: task-planning に Skill と request-mapping validator・feature.md の stub（小枠B）。executor は clipboard のまま
+                               # v5: （注記なし）
   prompts:
-    taskPlanning: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
+    taskPlanning: 5           # 2026-10-19: 見出しの一覧の再記述をやめ、テンプレートと Skill を参照（小枠B）（v4: リネーム。パス表記のみ）
     research: 10              # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     implementation: 3         # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
     review: 8                 # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
@@ -57,7 +58,7 @@ versions:
     improveCheck: 7           # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 8             # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
   templates:
-    currentTask: 2
+    currentTask: 3              # 2026-10-19: R / O / AC の ID・## Request Mapping・### Added Requirements（小枠B）
     currentResult: 2           # M1: 検証パッケージ化
     currentReview: 6           # `### Files To Modify` の書式規則を HTML コメントで追加
     researchFindings: 1        # M1 で新設
@@ -69,10 +70,11 @@ versions:
   skills:
     implementation: 7         # 2026-10-09: consumerChecks[].root はディレクトリを指す（BL-282）（v6 2026-10-06: 絞った実行に入らない故障注入・防衛線は一式にしか無い。最後の一式を省いた完了報告は不完全（v5 2026-10-05: 検証の段階制とコマンドの上限・BL-241））
     fix: 7                    # 2026-10-06: 同上（v6 2026-10-05: 検証の段階制にコマンドの上限の扱い・BL-241）
-    review: 7                  # 2026-10-06: 逆向きの網（[要回答] の過剰を research起因（過剰）として Minor で指摘・分類語彙は増やさない）と既定採用の確認（v6: `### Files To Modify` に 1 行 1 パス）
+    review: 8                  # 2026-10-19: Specification Coverage Audit に「G へ写された行に要求らしき文が落ちていないか」の1句（小枠B）（v7 2026-10-06: 逆向きの網（[要回答] の過剰を research起因（過剰）として Minor で指摘・分類語彙は増やさない）と既定採用の確認（v6: `### Files To Modify` に 1 行 1 パス））
     improve-check: 3          # improve-check の判定範囲へ Fix Scope の Major を追加
     reflection: 6             # 2026-10-06: 既定採用（ゲート②承認）は「実装時に決定された」と同じ扱い（v5: context.md の索引を同時に更新する）
-    research: 11              # 2026-10-19: 削る前に割り当て（aiw tokens の削減の割り当て）を見て各セクションを1回ずつ書き直し、1回だけ測る（BL-283 (ii)。v10 の帯の上端への漸近の対策）（v10 2026-10-15: 帯より上なら上限の内外を問わず帯まで一度で削る（v9 の「上限内なら削らない」が出口になり帯に入らなかった・BL-283 の訂正）（v9 2026-10-09: やめ時は目標帯（上限の 75〜90%）。超えたら帯まで一度で削り、帯に入ったら・上限内なら削らない（BL-283。「8割を超えたら一度で」を置き換え）（v8 2026-10-06: validator と同じ見積もりで測る）（v7: Open Decisions の [推奨あり] / [要回答]・再構成・Trigger 照合）））
+    research: 12              # 2026-10-19: backlog 照合は task-planning の候補を引き継ぎ ## Modify のファイル名でだけ・AC の ID を current-task から引き継ぐ（小枠B）（v11 2026-10-19: 削る前に割り当て（aiw tokens の削減の割り当て）を見て各セクションを1回ずつ書き直し、1回だけ測る（BL-283 (ii)。v10 の帯の上端への漸近の対策）（v10 2026-10-15: 帯より上なら上限の内外を問わず帯まで一度で削る（v9 の「上限内なら削らない」が出口になり帯に入らなかった・BL-283 の訂正）（v9 2026-10-09: やめ時は目標帯（上限の 75〜90%）。超えたら帯まで一度で削り、帯に入ったら・上限内なら削らない（BL-283。「8割を超えたら一度で」を置き換え）（v8 2026-10-06: validator と同じ見積もりで測る）（v7: Open Decisions の [推奨あり] / [要回答]・再構成・Trigger 照合））））
+    task-planning: 1          # 2026-10-19: 新設（小枠B: 整形の手順・依頼の対応表・backlog の候補を依頼の言葉で列挙）
   instructions:
     coding-rules: 4           # リネーム（.ai-workflow2→.ai-workflow）。パス表記のみ・意味は不変
                                # (キーは宣言名そのもの = instructions/<name>.md)
@@ -94,6 +96,7 @@ artifacts:
         - "## Requirements"
         - "## Out of Scope"
         - "## Acceptance Criteria"
+        - "## Request Mapping"       # 小枠B（2026-10-19）: 依頼の対応表。中身の完全性は request-mapping validator
 
   # Codex 入力(M1)。読者は実装者のみ。Current/Target/Delta や Open Decisions は
   # research-findings.md 側に置く。token-range を維持するための分割(設計原則3)。
@@ -215,6 +218,7 @@ steps:
 
   task-planning:
     role: claude
+    skill: task-planning          # 小枠B（2026-10-19）: 整形の手順。書式の正本はテンプレートと artifacts
     inputs:
       - path: user-task.md
       - path: context.md
@@ -227,6 +231,7 @@ steps:
       - path: current-status.json
     optionalOutputs:
       - path: feature.md
+        stub: true                 # 小枠B: claude のとき無ければ 0 バイトで作る（Edit は既存ファイルしか書けない）。空は「単一タスク」と同じ意味
     validators:
       - type: file-exists
         onViolation: halt
@@ -237,6 +242,9 @@ steps:
         schema: schemas/current-status.schema.json
       - type: artifact-contract
         onViolation: halt
+        artifact: current-task
+      - type: request-mapping      # 小枠B: 依頼の対応表の完全性（実在する ID を指す・依頼にない要件は自己申告）。内容の妥当性はゲート①で人間
+        onViolation: halt          # 入口の契約は固く: 壊れたまま research へ進むと下流がすべて汚染される
         artifact: current-task
     approval:
       required: true

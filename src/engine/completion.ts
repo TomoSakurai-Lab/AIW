@@ -94,12 +94,13 @@ function buildNotice(validation: ValidationOutcome): ValidationNotice | undefine
  *
  * - **無ければ作るだけ。既存ファイルは絶対に上書きしない**（reject → rerun で書き上げた成果物を消さない）
  * - 対象は `outputs` の宣言から導く（手書きリストを持たない）。`optionalOutputs` は含めない
- *   ——不在が正常なものへ存在を作ると、`skipped` を握り潰すのと同じことになる
+ *   ——不在が正常なものへ存在を作ると、`skipped` を握り潰すのと同じことになる。
+ *   例外は `stub: true` を宣言した optionalOutputs だけ（小枠B: 0 バイトが「不在」と同じ意味になると確かめたもの・例 feature.md）
  * - ディレクトリ宣言（末尾 `/`）は対象外
  * - **executor は関与しない**（「executor は成果物を検証しない / 用意しない」を保つ）
  * - 作ったら Event Log に `stub.created` を残す。**黙って作らない**
  */
-function createOutputStubsFor(
+export function createOutputStubsFor(
   root: string,
   config: WorkflowConfig,
   destId: string,
@@ -110,7 +111,8 @@ function createOutputStubsFor(
     return;
   }
   const created: string[] = [];
-  for (const output of dest.outputs ?? []) {
+  const targets = [...(dest.outputs ?? []), ...(dest.optionalOutputs ?? []).filter((o) => o.stub === true)];
+  for (const output of targets) {
     if (output.path.endsWith("/")) {
       continue;
     }

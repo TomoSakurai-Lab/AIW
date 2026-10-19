@@ -61,7 +61,7 @@ artifact-contract が halt する。
 
 ### `# Acceptance Criteria Matrix`
 
-次の表形式にする。ID は `AC-01` から連番。
+次の表形式にする。ID は **`current-task.md` の Acceptance Criteria の ID をそのまま引き継ぐ**（research が足す AC は続きの番号）。
 実装はこの ID で検証結果を返し、review は ID ごとに証拠を突き合わせる。
 
 | ID | Expected Behavior | Verification | Evidence Required |
@@ -160,13 +160,14 @@ artifact-contract が halt する。
 ## backlog の Trigger 照合
 
 パリティ表と同じ型で、**既存の backlog に今回拾える項目が無いかを機械的に照合する**（毎回）。
+**依頼の言葉（画面名・コンポーネント名・依頼に書かれた BL-ID）での照合は task-planning が済ませている**（`current-task.md` の `# Task` の候補）。
+research はそれを引き継ぎ、**コードの言葉＝`## Modify` のファイル名でだけ**追加で照合する（照合の鍵が違うので二度打ちではない）。
 
-1. `## Modify` に宣言したファイル名と、主要な識別子（関数・コンポーネント・API 名）で
-   `backlog.md` の **`Status: open` の項目だけ**を grep する
-2. `Trigger:` が今回のタスクに該当する項目を、`research-findings.md` の `# Delta` 配下に
+1. `## Modify` に宣言したファイル名で、`backlog.md` の **`Status: open` の項目だけ**を grep する（依頼の言葉では grep しない）
+2. `Trigger:` が今回のタスクに該当し、**task-planning の候補に無い**項目を、`research-findings.md` の `# Delta` 配下に
    **「拾える候補」**として ID + 1行で列挙する（**最大5件**）。拾うかどうかはゲート②で人間が決める。
    **research が勝手に Scope へ入れない**
-3. 該当が無ければ `# Delta` に「backlog 照合: 該当なし（grep: `<識別子>`）」を1行書く——**不在も記録で示す**
+3. 該当が無ければ `# Delta` に「backlog 照合: 該当なし（grep: `<ファイル名>`）」を1行書く——**不在も記録で示す**
 
 ## 算出値の扱い ← 最重要
 

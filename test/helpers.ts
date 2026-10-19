@@ -87,6 +87,8 @@ export function corruptStatus(root: string): void {
 
 // ---- valid artifact fixtures (satisfy §7.4 contracts) ----
 
+// 小枠B（2026-10-19）: task-planning の整形契約（ID・## Request Mapping・### Added Requirements）を満たす最小形。
+// request-mapping validator（halt）が通ることが前提のテストはこれを使う。
 export const validTask = `# Task
 
 Task ID: TASK-001
@@ -96,11 +98,21 @@ g
 ## Scope
 s
 ## Requirements
-r
+- R1: r
 ## Out of Scope
-o
+- O1: o
 ## Acceptance Criteria
-a
+- AC-01: a
+## Request Mapping
+
+| # | 依頼（user-task.md の箇所と要旨） | 写像先 |
+| --- | --- | --- |
+| 1 | 1 行目: r | R1, AC-01 |
+| 2 | 2 行目: o はやらない | O1 |
+
+### Added Requirements
+
+- なし
 `;
 
 // M1: current-result.md is a verification package (11 sections, three-valued AC status).

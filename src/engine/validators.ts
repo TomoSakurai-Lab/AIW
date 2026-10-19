@@ -8,6 +8,7 @@ const Ajv: any = (AjvModule as any).default ?? AjvModule;
 import { resolveConfigRef } from "./paths.js";
 import { estimateTokens, estimateTokensBySection } from "./tokens.js";
 import { parseJsonText } from "./jsonText.js";
+import { checkRequestMapping } from "./requestMapping.js";
 import { isDeclared, parseDeclaredFiles } from "./declaredFiles.js";
 import { compareToBaseline, readBaseline, readRepoState, resolveCheckRepoRoot } from "./gitScope.js";
 import { knownFailureHint, runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
@@ -58,7 +59,8 @@ const ORDER: Record<ValidatorRef["type"], number> = {
   "verify-local": 4,
   "command-exit-code": 4,
   "consumer-presence": 4,
-  "measurement-completeness": 4
+  "measurement-completeness": 4,
+  "request-mapping": 2 // 見出しの契約（artifact-contract）の後に、表の完全性
 };
 
 // Validators that are declared in workflow.yaml but deliberately not executed yet. They are NOT
@@ -209,6 +211,22 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
         .map((s) => `${s.heading} ~${s.tokens}`)
         .join(" / ");
       return failed(`${target} ~${tokens} tokens outside [${min}, ${max}]（${gap}。セクション別の見積もり・大きい順: ${breakdown}）`, target);
+    }
+    case "request-mapping": {
+      // 小枠B: task-planning の整形契約。縛るのは表の完全性だけ（内容の妥当性はゲート①で人間）。設計 docs/design-task-planning.md §2
+      const def = config.artifacts[v.artifact!];
+      if (!def) {
+        return failed(`unknown artifact "${v.artifact}"`);
+      }
+      const target = def.path;
+      const file = abs(root, target);
+      if (!existsSync(file)) {
+        return failed(`${target} does not exist`, target);
+      }
+      const { problems, rows } = checkRequestMapping(readFileSync(file, "utf8"));
+      return problems.length === 0
+        ? passed(`${target} request mapping complete (${rows} row(s))`, target)
+        : failed(`${target} request mapping: ${problems.join("; ")}`, target, { problems });
     }
     case "diff-scope":
       return runDiffScope(root, config, v, ctx);

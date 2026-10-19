@@ -17,7 +17,7 @@ import { approve, runStep } from "../src/engine/engine.js";
 import { rootPaths } from "../src/engine/paths.js";
 import { runValidators } from "../src/engine/validators.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
-import { makeRoot, setStep, validResult, validContextPackage, writeIn, writeStatus } from "./helpers.js";
+import { makeRoot, setStep, validResult, validContextPackage, validTask, writeIn, writeStatus } from "./helpers.js";
 
 /** research を claude 実行にした config（runtime の段階1-3 相当）。assets は clipboard のまま。 */
 function withClaudeResearch(config: WorkflowConfig): WorkflowConfig {
@@ -38,7 +38,7 @@ function enterResearch(config: WorkflowConfig) {
   writeIn(
     root,
     "current-task.md",
-    ["# Task", "## Goal", "g", "## Scope", "- s", "## Requirements", "- r", "## Out of Scope", "- o", "## Acceptance Criteria", "- a", ""].join("\n")
+    validTask /* 小枠B: 整形契約を満たす形 */
   );
   const first = runStep(root, config, "task-planning");
   assert.equal(first.kind, "awaiting-approval", "承認ゲート①");
@@ -78,7 +78,7 @@ test("156: an artifact that already exists is never overwritten by a stub", () =
   writeIn(
     root,
     "current-task.md",
-    ["# Task", "## Goal", "g", "## Scope", "- s", "## Requirements", "- r", "## Out of Scope", "- o", "## Acceptance Criteria", "- a", ""].join("\n")
+    validTask /* 小枠B: 整形契約を満たす形 */
   );
   // 前回の research が書いた本文が残っている状態
   const body = validContextPackage();

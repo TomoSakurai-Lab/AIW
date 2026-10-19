@@ -57,8 +57,10 @@ test("14: loader defaults executor to clipboard and rejects unknown values", () 
 // このテストが見たいのは「どの本文を配ったか」であって改行の表現ではない。
 test("15: clipboard executor honours quiet vs print", async () => {
   const { root, config } = makeRoot();
-  const step = config.steps["task-planning"];
-  const body = readFileSync(path.join(rootPaths(root).promptsDir, "task-planning.md"), "utf8");
+  // Skill を宣言していないステップを使う（本文がプロンプトのファイルそのものになる）。
+  // 2026-10-19 に task-planning が Skill を持った（小枠B）ので review-audit へ移した。見ているものは同じ
+  const step = config.steps["review-audit"];
+  const body = readFileSync(path.join(rootPaths(root).promptsDir, "review-audit.md"), "utf8");
   const eol = (s: string) => s.split("\r\n").join("\n");
 
   const quiet = fakeClipboard("quiet");
@@ -84,7 +86,7 @@ test("15: clipboard executor honours quiet vs print", async () => {
   assert.match(broken.sink.err[0], /^warning: clipboard copy failed/);
 
   // no prompt file for the step: not an error, promptFile is null
-  rmSync(path.join(rootPaths(root).promptsDir, "task-planning.md"));
+  rmSync(path.join(rootPaths(root).promptsDir, "review-audit.md"));
   const missing = await fakeClipboard("quiet").executor.execute({ root, config, step });
   assert.equal(missing.ok, true);
   assert.deepEqual(missing.meta, { executor: "clipboard", promptFile: null, outcome: "no-prompt" });

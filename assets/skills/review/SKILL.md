@@ -34,6 +34,7 @@ checkRepoRoot からのフルパスをインラインコードで書き、接頭
 ### `## Specification Coverage Audit`
 
 - 実装が `context-package.md` の `# Source Requirements` を満たしているか
+  （あわせて `current-task.md` の `## Request Mapping` で **G（背景）へ写された行に、要求らしき文が落ちていないか**を1行で見る。G は拘束力を持たないので、要求の逃げ道になりうる）
 - **Fix が必要な場合、原因を分類する**（3値。Fix Scope を出すときは必ずいずれかを書く）:
   - `実装起因` … 指示どおりに作られていない
   - `research起因（指示が誤り）` … 指示は存在したが、内容が間違っていた
