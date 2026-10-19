@@ -32,6 +32,7 @@ import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
 import { allocateCuts, describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
+import { readKnowledgeDiff } from "./engine/knowledgeSnapshot.js";
 import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
@@ -88,6 +89,8 @@ function printOutcome(outcome: PipelineOutcome): void {
     case "awaiting-approval":
       console.log(`awaiting approval: step "${outcome.step}". Use "aiw approve" or "aiw reject <reason>".`);
       printNotice(outcome.notice);
+      // 小枠A: 承認の判断材料（知識の差分の要約・異常候補が先頭）
+      if (outcome.knowledgeDiff) console.log(`knowledge diff: ${outcome.knowledgeDiff.line}  (${outcome.knowledgeDiff.report})`);
       break;
     case "halted": {
       console.error(`HALTED (${outcome.reason}) at step "${outcome.step}": ${outcome.message}`);
@@ -912,6 +915,11 @@ async function runDrive(): Promise<void> {
         safe(() => console.log(`
 ${formatBriefing(buildBriefing(root, config, gate))}
 `));
+        // 小枠A: その場で書き換えるステップのゲートでは、知識の差分の要約と報告の場所を出す（異常候補が先頭）
+        safe(() => {
+          const diff = readKnowledgeDiff(root, gate);
+          if (diff) console.log(`知識の差分: ${diff.line}\n  詳細: ${diff.report}\n`);
+        });
         if (yes(await ask(`承認ゲート: "${gate}" を承認しますか？ [y=承認 / n=却下] `))) {
           safe(() => printOutcome(engineApprove(root, config)));
         } else {

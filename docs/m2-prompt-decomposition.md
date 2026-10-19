@@ -170,6 +170,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(2026-10-19 削除・小枠B)** task-planning プロンプトの「必須見出しの一覧」 | **削除**（契約の再記述だった。テンプレートと Skill の参照へ置き換え・不変条件7） | prompts/task-planning（v5） | ✅ |
 | **(2026-10-19 変更・小枠B)** research の backlog 照合は task-planning の候補を引き継ぎ `## Modify` のファイル名でだけ追加照合（照合の鍵が違う）。AC Matrix の ID は current-task の AC の ID を引き継ぐ | **変更** | research Skill（v12） | ✅ |
 | **(2026-10-19 追加・小枠B)** Specification Coverage Audit に「Request Mapping で G へ写された行に要求らしき文が落ちていないか」の1句 | **新規追加**（G の逃げ道への網。既存項目への1句） | review Skill（v8） | ✅ |
+| **(2026-10-19 変更・小枠A)** research/ の新しいメモは作らず learnings.md に「メモ候補: <題>（理由1行）」として書く（Edit は新規ファイルを作れない）。人間は知識の差分（異常候補が先頭）を見て承認する／既存の記述を消すときは理由を learnings に1行 | **変更**（executor 化に伴う） | reflection Skill（v7） | ✅ |
 | ↑ のうち、この環境での測り方（`node tools/aiw/dist/cli.js tokens …`・`cd` を挟まない） | 環境固有 | **local-environment**（v7・runtime のみ）+ research の `bashAllow` | ✅ |
 
 ---

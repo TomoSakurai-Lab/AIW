@@ -3,6 +3,7 @@ import path from "node:path";
 import { currentTaskWindow, readEventLog } from "./observed.js";
 import { rootPaths } from "./paths.js";
 import { parseJsonText } from "./jsonText.js";
+import { archiveSnapshots, discardSnapshots } from "./knowledgeSnapshot.js";
 import type { EngineState, Status, WorkflowConfig, WorkflowStep } from "./types.js";
 
 export type PostActionContext = {
@@ -147,6 +148,14 @@ const archiveArtifacts: PostActionFn = ({ root, draft }) => {
     cpSync(attemptsDir, path.join(dest, "attempts"), { recursive: true });
   }
   archiveCodexRuns(root, dest);
+  // 小枠A: 差分サマリ（knowledge-diff-<step>.md）と、却下で退避した状態（knowledge-<step>-rejected-*/）をタスクの記録として随伴させる。
+  // runs/snapshots/ を消すのは discardSnapshots（archive より後で宣言・new-artifact-checklist の「記録は archive 後に削除」）
+  archiveSnapshots(root, dest);
+};
+
+/** 小枠A: runs/snapshots/ を消す（archiveArtifacts が記録を退避した後）。次のステップへ入るときに撮り直す */
+const discardSnapshotsAction: PostActionFn = ({ root }) => {
+  discardSnapshots(root);
 };
 
 /**
@@ -350,5 +359,6 @@ export const defaultPostActions: PostActionRegistry = {
   restoreTemplates,
   resetFixAttempts,
   archiveFeature,
-  advancePhase
+  advancePhase,
+  discardSnapshots: discardSnapshotsAction // 小枠A
 };

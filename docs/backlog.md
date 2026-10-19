@@ -786,3 +786,24 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 観測（executor 化の後・目安 n=5）: ゲート①の却下率と理由（対応表の取りこぼしか）/ request-mapping の halt の件数と内訳 / task-planning の所要。
   その後に `auto: true` への組み入れを別に判定する（research と同じ段階制）
 - Status: resolved (2026-10-19・観測待ち)
+
+## BL-288
+
+- Source: 人間の次の枠の指定（小枠A: reflection の executor 化 + 知識の差分サマリ）/ 起票 2026-10-19・人間が承認
+- Severity: Major
+- Trigger: すぐ（設計 → 承認 → 実装）
+- Summary: **reflection を claude executor で無人実行し、知識ファイルの差分を人間に見せる仕組みとセットで入れる**（M4 の再検討条件そのもの）。設計は `docs/design-reflection.md`
+- 対処（2026-10-19）:
+  1. スナップショット: 入るとき（遷移・new-task）に、そのステップの inputs ∩ outputs を `runs/snapshots/<step>/` へ撮る（宣言から導く・知識ファイル名はエンジンに無い）。
+     今の宣言では reflection（context / learnings / backlog / research/）と task-planning（feature.md）が当たる。clipboard でも撮る
+  2. 差分サマリ: run の検証の前に `runs/snapshots/<step>/knowledge-diff.md`（**異常候補が先頭**: BL の二重・既存 BL の消失・Summary が既存と同じ BL・大幅削除 ≥30 行・大量追加 ≥80 行。
+     無ければ「異常候補なし」）。ファイルごとの増減・BL の追加 / 状態の変化 / 削除・差分の本文（300 行まで）。Event Log `knowledge.diff`。A1 の1行・drive のゲート・aiw run にも要約
+  3. 承認ゲート（reflection・timing after・onReject rerun）。却下では今の状態を `runs/snapshots/<step>-rejected-<時刻>/` へ**退避**してからスナップショットへ戻す（`knowledge.restored`）
+  4. archive: `knowledge-diff-<step>.md` と退避した状態を archive へ随伴、`runs/snapshots/` は `discardSnapshots`（archiveArtifacts の後）で消す
+  5. task-metadata.json: claude のとき 0 バイトのスタブを置くので、reflection に json-schema（緩い schema・新設）を足し、json-schema は 0 バイトを「空」と言う
+  6. runtime: executor claude・effort high・**auto: true**（ゲートが無人の知識汚染を構造的に防ぐ・人間の裁定）。reflection Skill v7（research/ の新規メモは learnings の「メモ候補」へ）
+  7. Test 251〜254（スナップショット / 差分と異常候補 / **故障注入の一周: 却下 → 退避 → 戻し → 再実行 → 差分が初回と独立** / 2 タスク連続と task-metadata の空）。
+     却下の戻しを外すと 253 が落ちる（BL が二重になる）ことを確認（変異）。reflection を通す既存テスト 4 ファイルは「承認まで進める」補助関数へ
+- 観測（executor 化の後）: **承認 / 却下の比**（数十タスクで却下 0 なら「異常候補ゼロなら自動承認」をデータ付きで再検討）・却下の理由（差分のどこを見たか）・
+  異常候補の件数と的中・差分の大きさ・所要・`nextPhaseId` の書き漏れの halt が消えたか（before: 9 回中 8 回）・「メモ候補」が実際にメモ化された率
+- Status: resolved (2026-10-19・観測待ち)

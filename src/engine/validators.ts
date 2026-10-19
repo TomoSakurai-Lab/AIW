@@ -128,8 +128,13 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       }
       let data: unknown;
       let bom = false;
+      const raw = readFileSync(file, "utf8");
+      // 小枠A: 0 バイト（遷移で作ったスタブのまま・誰も書いていない）は「壊れた JSON」と区別して言う。判定は同じ failed（null と 0 を混ぜない、のファイル版）
+      if (raw.replace(/^﻿/, "").trim() === "") {
+        return failed(`${target} is empty (no one wrote it — the entry stub is still 0 bytes)`, target);
+      }
       try {
-        ({ value: data, bom } = parseJsonText(readFileSync(file, "utf8")));
+        ({ value: data, bom } = parseJsonText(raw));
       } catch (error) {
         const m = error instanceof Error ? error.message : String(error);
         return failed(`${target} is not valid JSON: ${m}`, target);

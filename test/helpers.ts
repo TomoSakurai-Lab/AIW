@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { initRoot, loadConfig } from "../src/engine/engine.js";
+import type { CompletionOptions, PipelineOutcome } from "../src/engine/completion.js";
+import { approve, initRoot, loadConfig, runStep } from "../src/engine/engine.js";
 import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import { updateState } from "../src/engine/state.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
@@ -169,6 +170,15 @@ export const validTaskMetadata = JSON.stringify(
 );
 
 // reflection を通すのに必要な成果物を置く（M1 で file-exists の対象が増えた）。
+/**
+ * 小枠A（2026-10-19）: reflection は承認ゲートを持つ（知識の差分を見て承認）。ゲートそのものを見ないテスト（postActions・archive 等）は、
+ * run して承認待ちなら承認まで進める。注入した postActions などの opts は承認の処理（postActions が走る側）へ渡す
+ */
+export function runReflection(root: string, config: WorkflowConfig, opts: CompletionOptions = {}): PipelineOutcome {
+  const first = runStep(root, config, "reflection", opts);
+  return first.kind === "awaiting-approval" ? approve(root, config, opts) : first;
+}
+
 export function seedReflectionOutputs(root: string): void {
   writeIn(root, "task-metadata.json", validTaskMetadata);
 }

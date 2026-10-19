@@ -64,3 +64,10 @@
 | 2 | `research-findings.md` | archive と掃除の両方 | M1 レビュー |
 | 3 | `ac-manifest.json` / `ac-result.json` | archive と掃除の両方 + 許可リスト | 2周目（実装が停止） |
 | 4 | `consumerChecks[].root` の解決基準 | パス規約 / 実配置の模倣 | ソーク窓の偽陽性 10 件（テストは緑・本番の `passed` は 0 件） |
+
+## 通した記録
+
+| 日付 | 成果物 | 結果 |
+| --- | --- | --- |
+| 2026-10-19 | `runs/snapshots/<step>/`（スナップショット・`knowledge-diff.md` / `.json`・却下の退避 `<step>-rejected-*`）（小枠A・BL-288） | 生成: エンジン（入るとき・run・却下）/ contract: 検証対象ではない表示用の報告なので artifacts に定義しない（判定に使わない）/ archive: `archiveSnapshots`（`knowledge-diff-<step>.md`・`knowledge-<step>-rejected-*/`）/ 掃除: `discardSnapshots`（archiveArtifacts の後・reflection の postActions）/ 分類表: reflection Skill v7 の行 / 許可リスト: 対象外（executor は書かない・エンジンだけが書く）/ パス規約: 報告の中のパスは runtimeRoot 相対 / 2周目: Test 254 / 実配置: 本番の `knowledge.diff` が 1 件以上記録されるまで「効いている」と言わない |
+| 2026-10-19 | `schemas/task-metadata.schema.json`（小枠A） | assets に置き aiw init で配る / 版 `schemas.taskMetadata: 1` / 緩い版（オブジェクトであることだけ）。締めるのは実測の後 |

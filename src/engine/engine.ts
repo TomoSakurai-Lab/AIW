@@ -9,6 +9,7 @@ import {
   type PipelineOutcome
 } from "./completion.js";
 import { appendEvent } from "./eventLog.js";
+import { captureSnapshot, restoreSnapshot } from "./knowledgeSnapshot.js";
 import { getExecutor } from "./executors/index.js";
 import type { ExecutorRequest, ExecutorResult, StepExecutor } from "./executors/types.js";
 import {
@@ -116,6 +117,9 @@ export function resetForNewTask(root: string, config: WorkflowConfig): { restore
   // current-status.json は上で消したので、ここで 0 バイトになる——空の JSON は json-schema が halt するので「まだ誰も宣言していない」は保たれる。
   // clipboard のときは何もしない（createOutputStubsFor が executor を見る）。記録は遷移のときと同じ stub.created
   createOutputStubsFor(root, config, DEFAULT_ENGINE_STATE.currentStep, { via: "new-task" });
+  // 小枠A: 入るときのスナップショット（task-planning は feature.md をその場で書き換える）。遷移で入るときと同じ
+  const entry = config.steps[DEFAULT_ENGINE_STATE.currentStep];
+  if (entry) captureSnapshot(root, entry, { via: "new-task" });
   return { restored, discarded };
 }
 
@@ -370,6 +374,9 @@ export function reject(root: string, config: WorkflowConfig, reason: string): Pi
   }
   // rerun: pass the rejection reason as an added input; re-run the same step.
   writeRejectionNote(root, reason);
+  // 小枠A: その場で書き換えるステップ（reflection の知識ファイル等）は、今の状態を退避してからスナップショットへ戻す。
+  // 戻さずに再実行すると前回の追記の上にもう一度追記して重複する（不変条件2・3）。スナップショットの無いステップは何もしない
+  restoreSnapshot(root, stepId, { featureId: state.featureId, taskId: state.taskId, step: stepId });
   updateState(root, { pendingApproval: null, status: "ready" });
   return { kind: "rerun", step: stepId };
 }

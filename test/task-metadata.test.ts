@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { runStep } from "../src/engine/engine.js";
-import { archivedTaskDirs, makeRoot, setStep, validResearchFindings, writeIn, writeStatus } from "./helpers.js";
+import { archivedTaskDirs, makeRoot, setStep, validResearchFindings, writeIn, writeStatus, runReflection } from "./helpers.js";
 
 const FILLED = JSON.stringify(
   {
@@ -34,7 +34,7 @@ test("24: task-metadata.json is archived, then discarded", () => {
   writeIn(root, "task-metadata.json", FILLED);
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
 
-  const out = runStep(root, config, "reflection");
+  const out = runReflection(root, config);
   assert.equal(out.kind, "transitioned");
 
   // archived copy keeps what the AI wrote
@@ -62,7 +62,7 @@ test("25: a missing task-metadata.json halts reflection instead of vanishing", (
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
   assert.equal(existsSync(path.join(root, "task-metadata.json")), false);
 
-  const out = runStep(root, config, "reflection");
+  const out = runReflection(root, config);
   assert.equal(out.kind, "halted");
   assert.equal(out.kind === "halted" && out.reason, "validation-failed");
   assert.match(out.kind === "halted" ? out.message : "", /task-metadata\.json/);
@@ -80,7 +80,7 @@ test("26b: research-findings.md is archived, then reset from the template", () =
   writeIn(root, "research-findings.md", validResearchFindings);
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
 
-  const out = runStep(root, config, "reflection");
+  const out = runReflection(root, config);
   assert.equal(out.kind, "transitioned");
 
   const dirs = archivedTaskDirs(root);
@@ -117,11 +117,11 @@ test("26: task-metadata.json has no template and is not restored", () => {
   setStep(root, "reflection");
   writeIn(root, "task-metadata.json", FILLED);
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
-  assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+  assert.equal(runReflection(root, config).kind, "transitioned");
 
   setStep(root, "reflection");
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
-  const second = runStep(root, config, "reflection");
+  const second = runReflection(root, config);
   assert.equal(second.kind, "halted", "the 2nd reflection must not pass on a leftover blank file");
   assert.equal(second.kind === "halted" && second.reason, "validation-failed");
 });
@@ -138,7 +138,7 @@ test("27b: consecutive reflections archive into distinct directories", async () 
     writeIn(root, "task-metadata.json", FILLED.replace("add-task-metadata", label));
     writeIn(root, "research-findings.md", `${validResearchFindings}\n<!-- ${label} -->\n`);
     writeStatus(root, { step: "reflection", result: "feature-complete", reason: label });
-    assert.equal(runStep(root, config, "reflection").kind, "transitioned", `${label} must complete`);
+    assert.equal(runReflection(root, config).kind, "transitioned", `${label} must complete`);
     // the archive path is timestamped to the second; keep the two runs apart
     await new Promise((r) => setTimeout(r, 1100));
   }

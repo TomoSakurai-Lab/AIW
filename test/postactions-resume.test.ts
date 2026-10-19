@@ -6,7 +6,7 @@ import { processCompletion, resume } from "../src/engine/completion.js";
 import { defaultPostActions, type PostActionRegistry } from "../src/engine/postActions.js";
 import { runStep } from "../src/engine/engine.js";
 import { readState } from "../src/engine/state.js";
-import { archivedTaskDirs, corruptStatus, makeRoot, seedReflectionOutputs, setStep, validFeature, writeIn, writeStatus, validResult } from "./helpers.js";
+import { archivedTaskDirs, corruptStatus, makeRoot, seedReflectionOutputs, setStep, validFeature, writeIn, writeStatus, validResult, runReflection } from "./helpers.js";
 
 // Test 6 — validation before destructive postActions: reflection schema failure ⇒ neither
 // restoreTemplates nor archiveArtifacts ran.
@@ -18,7 +18,7 @@ test("6: failed validation leaves destructive postActions un-run", () => {
   // `bogus` violates additionalProperties -> schema halt (before postActions).
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x", bogus: true });
 
-  const o = runStep(root, config, "reflection");
+  const o = runReflection(root, config);
   assert.equal(o.kind, "halted");
   assert.equal(o.kind === "halted" && o.reason, "validation-failed");
   assert.equal(readFileSync(path.join(root, "current-task.md"), "utf8"), "DIRTY-SENTINEL", "restoreTemplates must not have run");
@@ -52,7 +52,7 @@ test("7: resume finishes postActions idempotently after a failure", () => {
     }
   };
 
-  let o = runStep(root, config, "reflection", { postActions: reg });
+  let o = runReflection(root, config, { postActions: reg });
   assert.equal(o.kind, "halted");
   assert.equal(o.kind === "halted" && o.reason, "post-action-failed");
   assert.equal(archiveCount, 1);
@@ -94,10 +94,11 @@ test("7b: resume skips validations 2–5 on the post-action checkpoint path", ()
     validateCalls++;
   };
 
-  // Initial run enters the validation phase once, then fails in postActions.
-  let o = runStep(root, config, "reflection", { postActions: reg, onValidate });
+  // Initial run enters the validation phase, then fails in postActions.
+  // 小枠A（2026-10-19）: reflection は承認ゲートを持つので、run（承認待ちまで）と承認（postActions まで）でそれぞれ検証に入る＝2 回
+  let o = runReflection(root, config, { postActions: reg, onValidate });
   assert.equal(o.kind === "halted" && o.reason, "post-action-failed");
-  assert.equal(validateCalls, 1, "initial run performed validations 2–5");
+  assert.equal(validateCalls, 2, "run と承認の処理がそれぞれ validations 2–5 に入った");
 
   // Corrupt current-status.json: if resume re-ran validations 2–5 it would halt on this.
   corruptStatus(root);
@@ -141,7 +142,7 @@ test("13: feature-continue with an unknown nextPhaseId halts invalid-status", ()
   writeIn(root, "current-task.md", "ORIG-TASK"); // sentinel: detects restoreTemplates
   writeStatus(root, { step: "reflection", result: "feature-continue", reason: "x", nextPhaseId: "phase-9" });
 
-  const o = runStep(root, config, "reflection");
+  const o = runReflection(root, config);
   assert.equal(o.kind, "halted");
   assert.equal(o.kind === "halted" && o.reason, "invalid-status");
   assert.equal(readState(root).currentStep, "reflection", "no transition committed");
@@ -153,7 +154,7 @@ test("13: feature-continue with an unknown nextPhaseId halts invalid-status", ()
   // Positive control: a valid nextPhaseId advances feature.md and transitions to task-planning.
   setStep(root, "reflection"); // clear the halt
   writeStatus(root, { step: "reflection", result: "feature-continue", reason: "x", nextPhaseId: "phase-2" });
-  const o2 = runStep(root, config, "reflection");
+  const o2 = runReflection(root, config);
   assert.equal(o2.kind, "transitioned");
   assert.equal(o2.kind === "transitioned" && o2.to, "task-planning");
   assert.ok(readFileSync(path.join(root, "feature.md"), "utf8").includes("Current phase: phase-2"), "feature.md advanced");

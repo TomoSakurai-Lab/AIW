@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "task-metadata.json",
+  "description": "小枠A（2026-10-19）で新設。緩い版: JSON のオブジェクトであることだけを縛る。reflection を claude executor にすると、Edit のために 0 バイトのスタブを置くので、file-exists は素通りする——書かれなかったことを json-schema が「空」として止める（BL-288）。中身の必須項目を締めるのは実測の後（BL-113 と同じ順序）",
+  "type": "object"
+}

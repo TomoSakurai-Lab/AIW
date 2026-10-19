@@ -6,7 +6,7 @@ import { resume } from "../src/engine/completion.js";
 import { runStep } from "../src/engine/engine.js";
 import { defaultPostActions, type PostActionRegistry } from "../src/engine/postActions.js";
 import { readState } from "../src/engine/state.js";
-import { makeRoot, setStep, validFeature, writeIn, writeStatus } from "./helpers.js";
+import { makeRoot, setStep, validFeature, writeIn, writeStatus, runReflection } from "./helpers.js";
 
 const METADATA = JSON.stringify(
   {
@@ -49,7 +49,7 @@ test("archiveFeature: feature-complete files feature.md under archive/<feature>/
   writeIn(root, "task-metadata.json", METADATA);
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
 
-  const out = runStep(root, config, "reflection");
+  const out = runReflection(root, config);
   assert.equal(out.kind, "transitioned");
 
   assert.deepEqual(featureFiles(root, "FEAT-x"), [`${dateStamp()}-feature-FEAT-x.md`]);
@@ -70,7 +70,7 @@ test("archiveFeature: a same-day second completion is suffixed, not overwritten"
     writeIn(root, "feature.md", validFeature(phases));
     writeIn(root, "task-metadata.json", METADATA);
     writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
-    assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+    assert.equal(runReflection(root, config).kind, "transitioned");
   }
 
   assert.deepEqual(featureFiles(root, "FEAT-x"), [
@@ -88,7 +88,7 @@ test("archiveFeature: feature-continue leaves feature.md alone", () => {
   writeIn(root, "task-metadata.json", METADATA);
   writeStatus(root, { step: "reflection", result: "feature-continue", reason: "next", nextPhaseId: "phase-b" });
 
-  assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+  assert.equal(runReflection(root, config).kind, "transitioned");
 
   assert.ok(existsSync(path.join(root, "feature.md")), "feature.md must survive feature-continue");
   assert.match(readFileSync(path.join(root, "feature.md"), "utf8"), /Current phase: phase-b/);
@@ -105,7 +105,7 @@ test("archiveArtifacts: a feature's phases are archived under archive/<featureId
   writeIn(root, "task-metadata.json", METADATA); // featureId: FEAT-x
   writeStatus(root, { step: "reflection", result: "feature-continue", reason: "next", nextPhaseId: "phase-b" });
 
-  assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+  assert.equal(runReflection(root, config).kind, "transitioned");
 
   const dirs = readdirSync(path.join(root, "archive", "FEAT-x")).filter((f) => f.endsWith("-task"));
   assert.equal(dirs.length, 1, `expected the phase under archive/FEAT-x, got: ${dirs.join(", ")}`);
@@ -128,7 +128,7 @@ test("archiveArtifacts: a single task still goes to archive/single/", () => {
   writeIn(root, "task-metadata.json", METADATA.replace('"featureId": "FEAT-x"', '"featureId": null'));
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
 
-  assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+  assert.equal(runReflection(root, config).kind, "transitioned");
   assert.ok(existsSync(path.join(root, "archive", "single")), "a task without a feature goes to single/");
 });
 
@@ -142,7 +142,7 @@ test("archiveFeature: a single task leaves the seeded feature.md in place", () =
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
   const seeded = existsSync(path.join(root, "feature.md"));
 
-  assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+  assert.equal(runReflection(root, config).kind, "transitioned");
   assert.deepEqual(featureFiles(root, "single"), [], "a feature.md without phases is not filed");
   assert.equal(existsSync(path.join(root, "feature.md")), seeded, "the seed must survive untouched");
 });
@@ -181,7 +181,7 @@ test("169: a resume after discardTaskMetadata still files feature.md under the s
     }
   };
 
-  assert.equal(runStep(root, config, "reflection", { postActions: reg }).kind, "halted");
+  assert.equal(runReflection(root, config, { postActions: reg }).kind, "halted");
   assert.equal(seenAtDiscard, "FEAT-x", "the checkpoint after archiveArtifacts must persist the resolved featureId");
   assert.equal(existsSync(path.join(root, "task-metadata.json")), false, "the source of featureId is already gone");
 
@@ -215,7 +215,7 @@ test("170: a crash after feature.md was removed but before the checkpoint still 
     }
   };
 
-  assert.equal(runStep(root, config, "reflection", { postActions: reg }).kind, "halted");
+  assert.equal(runReflection(root, config, { postActions: reg }).kind, "halted");
   assert.equal(existsSync(path.join(root, "feature.md")), false);
   assert.equal(readState(root).featureId, "FEAT-x", "on disk the feature is still set (the last checkpoint)");
 
@@ -248,7 +248,7 @@ test("171: a crash between the copy and the remove does not file a duplicate on 
     }
   };
 
-  assert.equal(runStep(root, config, "reflection", { postActions: reg }).kind, "halted");
+  assert.equal(runReflection(root, config, { postActions: reg }).kind, "halted");
   assert.equal(resume(root, config, { postActions: reg }).kind, "transitioned");
   assert.deepEqual(featureCopies(root, "FEAT-x"), [`${dateStamp()}-feature-FEAT-x.md`], "no -2 duplicate");
   assert.equal(existsSync(path.join(root, "feature.md")), false, "the original is still removed");
@@ -265,7 +265,7 @@ test("172: two features completed in a row, with a single task between, each fil
     }
     writeIn(root, "task-metadata.json", metadata);
     writeStatus(root, { step: "reflection", reason: "r", ...status });
-    assert.equal(runStep(root, config, "reflection").kind, "transitioned");
+    assert.equal(runReflection(root, config).kind, "transitioned");
     // archiveArtifacts の退避先は秒単位のタイムスタンプ。同じ秒の 2 回は同じディレクトリへ入る（test 27b と同じ待ち）
     await new Promise((r) => setTimeout(r, 1100));
   };

@@ -25,6 +25,7 @@ import type { ExecutorProgress, ExecutorResult, StepExecutor } from "./executors
 import { rootPaths } from "./paths.js";
 import { parseJsonText } from "./jsonText.js";
 import { resolveCheckRepoRoot } from "./gitScope.js";
+import { readKnowledgeDiff } from "./knowledgeSnapshot.js";
 import { runPreflight } from "./preflight.js";
 import { PromptAssemblyError } from "./promptAssembly.js";
 import { readState } from "./state.js";
@@ -697,11 +698,15 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
       };
     }
     if (situation.kind === "awaiting-approval") {
+      // 小枠A: その場で書き換えるステップ（reflection 等）は、承認の判断材料＝知識の差分の要約を停止の1行に載せる（異常候補が先頭）
+      const diff = readKnowledgeDiff(root, situation.step);
       return {
         stop: "gate",
         condition: "A1",
         step: situation.step,
-        line: `⏸ 承認待ち: ${situation.step} — aiw approve / aiw reject <理由>`,
+        line: diff
+          ? `⏸ 承認待ち: ${situation.step} — 知識の差分（${diff.line}）を見て aiw approve / aiw reject <理由>（${diff.report}）`
+          : `⏸ 承認待ち: ${situation.step} — aiw approve / aiw reject <理由>`,
         exitCode: AUTO_EXIT.humanTurn
       };
     }

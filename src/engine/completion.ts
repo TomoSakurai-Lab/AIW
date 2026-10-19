@@ -6,6 +6,7 @@ import { getStep } from "./loader.js";
 import { defaultPostActions, parseFeaturePhases, type PostActionContext, type PostActionRegistry } from "./postActions.js";
 import { evaluateRetry, isRetryEntry } from "./retry.js";
 import { readState, writeState } from "./state.js";
+import { captureSnapshot, writeKnowledgeDiff, type KnowledgeDiffSummary } from "./knowledgeSnapshot.js";
 import { readStatus } from "./status.js";
 import type { EngineState, HaltedReason, PendingTransition, Status, WorkflowConfig } from "./types.js";
 import { runValidators, type ValidationOutcome } from "./validators.js";
@@ -20,8 +21,8 @@ export type ValidationNotice = {
 };
 
 export type PipelineOutcome =
-  | { kind: "transitioned"; from: string; to: string; result: string; isRetry: boolean; notice?: ValidationNotice }
-  | { kind: "awaiting-approval"; step: string; notice?: ValidationNotice }
+  | { kind: "transitioned"; from: string; to: string; result: string; isRetry: boolean; notice?: ValidationNotice; knowledgeDiff?: KnowledgeDiffSummary }
+  | { kind: "awaiting-approval"; step: string; notice?: ValidationNotice; knowledgeDiff?: KnowledgeDiffSummary }
   | { kind: "halted"; step: string; reason: HaltedReason; message: string; detail?: Record<string, unknown> }
   | { kind: "rerun"; step: string }
   | { kind: "nothing"; message: string };
@@ -132,6 +133,12 @@ export function createOutputStubsFor(
   if (created.length > 0) {
     appendEvent(root, "stub.created", { ...logBase, step: destId, files: created });
   }
+}
+
+/** 小枠A: 遷移で入るステップの「その場で書き換えるファイル」のスナップショット（knowledgeSnapshot.ts）。executor に依存しない */
+function captureSnapshotFor(root: string, config: WorkflowConfig, destId: string, logBase: Record<string, unknown>): void {
+  const dest = config.steps[destId];
+  if (dest) captureSnapshot(root, dest, logBase);
 }
 
 // ここで halt すると二重に止まることになる。
@@ -311,6 +318,10 @@ export function processCompletion(
     ...vinfo
   };
 
+  // 小枠A: その場で書き換えるステップは、検証の前にスナップショットとの差分サマリを書く（表示用・判定に使わない）。
+  // 承認の後の再処理（approvalGranted）では書き直さない（承認の前に見た差分を変えない・Event Log を二重にしない）
+  const knowledgeDiff = opts.approvalGranted ? undefined : (writeKnowledgeDiff(root, stepId, logBase) ?? undefined);
+
   // 2 + 3 (+ content validators). runValidators enforces file-exists → schema/contract → token.
   opts.onValidate?.(); // observability seam: proves whether the validation phase was entered
   const validation = runValidators(root, config, step.validators, {
@@ -407,7 +418,7 @@ export function processCompletion(
   if (step.approval?.required && step.approval.timing === "after" && !opts.approvalGranted) {
     writeState(root, { ...state, status: "awaiting-approval", pendingApproval: stepId });
     appendEvent(root, "step.completed", { ...logBase, result: status.result, awaitingApproval: true });
-    return { kind: "awaiting-approval", step: stepId, notice };
+    return { kind: "awaiting-approval", step: stepId, notice, knowledgeDiff };
   }
 
   // 7: destination + retry (§7.6). Increment happens here, on confirmed entry to a retry step.
@@ -483,11 +494,12 @@ export function processCompletion(
   commitTransition(root, draft, stepId, destId);
   captureBaselineFor(root, config, destId, draft.fixAttempts, logBase);
   createOutputStubsFor(root, config, destId, logBase);
+  captureSnapshotFor(root, config, destId, logBase); // 小枠A: 入るときのスナップショット
 
   // 10: log.
   appendEvent(root, "step.completed", { ...logBase, result: status.result, fixAttempts: draft.fixAttempts, isRetry });
   appendEvent(root, "transition", { ...logBase, from: stepId, to: destId, result: status.result, isRetry, fixAttempts: draft.fixAttempts });
-  return { kind: "transitioned", from: stepId, to: destId, result: status.result, isRetry, notice };
+  return { kind: "transitioned", from: stepId, to: destId, result: status.result, isRetry, notice, knowledgeDiff };
 }
 
 // Runs postActions from where `pending.completedPostActions` left off. Returns a halted
@@ -569,6 +581,7 @@ export function resume(root: string, config: WorkflowConfig, opts: CompletionOpt
     commitTransition(root, draft, pending.from, pending.to);
     captureBaselineFor(root, config, pending.to, draft.fixAttempts, logBase);
     createOutputStubsFor(root, config, pending.to, logBase);
+    captureSnapshotFor(root, config, pending.to, logBase); // 小枠A
     appendEvent(root, "step.completed", { ...logBase, result: pending.result, isRetry: pending.isRetry, resumed: true });
     appendEvent(root, "transition", { ...logBase, from: pending.from, to: pending.to, result: pending.result, isRetry: pending.isRetry });
     return { kind: "transitioned", from: pending.from, to: pending.to, result: pending.result, isRetry: pending.isRetry };

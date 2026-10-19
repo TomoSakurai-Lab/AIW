@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { runStep } from "../src/engine/engine.js";
-import { archivedTaskDirs, makeRoot, seedReflectionOutputs, setStep, writeIn, writeStatus } from "./helpers.js";
+import { archivedTaskDirs, makeRoot, seedReflectionOutputs, setStep, writeIn, writeStatus, runReflection as runAndApproveReflection } from "./helpers.js";
 
 const AC_FILES = ["ac-manifest.json", "ac-result.json"] as const;
 
@@ -29,7 +29,7 @@ function runReflection(root: string, config: Parameters<typeof runStep>[1], task
   writeIn(root, "ac-result.json", JSON.stringify({ results: [{ id: marker, status: "passed" }] }));
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "x" });
 
-  const o = runStep(root, config, "reflection");
+  const o = runAndApproveReflection(root, config); // 小枠A: reflection のゲート（知識の差分）を承認まで進める
   assert.equal(o.kind, "transitioned", `reflection(${taskId}) が遷移しない`);
 }
 
