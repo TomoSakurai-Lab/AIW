@@ -97,7 +97,7 @@ npm run aiw -- drive
 
 承認ゲートを通した後、次のゲートまでの区間（`auto: true` を宣言したステップ）を、
 人間の代わりに `aiw exec` → `aiw run` と叩き続ける。**判定には関与しない**（承認・却下・halt の resume をしない）。
-設計の正本は `docs/design-auto.md`（停止条件 A1〜A25）。
+設計の正本は `docs/design-auto.md`（停止条件 A1〜A26）。
 
 ```powershell
 aiw auto              # 止まったら理由の1行・この起動の実行表・status --summary・次の一手を出す
@@ -120,6 +120,8 @@ aiw auto --max-steps 3
 - モデルフォールバック（D2）: transient の再試行を使い切っても**容量不足 / rate limit** が続くとき、`settings.codexModelFallbacks` /
   `settings.claudeModelFallbacks`（順序付き）のモデルを先頭から各1回・即時に試す。そのステップの exec だけで、次のステップは pin したモデルに戻る。
   既定は空（発動しない）。入れるモデルは、pin した CLI で呼べることを先に確かめる。記録は Event Log の `auto.fallback`
+- 起動前チェック（`steps.<id>.preflight`）: exec の直前にコマンド（argv・シェルなし）を実行し、exit 0 以外なら exec せずに**人の作業待ち（A26・終了コード 0）**で止まって `message` を出す。
+  環境固有のコマンドは runtime の workflow.yaml にだけ書く。例: `.cs` を変えるタスクで IIS Express が動いていたら止める
 - 同時実行は `runs/auto.lock` で拒否する（持ち主の pid が無ければ引き継ぐ）。drive や手動の exec はロックを見ない
 - 止まった地点から `aiw auto` を打ち直せば続きから（state.json だけから導く。exec の途中で止まったステップは fresh で再実行）
 

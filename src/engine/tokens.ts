@@ -35,9 +35,11 @@ export function tokenTargetBand(min: number, max: number): { low: number; high: 
 export function describeTokenRange(tokens: number, min: number, max: number): string {
   const band = tokenTargetBand(min, max);
   const bandText = band ? `目標帯 ${band.low}〜${band.high}` : null;
-  const cutToBand = (t: number, b: { high: number }): string => {
-    const cut = t - b.high;
-    return `${bandText} まで一度で削る（あと ${cut} 以上・目安 約 ${cut * 4} 字）`;
+  // BL-283 (ii)・2026-10-19: 帯の端ではなく中央を目標にし、削る量はセクション別の割り当て（allocateCuts）で示す
+  const cutToBand = (t: number, b: { low: number; high: number }): string => {
+    const goal = bandCenter(b);
+    const cut = t - goal;
+    return `${bandText} の中央 ${goal} まで、下の割り当てどおり各セクションを1回ずつ削る（合計 あと ${cut}・目安 約 ${cut * 4} 字）`;
   };
   if (tokens > max) {
     const over = `上限を ${tokens - max} 超過`;
@@ -47,6 +49,47 @@ export function describeTokenRange(tokens: number, min: number, max: number): st
   const inRange = `範囲内（上限まで ${max - tokens}・上限の ${Math.round((tokens / max) * 100)}%）`;
   if (!band || tokens < band.low) return inRange;
   return tokens <= band.high ? `${inRange}。${bandText} の中——削るのをやめる` : `${inRange}。${cutToBand(tokens, band)}`;
+}
+
+function bandCenter(band: { low: number; high: number }): number {
+  return Math.round((band.low + band.high) / 2);
+}
+
+/**
+ * 削減の割り当て案（BL-283 (ii)・2026-10-19）。帯より上のとき、帯の中央まで削る量を**各セクションの大きさに比例して**割り当てる（大きい順に並べる）。
+ * 帯の中・帯より下・帯が無いときは null。
+ *
+ * 実測（v8→v9→v10）: どこに線を引いても research は「削っては測る」を小刻みに繰り返し、線まで漸近した。しきい値ではなく行動の問題で、
+ * 残った仮説は「どこをどれだけ削るか決めずに削っている」。割り当てを先に渡し、各セクションを1回ずつ書き直してから1回だけ測る形にする。
+ * ⚠️ 案であって判定ではない（validator の pass 条件は上限・下限のまま）。比例は丸めの余りを大きいセクションから1ずつ配る。
+ */
+export function allocateCuts(
+  tokens: number,
+  min: number,
+  max: number,
+  sections: Array<{ heading: string; tokens: number }>
+): { goal: number; total: number; cuts: Array<{ heading: string; tokens: number; cut: number; to: number }> } | null {
+  const band = tokenTargetBand(min, max);
+  if (!band || tokens <= band.high) return null;
+  const goal = bandCenter(band);
+  const need = tokens - goal;
+  const sorted = [...sections].filter((s) => s.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+  const sum = sorted.reduce((n, s) => n + s.tokens, 0);
+  if (sum === 0) return null;
+  const cuts = sorted.map((s) => ({ heading: s.heading, tokens: s.tokens, cut: Math.floor((s.tokens * need) / sum) }));
+  let rest = need - cuts.reduce((n, c) => n + c.cut, 0);
+  while (rest > 0) {
+    let progressed = false;
+    for (const c of cuts) {
+      if (rest > 0 && c.cut < c.tokens) {
+        c.cut++;
+        rest--;
+        progressed = true;
+      }
+    }
+    if (!progressed) break; // 削れる量を使い切った（見出しの合計が帯の中央まで届かない・丸めの差）
+  }
+  return { goal, total: need, cuts: cuts.filter((c) => c.cut > 0).map((c) => ({ ...c, to: c.tokens - c.cut })) };
 }
 
 /**

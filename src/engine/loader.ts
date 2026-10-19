@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { rootPaths } from "./paths.js";
+import { resolvePreflight } from "./preflight.js";
 import {
   DEFAULT_EXECUTOR,
   EFFORT_LEVELS,
@@ -178,9 +179,11 @@ export function loadWorkflow(root: string): WorkflowConfig {
     }
     const effort = resolveEffort(id, step.effort);
     resolveAuto(id, step.auto);
+    const preflight = resolvePreflight(id, step.preflight); // BL-286: 書き損じはロード時に落とす
     steps[id] = {
       id,
       ...step,
+      ...(preflight ? { preflight } : {}),
       executor: resolveExecutor(id, step.executor),
       // 未指定は「キーごと落とす」。undefined を残すと `?? settings` の解決に影響しないが、
       // JSON 化した config の差分に空欄が並ぶので、宣言が無いことをそのまま形で表す。

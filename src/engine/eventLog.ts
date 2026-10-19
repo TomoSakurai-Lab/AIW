@@ -30,6 +30,8 @@ export type EventType =
   | "auto.retry"
   // D2（BL-238 段階2）: pin のモデルでの再試行を使い切り、別のモデルで試す直前。from / to / transientCause
   | "auto.fallback"
+  // BL-286: 起動前チェック（steps.<id>.preflight）が通らず、人の番（A26）で止まった。command / exitCode / reason / message
+  | "auto.preflight"
   | "auto.stopped"
   | "auto.refused";
 

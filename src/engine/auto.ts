@@ -1,6 +1,6 @@
 // `aiw auto`（M5）: 承認ゲートの後の無人区間を、人間の代わりに exec → run と叩き続ける。
 //
-// **正本は docs/design-auto.md。** 停止条件の表（課題A: A1〜A25）・予算（課題C）・再試行（課題D）・
+// **正本は docs/design-auto.md。** 停止条件の表（課題A: A1〜A26）・予算（課題C）・再試行（課題D）・
 // 安全弁（課題H）・終了コード（課題G）はすべてそこで決めたもので、ここはその実装。
 //
 // auto は**人間の代行**であり、判定には一切関与しない（前提5）。したがってここでは次のことを**しない**:
@@ -24,6 +24,8 @@ import { appendEvent } from "./eventLog.js";
 import type { ExecutorProgress, ExecutorResult, StepExecutor } from "./executors/types.js";
 import { rootPaths } from "./paths.js";
 import { parseJsonText } from "./jsonText.js";
+import { resolveCheckRepoRoot } from "./gitScope.js";
+import { runPreflight } from "./preflight.js";
 import { PromptAssemblyError } from "./promptAssembly.js";
 import { readState } from "./state.js";
 import type { EngineState, HaltedReason, WorkflowConfig, WorkflowStep } from "./types.js";
@@ -35,6 +37,8 @@ import type { EngineState, HaltedReason, WorkflowConfig, WorkflowStep } from "./
 export type AutoStopKind =
   | "gate"
   | "clipboard"
+  // BL-286: 起動前チェック（steps.<id>.preflight）が通らなかった。人の作業待ち（エラーではない・終了コード 0）
+  | "preflight"
   | "out-of-zone"
   | "complete"
   | "halted"
@@ -58,7 +62,7 @@ export type AutoExitCode = (typeof AUTO_EXIT)[keyof typeof AUTO_EXIT];
 
 export type AutoStop = {
   stop: AutoStopKind;
-  /** 設計文書の停止条件の番号（A1〜A25）。表と突き合わせるための鍵 */
+  /** 設計文書の停止条件の番号（A1〜A26）。表と突き合わせるための鍵 */
   condition: string;
   step: string | null;
   /** 停止理由の1行（設計文書 課題A の「表示する1行」） */
@@ -758,6 +762,30 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
       };
     }
 
+    // BL-286: 起動前チェック。人の作業が要るなら exec せずに人の番（A26）で止まる。
+    // 実測: codex が IIS Express の停止を人に頼んでターンを終え、A17（無進行）として止まっていた——エラーではなく人の作業待ち
+    if (step.preflight && step.preflight.length > 0) {
+      const repo = resolveCheckRepoRoot(root, config);
+      const pre = runPreflight(repo.ok ? repo.repoRoot : root, step.preflight);
+      if (!pre.ok) {
+        appendEvent(root, "auto.preflight", {
+          runId: ctx.runId,
+          step: step.id,
+          command: pre.check.command,
+          exitCode: pre.exitCode,
+          reason: pre.reason,
+          message: pre.check.message
+        });
+        return {
+          stop: "preflight",
+          condition: "A26",
+          step: step.id,
+          line: `⏸ 人の作業待ち: ${step.id} — ${pre.check.message}（起動前チェック: ${pre.reason}）。済んだら aiw auto で再開`,
+          exitCode: AUTO_EXIT.humanTurn
+        };
+      }
+    }
+
     // exec → run の1サイクル
     const described = describeExecutor(step, config);
     reporter?.stepStarted?.({ index: ctx.executed.length + 1, budget: ctx.budget.total, step, model: described.model, effort: described.effort });
@@ -790,7 +818,13 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
     const stale = staleStatusStep(root, config, afterExec, step.id);
     if (stale) {
       ctx.executed.push(row("stale-status", exec.result, exec.retries));
-      return noProgress("A17", step.id, `current-status.json が前ステップ "${stale}" の宣言のまま — executor が status を書かなかった`);
+      // BL-286: 原因候補に「人への作業依頼で終わった」を足す（preflight で拾えない、タスク途中で人の作業が発生する同型への手当て）
+      return noProgress(
+        "A17",
+        step.id,
+        `current-status.json が前ステップ "${stale}" の宣言のまま — executor が status を書かなかった。` +
+          `人に作業を頼んで終わった可能性もある（aiw log ${step.id} で最後の発言を確認し、頼まれた作業を済ませてから aiw auto）`
+      );
     }
 
     const before = stateFingerprint(afterExec);

@@ -1,5 +1,7 @@
 // Core engine types. WorkflowStep mirrors design rev.5 §7.1 verbatim; EngineState mirrors §6.11.
 
+import type { PreflightCheck } from "./preflight.js";
+
 export type FileRef = {
   path: string;
   optional?: boolean;
@@ -107,7 +109,9 @@ export const EXECUTOR_STEP_KEYS: Record<ExecutorName, readonly string[]> = {
  * ⚠️ ロード時エラーにしない理由も同じ（不変条件5: executor の 1 行を clipboard へ戻しても読めること）。
  */
 export const STEP_KEYS_INEFFECTIVE_ON: Readonly<Record<string, readonly ExecutorName[]>> = {
-  auto: ["clipboard"]
+  auto: ["clipboard"],
+  // BL-286: preflight も aiw auto が読む。clipboard のステップでは auto が A2 で先に止まるので効かない
+  preflight: ["clipboard"]
 };
 
 export type WorkflowStep = {
@@ -148,6 +152,9 @@ export type WorkflowStep = {
    *  （新しいステップが黙って無人区間に入らない）。clipboard のステップでは効かない（STEP_KEYS_INEFFECTIVE_ON）。
    *  ⚠️ auto は判定に関与しない。この宣言が変えるのは「auto が人を呼ばずに exec → run を叩くか」だけ。 */
   auto?: boolean;
+  /** BL-286: `aiw auto` が exec の直前に実行する起動前チェック（src/engine/preflight.ts）。0 以外なら人の番（A26）で止まる。
+   *  clipboard のステップでは効かない（STEP_KEYS_INEFFECTIVE_ON）。環境固有のコマンドは runtime の値にだけ書く（不変条件7） */
+  preflight?: PreflightCheck[];
   validators?: ValidatorRef[];
   retryPolicy?: RetryPolicy;
   postActions?: string[];

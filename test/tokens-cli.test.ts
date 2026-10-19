@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "../src/engine/tokens.js";
+import { allocateCuts, describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "../src/engine/tokens.js";
 import { runValidators } from "../src/engine/validators.js";
 import { makeRoot, validContextPackage } from "./helpers.js";
 
@@ -67,9 +67,16 @@ test("238: aiw tokens shows a target band derived from the max, without changing
   assert.deepEqual(tokenTargetBand(250, 1500), { low: 1125, high: 1350 });
   assert.equal(tokenTargetBand(0, Number.POSITIVE_INFINITY), null, "上限の無い宣言には帯を出さない");
 
-  assert.equal(describeTokenRange(1700, 250, 1500), "上限を 200 超過。目標帯 1125〜1350 まで一度で削る（あと 350 以上・目安 約 1400 字）");
+  // 2026-10-19（BL-283 (ii)）: 目標は帯の端ではなく中央（1238）。削る量はセクション別の割り当てで示す
+  assert.equal(
+    describeTokenRange(1700, 250, 1500),
+    "上限を 200 超過。目標帯 1125〜1350 の中央 1238 まで、下の割り当てどおり各セクションを1回ずつ削る（合計 あと 462・目安 約 1848 字）"
+  );
   // ⚠️ 上限内でも帯より上なら削る（2026-10-15 訂正。「削らなくてよい」が出口になり、上限の直下で止まり続けた）
-  assert.equal(describeTokenRange(1450, 250, 1500), "範囲内（上限まで 50・上限の 97%）。目標帯 1125〜1350 まで一度で削る（あと 100 以上・目安 約 400 字）");
+  assert.equal(
+    describeTokenRange(1450, 250, 1500),
+    "範囲内（上限まで 50・上限の 97%）。目標帯 1125〜1350 の中央 1238 まで、下の割り当てどおり各セクションを1回ずつ削る（合計 あと 212・目安 約 848 字）"
+  );
   assert.equal(describeTokenRange(1300, 250, 1500), "範囲内（上限まで 200・上限の 87%）。目標帯 1125〜1350 の中——削るのをやめる");
   assert.equal(describeTokenRange(900, 250, 1500), "範囲内（上限まで 600・上限の 60%）");
   assert.equal(describeTokenRange(100, 250, 1500), "下限に 150 不足");
@@ -85,6 +92,23 @@ test("238: aiw tokens shows a target band derived from the max, without changing
   assert.equal(runValidators(root, config, [tokenRange]).violations.length, 0, "帯より上でも上限内なら pass");
   const [r] = JSON.parse(aiw(root, "tokens", file, "--json").stdout);
   assert.deepEqual(r.target, tokenTargetBand(tokenRange.min ?? 0, tokenRange.max!));
-  assert.match(r.status, /目標帯 \d+〜\d+ まで一度で削る/, "上限内でも帯より上なら削る量を出す（判定は pass のまま）");
+  assert.match(r.status, /目標帯 \d+〜\d+ の中央 \d+ まで、下の割り当てどおり/, "上限内でも帯より上なら削る量を出す（判定は pass のまま）");
   assert.doesNotMatch(r.status, /削らなくてよい/);
+  // 割り当て: 合計が帯の中央までの量と一致し、大きいセクションほど多く削る
+  assert.equal(r.allocation.goal, 1238);
+  assert.equal(r.allocation.total, r.tokens - 1238);
+  assert.equal(r.allocation.cuts.reduce((n: number, c: any) => n + c.cut, 0), r.allocation.total);
+  const cuts = r.allocation.cuts as Array<{ tokens: number; cut: number; to: number }>;
+  assert.ok(cuts.every((c, i) => i === 0 || cuts[i - 1].tokens >= c.tokens), "大きい順");
+  assert.ok(cuts.every((c, i) => i === 0 || cuts[i - 1].cut >= c.cut), "大きいセクションほど多く削る（比例）");
+  assert.ok(cuts.every((c) => c.to === c.tokens - c.cut));
+  assert.match(aiw(root, "tokens", file).stdout, /削減の割り当て（帯の中央 1238 まで・合計 \d+。各セクションを1回ずつ書き直してから1回だけ測る）: # /);
+
+  // 帯の中・帯より下では割り当てを出さない
+  assert.equal(allocateCuts(1300, 250, 1500, [{ heading: "# A", tokens: 1300 }]), null);
+  assert.equal(allocateCuts(900, 250, 1500, [{ heading: "# A", tokens: 900 }]), null);
+  // 丸めの余りを配っても、各セクションの大きさを超えて削らない
+  const tiny = allocateCuts(1600, 250, 1500, [{ heading: "# A", tokens: 1590 }, { heading: "# B", tokens: 10 }])!;
+  assert.equal(tiny.cuts.reduce((n, c) => n + c.cut, 0), 1600 - 1238);
+  assert.ok(tiny.cuts.every((c) => c.cut <= c.tokens));
 });

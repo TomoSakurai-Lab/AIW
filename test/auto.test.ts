@@ -1034,3 +1034,81 @@ test("244: model fallback kicks in only for capacity / rate-limit after same-mod
   assert.throws(() => resolveModelFallbacks({ ...config, settings: { ...config.settings, codexModelFallbacks: "fb-1" } }), /must be a list of model names/);
   assert.throws(() => resolveModelFallbacks({ ...config, settings: { ...config.settings, claudeModelFallbacks: [""] } }), EngineError);
 });
+
+// Test 246 — BL-286: 起動前チェック（steps.<id>.preflight）。通らなければ exec せずに**人の番（A26・終了コード 0）**で止まり、
+// drive へ戻る。実測: codex が IIS Express の停止を人に頼んでターンを終え、A17（無進行・exit 5）で止まっていた——エラーではない。
+// エンジンは「コマンドを実行し、0 以外なら message を出して止まる」だけを知る（環境固有の名前は runtime の値にだけ書く・不変条件7）。
+test("246: a failing preflight pauses auto as a human turn (A26) before exec; a passing one lets exec run", async () => {
+  const node = process.execPath;
+  const withPreflight = (config: WorkflowConfig, command: string[]): WorkflowConfig =>
+    zoned(config, (s) => {
+      s.fix = { ...s.fix, preflight: [{ command, onFail: "pause", message: "IIS Express を止めてから再開する" }] };
+    });
+
+  // (1) 通らない → exec しない・A26・終了コード 0・drive へ戻る・記録が残る
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const before = stateText(root);
+    const { executor, calls } = fake(root);
+    const r = await runAuto(root, withPreflight(config, [node, "-e", "process.exit(1)"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(r.condition, "A26");
+    assert.equal(r.stop, "preflight");
+    assert.equal(r.exitCode, AUTO_EXIT.humanTurn, "エラーではない");
+    assert.equal(returnsToDrive(r), true, "drive の auto モードは drive へ戻る");
+    assert.deepEqual(calls, [], "exec しない");
+    assert.match(r.line, /⏸ 人の作業待ち: fix — IIS Express を止めてから再開する（起動前チェック: 確認コマンドが exit 1）/);
+    assert.equal(stateText(root), before, "state は変わらない");
+    const ev = autoEvents(root).find((e) => e.event === "auto.preflight")!;
+    assert.equal(ev.exitCode, 1);
+    assert.equal(ev.step, "fix");
+  }
+
+  // (2) 通る → exec する
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const { executor, calls } = fake(root);
+    await runAuto(root, withPreflight(config, [node, "-e", "process.exit(0)"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(calls[0], "fix", "preflight が通れば exec へ進む");
+    assert.equal(autoEvents(root).filter((e) => e.event === "auto.preflight").length, 0);
+  }
+
+  // (3) 実行できないコマンドも人の番（人に見てもらう側へ倒す）
+  {
+    const { root, config } = makeRoot();
+    enterFix(root);
+    const { executor, calls } = fake(root);
+    const r = await runAuto(root, withPreflight(config, ["aiw-no-such-command-xyz"]), { executor, sleep: recordingSleep().sleep });
+    assert.equal(r.condition, "A26");
+    assert.match(r.line, /確認コマンドを実行できなかった/);
+    assert.deepEqual(calls, []);
+  }
+
+  // (4) 書き損じはロード時に落とす（黙って捨てない）
+  const { root } = makeRoot();
+  const yamlPath = path.join(root, "config", "workflow.yaml");
+  const original = readFileSync(yamlPath, "utf8");
+  const eol = original.includes("\r\n") ? "\r\n" : "\n";
+  const head = `  fix:${eol}`;
+  assert.ok(original.includes(head), "テストの前提: fix の見出し");
+  const load = (block: string) => () => {
+    writeFileSync(yamlPath, original.replace(head, `${head}${block.split("\n").join(eol)}${eol}`), "utf8");
+    return loadWorkflow(root);
+  };
+  assert.throws(load(`    preflight:\n      - command: "powershell -Command x"\n        onFail: pause\n        message: m`), /command must be a non-empty list of strings/);
+  assert.throws(load(`    preflight:\n      - command: [node]\n        onFail: halt\n        message: m`), /onFail must be "pause"/);
+  assert.throws(load(`    preflight:\n      - command: [node]\n        onFail: pause\n        message: m\n        when: x`), /unknown key "when"/);
+  writeFileSync(yamlPath, original, "utf8");
+});
+
+// Test 247 — BL-286: A17 の表示に「人に作業を頼んで終わった可能性」を足した（preflight で拾えない、タスク途中の人の作業への手当て）
+test("247: the A17 line also points at a possible request for human work", async () => {
+  const { root, config } = makeRoot();
+  setStep(root, "improve-check", { lastCompletedStep: "fix", fixAttempts: 1 }); // Test 213 と同じ前提
+  writeStatus(root, { step: "fix", result: "fixed", reason: "遷移元の宣言" });
+  const { executor } = fake(root, () => ({ ok: true, outputs: [] }));
+  const r = await runAuto(root, zoned(config), { executor, sleep: recordingSleep().sleep });
+  assert.equal(r.condition, "A17");
+  assert.match(r.line, /executor が status を書かなかった。人に作業を頼んで終わった可能性もある（aiw log improve-check で最後の発言を確認/);
+});

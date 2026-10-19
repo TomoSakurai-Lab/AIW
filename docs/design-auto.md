@@ -276,7 +276,7 @@ auto は反復のたびに state.json を読み直し、次の順で判定する
 
 | # | 条件 | 検出 | 表示する1行 | 再開方法 |
 | --- | --- | --- | --- | --- |
-| A17 | stale status | run 前検査の EngineError（current-status.json が前のステップの宣言のまま） | `⛔ 無進行: current-status.json が前ステップ "review" の宣言のまま — executor が status を書かなかった` | 人が成果物を確認 → `aiw auto` |
+| A17 | stale status | run 前検査の EngineError（current-status.json が前のステップの宣言のまま） | `⛔ 無進行: current-status.json が前ステップ "review" の宣言のまま — executor が status を書かなかった。人に作業を頼んで終わった可能性もある（aiw log …）`（2026-10-19 に後半を追加・BL-286） | 人が成果物と最後の発言を確認 → `aiw auto` |
 | A18 | 反復で state が進まない | 反復の前後で state の指紋（currentStep / status / fixAttempts / pendingApproval / pendingTransition / lastCompletedStep）が同一で、上のどの停止にも当たらない | `⛔ 無進行: review の反復で状態が変わらなかった` | 同上 |
 | A19 | 起動中に state が外から変わった | exec / run の前提検査（`assertStepRunnable`）の EngineError | `⛔ 無進行: state が起動中に変わった（別の aiw が動いている？）` | 同上 |
 
@@ -298,6 +298,17 @@ auto は反復のたびに state.json を読み直し、次の順で判定する
 | A23 | 同時実行（ロック取得失敗） | `✖ 別の aiw auto が実行中（pid N, 開始 HH:MM）` |
 | A24 | 区間の構造検査に失敗（課題H） | `✖ auto の区間に retryPolicy を通らない循環がある: a → b → a` |
 | A25 | 未定義のステップ / 設定のロード失敗 / 想定外の例外 | 既存の `error: …` |
+
+**人の作業待ち — 終了コード 0（2026-10-19 追加・BL-286）**
+
+| # | 条件 | 検出 | 表示する1行 | 再開方法 |
+| --- | --- | --- | --- | --- |
+| A26 | 起動前チェックが通らない | exec の直前に `steps.<id>.preflight` のコマンド（argv・シェルなし）を順に実行し、exit 0 以外・実行できない・時間切れ | `⏸ 人の作業待ち: implementation — <message>（起動前チェック: 確認コマンドが exit 1）。済んだら aiw auto で再開` | 人が作業 → `aiw auto` |
+
+⚠️ A26 はエラーではない（drive へ戻る側・`returnsToDrive`）。実測（10-15 / 10-16）: codex が IIS Express の停止を人に頼んでターンを終え、
+status を書かずに A17（無進行・exit 5）で止まっていた。エンジンは「コマンドを実行し 0 以外なら message を出して止まる」だけを知り、
+環境固有の名前は runtime の値にだけ書く（不変条件7）。preflight で拾えない同型（タスクの途中で人の作業が発生する）に備え、A17 の表示に
+「人に作業を頼んで終わった可能性もある（aiw log で最後の発言を確認）」を足した。
 
 **停止しない（継続する）もの — 明示しておく**
 

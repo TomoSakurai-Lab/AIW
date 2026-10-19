@@ -401,6 +401,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   既定は空。どのモデルへ逃がすかは比較可能性に関わるので人間が決める。
 - runtime の値（2026-10-15 人間の決定）: `codexModelFallbacks: [gpt-6-sol]`（workflow v13）。候補 3 つ（gpt-6-sol / gpt-5.6-sol / gpt-6-astra）が
   pin した codex 0.160.1 + 隔離 CODEX_HOME で応答することを最小の呼び出しで確認済み。claude 側は空のまま
+- 観測（2026-10-19）: 10-15〜10-19 の 6 タスクで発動 0 回（容量不足 / rate limit の失敗が無かった）。**観測継続**（人間）
 - Status: resolved (2026-10-15)
 
 ## BL-239
@@ -452,6 +453,8 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   起動時の構造検査は通る（循環なし・予算 9 = research 1 + implementation 1 + review 1 + fix 3 + improve-check 3）。
   **観測（n=5）**: research の実行回数/タスク・`ux-decision-required` の承認直後の自動再起動と人の Ctrl+C の回数・長さ超過の halt。
   Ctrl+C が 10-05 以前のように出るなら条件①を設計する
+- 観測の結果（2026-10-19）: 戻した後の 12 タスク（10-14〜10-19）で ux-decision-required の停止 0 回・長さ超過の halt 0 回・Ctrl+C 2 回（どちらも起動の直後で、
+  決定前の自動再起動を止めた形ではない）。**効果確定・closed**（人間）。条件①の経路は一度も試されていない（ux の停止が起きていない）ので、起きたら観測する
 
 ## BL-241
 
@@ -691,10 +694,18 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 訂正（2026-10-15）: `describeTokenRange` は帯より上なら上限の内外を問わず「帯まで一度で削る（あと N 以上）」を出す。research Skill v10 / local-environment v10 も同じ文言へ。
   Test 238 の期待値を訂正（上限内・帯より上で「削らなくてよい」を出さないことも固定）。判定（validator の pass 条件）は不変。
   上限内で書き上がった下書き（直近では 1,462 / 1,403 / 1,463）も帯まで一度削ることになる
-- Status: resolved (2026-10-15 訂正・効果は次の research で観測し直す)
+- Status: open（(ii) の合格判定待ち・次の research 6 回）
 - 効果（2026-10-19 集計・research v10 の 6 回）: **全 6 回が帯の上端ちょうど（1,349〜1,350）に着地した。** `aiw tokens` の呼び出しは 10〜21 回（v9 は中央値 約 6・v8 は約 12）で、**周回は増えた**。
   所要は 19〜31 分（v9 は 12〜37 分）。どの回も 1,550〜1,880 で書いてから 1 回 10〜100 ずつ削り、上限の直下で止まっていた v9 と同じ形で、今度は帯の上端へ漸近した。
   **しきい値は、置いた場所が山登りの新しい目標になる**——「やめ時を与える」は終了点を動かしただけで、小刻みに削る行動は変わらなかった。次の手は人間の判断待ち
+- 判断（2026-10-19 人間）: v8→v9→v10 の3点で「どこに線を引いても線まで小刻みに漸近する」と分かった——しきい値ではなく**行動様式**の問題。
+  残った唯一の構造仮説「どこをどれだけ削るか決めずに削っている」を (ii) で試す。(iii) を合格基準、(i)（v9 へ戻す）は (ii) で周回が増えた場合だけの保険
+- (ii) の対処（2026-10-19）: `allocateCuts`。帯より上のとき、帯の**中央**まで削る量を各セクションの大きさに比例して割り当て、`aiw tokens` が
+  「削減の割り当て（帯の中央 N まで・合計 M。各セクションを1回ずつ書き直してから1回だけ測る）」を出す（JSON は `allocation`）。判定文の目標も帯の中央へ。
+  research Skill v11 / local-environment v11 は v10 の行を**置き換え**（足していない）。validator の判定は不変。Test 238 を更新
+- **合格基準（2026-10-19 人間の決定・先に固定）**: 次の research 6 回で `aiw tokens` の呼び出しの**中央値が 4 回以下**（測る→割り当てを見る→削る→確認、の理論往復数）。
+  満たさなければ (ii) も行動を変えられなかったと判定し、**(iii) を正式採用**——「周回はモデルの性癖として受け入れ、着地点の改善（1,460→1,350）だけを成果とする」と記録して closed。
+  これ以上この問題に枠を使わない（所要 19〜31 分は変わっておらず実害は小さい）。(ii) で周回が増えたときだけ (i) に戻す
 
 ## BL-284
 
@@ -713,9 +724,10 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   Test 239（codex・**本物の子と孫**で再現）/ 240（claude）。直しを外すと 239 は孫の寿命（4 秒）まで返らず、240 は返らないまま固まることを確認（変異）
 - 残り: 猶予の kill / 見張りの abort が止めるのは中継役（`node codex.js`）だけで、`codex.exe` 本体と孫は残りうる（Windows はプロセスツリーを止めない）。
   今回は実害を確認していないので起票のみ。残った vite は e2e の 5173 とは別ポートで、今回の再実行の邪魔はしていない
-- Status: resolved (2026-10-13)
+- Status: closed (2026-10-19・効果確定)
 - 効果（2026-10-19 集計）: `stdioHeldAfterExit` が **2 回発動**（10-15 10:24 と 10-19 03:15 の implementation。どちらも linger の猶予も発動）。
   2 回とも完了として記録されて review へ進んだ。直す前なら 10-13 と同じく固まっていた形
+- 効果確定（2026-10-19 人間）。closed（残りのプロセスツリーの件は「残り」のとおり別に扱う）
 
 ## BL-285
 
@@ -731,6 +743,26 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   判定は変えない（BOM 付きでも schema 違反は違反・BOM 以外の壊れた JSON も従来どおり）。無視したときはメッセージ「（先頭の BOM を無視した）」と
   `detail.bomIgnored: true` を残す（黙って直さない）。Test 241
 - 観測: **BOM 検出件数/週**（`validation.completed` の `detail.bomIgnored`。KI-10 に数え方）
-- Status: resolved (2026-10-14・対症。原因は KI-10 で未特定)
+- Status: closed (2026-10-19・効果確定。原因は KI-10 で未特定のまま)
 - 観測（2026-10-19）: BOM の検出は 10-15〜10-19 で implementation 2 回（10-16 06:54 / 08:40）×（ac-manifest.json と ac-result.json）= 4 件。halt は 0 件
   （直す前の 10-13〜14 は halt 4 件）。current-status.json の BOM は 0 件
+
+## BL-286
+
+- Source: 2026-10-15 / 10-16 の implementation（Event Log の `auto.stopped` A17・2 回）/ 起票 2026-10-19・人間が承認
+- Severity: Major（エラーでない停止がエラーとして表示される）
+- Trigger: すぐ（人間の判断で修正に着手）
+- Summary: **implementation の codex が「IIS Express を停止して『停止済み』と知らせてください」と人に頼んでターンを終え、status を書かずに終わった。**
+  auto はこれを A17（無進行・exit 5）として止め、「executor が status を書かなかった」と表示した——実際の意味は「人の作業が要る」でエラーではない。
+  A17（status なし終了）の正体が「エージェントの怠慢」ではなく「人間への作業依頼」だった初のケース。原因は local-environment-detail の規則
+  「IIS Express は人間が止める。AI は止めない」で、`.cs` を変えるタスクでは毎回起こりうる
+- 対処（2026-10-19）: エンジンに汎用の**起動前チェック**だけを作った（人間の設計どおり）。
+  1. `steps.<id>.preflight`: `[{ command: [argv…], onFail: pause, message, timeoutMs? }]`。aiw auto が exec の直前に実行し、exit 0 以外・実行できない・時間切れなら
+     exec せずに**人の作業待ち（A26・終了コード 0・drive へ戻る）**で止まる。記録は `auto.preflight`。コマンドは argv でシェルを通さない（KI-08）。
+     書き損じはロード時に落とす。clipboard のステップでは効かない（STEP_KEYS_INEFFECTIVE_ON）。`src/engine/preflight.ts`
+  2. A17 の表示に「人に作業を頼んで終わった可能性もある（aiw log <step> で最後の発言を確認）」を足した（preflight で拾えない、タスク途中で人の作業が発生する同型への手当て）
+  3. runtime（workflow v14）: implementation / fix に `.ai-workflow/config/preflight-iis-express.ps1`。context-package の `## Modify` に `.cs` があり、
+     かつ IIS Express が動いているときだけ exit 1（`.css` / `.csproj` / Reference は数えない）。IIS Express という名前は runtime の値にだけ現れる（不変条件7）。
+     手元で3つの分岐（.cs なし / .cs あり・IIS なし / .cs あり・IIS あり〔node.exe を iisexpress.exe の名前で動かした代役〕）を確認
+  Test 246（A26・exec しない・drive へ戻る・実行できないコマンド・書き損じ）/ 247（A17 の表示）。preflight を外すと 246 が落ちることを確認（変異）
+- Status: resolved (2026-10-19)

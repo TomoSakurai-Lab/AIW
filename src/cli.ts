@@ -31,7 +31,7 @@ import { suggestAuditOnModelChange } from "./engine/audit.js";
 import { buildBriefing, formatBriefing } from "./engine/briefing.js";
 import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
-import { describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
+import { allocateCuts, describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
 import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
@@ -261,7 +261,8 @@ function tokensCmd(files: string[], opts: { json?: boolean }): void {
     const range = ranges.find((r) => r.file === key(file));
     const status = range ? describeTokenRange(tokens, range.min, range.max) : null;
     const target = range ? tokenTargetBand(range.min, range.max) : null; // BL-283: やめ時の帯（判定には使わない）
-    results.push({ file: path.relative(process.cwd(), file) || file, tokens, range: range ?? null, target, status, sections });
+    const allocation = range ? allocateCuts(tokens, range.min, range.max, sections) : null; // BL-283 (ii): 帯より上のときだけ
+    results.push({ file: path.relative(process.cwd(), file) || file, tokens, range: range ?? null, target, status, allocation, sections });
     if (!opts.json) {
       const label = path.relative(process.cwd(), file) || file;
       console.log(
@@ -270,6 +271,12 @@ function tokensCmd(files: string[], opts: { json?: boolean }): void {
           : `${label} ~${tokens} tokens  （token-range の宣言なし）`
       );
       console.log(`  セクション別の見積もり・大きい順: ${sections.map((s) => `${s.heading} ~${s.tokens}`).join(" / ")}`);
+      if (allocation) {
+        console.log(
+          `  削減の割り当て（帯の中央 ${allocation.goal} まで・合計 ${allocation.total}。各セクションを1回ずつ書き直してから1回だけ測る）: ` +
+            allocation.cuts.map((c) => `${c.heading} ~${c.tokens} → ~${c.to}（-${c.cut}）`).join(" / ")
+        );
+      }
     }
   }
   if (opts.json) {
