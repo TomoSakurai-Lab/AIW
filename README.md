@@ -81,7 +81,8 @@ npm run aiw -- drive
   作り、`y` を押すと `aiw run <step>` 相当を実行して次へ。
 - **executor を宣言したステップ**: `[y=実行 / n=クリップボードへ / a=ここから auto（人の番で drive に戻る）]` と聞く。
   `a` を選ぶと **auto モード**になり、無人区間（`auto: true` のステップ）は確認なしで `aiw auto` と同じ処理で進む。
-  **承認ゲート（research / review）・clipboard のステップ（reflection など）・区間外のステップでは drive に戻って、ふだんどおり聞く。**
+  **承認ゲート（task-planning / research / review / reflection の知識の差分）・人の作業待ち（preflight）・clipboard のステップ・区間外のステップでは
+  drive に戻って、ふだんどおり聞く**（戻るときは「reflection の承認待ちなので drive に戻ります」のように理由を出す）。
   承認すれば、次が無人区間なら確認なしでまた進む。halt・executor の失敗などの異常で止まったときは drive も終わる。
   `a` は `auto: true` のステップだけで、それ以外（research など）では「無人対象外です」と断る。
   つまり `aiw drive` → 最初の無人ステップで一度 `a` → あとは承認とプロンプトの貼り付けだけ、で1タスクが回る。

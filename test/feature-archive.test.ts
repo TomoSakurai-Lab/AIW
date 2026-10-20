@@ -6,7 +6,7 @@ import { resume } from "../src/engine/completion.js";
 import { runStep } from "../src/engine/engine.js";
 import { defaultPostActions, type PostActionRegistry } from "../src/engine/postActions.js";
 import { readState } from "../src/engine/state.js";
-import { makeRoot, setStep, validFeature, writeIn, writeStatus, runReflection } from "./helpers.js";
+import { makeRoot, setStep, validFeature, writeIn, writeStatus, runReflection, archiveOf } from "./helpers.js";
 
 const METADATA = JSON.stringify(
   {
@@ -29,7 +29,7 @@ const METADATA = JSON.stringify(
 );
 
 const featureFiles = (root: string, feature: string): string[] => {
-  const dir = path.join(root, "archive", feature);
+  const dir = archiveOf(root, feature);
   return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
 };
 
@@ -54,7 +54,7 @@ test("archiveFeature: feature-complete files feature.md under archive/<feature>/
 
   assert.deepEqual(featureFiles(root, "FEAT-x"), [`${dateStamp()}-feature-FEAT-x.md`]);
   assert.match(
-    readFileSync(path.join(root, "archive", "FEAT-x", `${dateStamp()}-feature-FEAT-x.md`), "utf8"),
+    readFileSync(path.join(archiveOf(root, "FEAT-x"), `${dateStamp()}-feature-FEAT-x.md`), "utf8"),
     /Phase list/,
     "the archived copy must be the feature.md content, not a blank"
   );
@@ -107,10 +107,10 @@ test("archiveArtifacts: a feature's phases are archived under archive/<featureId
 
   assert.equal(runReflection(root, config).kind, "transitioned");
 
-  const dirs = readdirSync(path.join(root, "archive", "FEAT-x")).filter((f) => f.endsWith("-task"));
+  const dirs = readdirSync(path.join(archiveOf(root, "FEAT-x"))).filter((f) => f.endsWith("-task"));
   assert.equal(dirs.length, 1, `expected the phase under archive/FEAT-x, got: ${dirs.join(", ")}`);
   assert.ok(
-    existsSync(path.join(root, "archive", "FEAT-x", dirs[0], "current-status.json")),
+    existsSync(path.join(archiveOf(root, "FEAT-x"), dirs[0], "current-status.json")),
     "the phase's artifacts must be in the feature directory"
   );
   assert.equal(
@@ -239,7 +239,7 @@ test("171: a crash between the copy and the remove does not file a duplicate on 
       if (failOnce) {
         failOnce = false;
         // コピーだけ済んだディスクの状態を作ってから落ちる
-        const dir = path.join(root, "archive", "FEAT-x");
+        const dir = path.join(archiveOf(root, "FEAT-x"));
         mkdirSync(dir, { recursive: true });
         copyFileSync(path.join(root, "feature.md"), path.join(dir, `${dateStamp()}-feature-FEAT-x.md`));
         throw new Error("crash between copy and remove");
@@ -280,7 +280,7 @@ test("172: two features completed in a row, with a single task between, each fil
   await reflect(y, { result: "feature-complete" });
 
   const taskDirs = (feature: string): string[] => {
-    const dir = path.join(root, "archive", feature);
+    const dir = archiveOf(root, feature);
     return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith("-task")) : [];
   };
   assert.equal(taskDirs("FEAT-x").length, 1);
@@ -289,4 +289,30 @@ test("172: two features completed in a row, with a single task between, each fil
   assert.deepEqual(featureCopies(root, "FEAT-x"), [`${dateStamp()}-feature-FEAT-x.md`]);
   assert.deepEqual(featureCopies(root, "FEAT-y"), [`${dateStamp()}-feature-FEAT-y.md`]);
   assert.equal(readState(root).featureId, null);
+});
+
+// Test 259 — BL-293（2026-10-20）: feature の archive のフォルダ名に日付時刻を入れる（archive/<日付時刻>-<featureId>/）。
+// 同じ feature の2本目以降のフェーズと feature.md は同じフォルダへ。以前からある日付なしの archive/<featureId>/ は使い続ける。単一タスクは archive/single/ のまま
+test("259: a feature archives under archive/<stamp>-<featureId>/, and every later phase and feature.md go into the same folder", async () => {
+  const { root, config } = makeRoot();
+  for (const [i, phase] of ["phase-a", "phase-b"].entries()) {
+    if (i === 1) await new Promise((r) => setTimeout(r, 1100)); // タスクの退避先は秒単位（Test 27b と同じ前提）
+    setStep(root, "reflection", { featureId: "FEAT-y", phase });
+    writeIn(root, "feature.md", validFeature(["phase-a", "phase-b"]));
+    writeIn(root, "task-metadata.json", METADATA.replace(/FEAT-[\w-]+/, "FEAT-y"));
+    writeStatus(root, { step: "reflection", result: i === 0 ? "feature-continue" : "feature-complete", reason: "x", ...(i === 0 ? { nextPhaseId: "phase-b" } : {}) });
+    assert.equal(runReflection(root, config).kind, "transitioned");
+  }
+  const archive = path.join(root, "archive");
+  const dirs = readdirSync(archive).filter((n) => n.endsWith("FEAT-y"));
+  assert.equal(dirs.length, 1, `同じ feature は 1 フォルダ: ${dirs.join(", ")}`);
+  assert.match(dirs[0], /^\d{8}T\d{6}-FEAT-y$/, "フォルダ名に日付時刻");
+  const inside = readdirSync(path.join(archive, dirs[0]));
+  assert.equal(inside.filter((n) => n.endsWith("-task")).length, 2, "2 つのフェーズが同じフォルダに");
+  assert.ok(inside.some((n) => /-feature-FEAT-y\.md$/.test(n)), "feature.md も同じフォルダに");
+
+  // 以前からある日付なしのフォルダは使い続ける（進行中の feature を 2 つに割らない）/ 単一タスクは single のまま
+  mkdirSync(path.join(archive, "FEAT-legacy"), { recursive: true });
+  assert.equal(path.basename(archiveOf(root, "FEAT-legacy")), "FEAT-legacy");
+  assert.equal(path.basename(archiveOf(root, "single")), "single");
 });

@@ -979,3 +979,30 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   あわせて knowledge-diff の research/ のファイル名に git の引用符が残る表示の不具合も直した（`research/x.md"` → `research/x.md`）。
   Test 248（注記）/ 257（候補の表示・ファイル名）。それぞれ直しを外すと落ちることを確認（変異 3 種）
 - Status: resolved (2026-10-20)
+
+## BL-292
+
+- Source: 2026-10-20 の人間の指摘（reflection のとき「人の番に戻ります」の文言が出たまま）/ 起票 2026-10-20・人間が承認
+- Severity: Minor
+- Trigger: すぐ
+- Summary: drive の auto モードは、止まった理由に関係なく「↩ 人の番なので drive に戻ります。」とだけ出していた。reflection が自動になった（小枠A）後も、
+  手で貼る番に戻ったように読めた。README にも「clipboard のステップ（reflection など）」が残っていた
+- 対処（2026-10-20）: `returnToDriveLine` で理由を出す（承認待ち / 人の作業待ち / 手で貼るステップ / 区間外 / 完了。例「↩ reflection の承認待ちなので drive に戻ります。」）。
+  README の記述を今のゲート（task-planning / research / review / reflection の知識の差分）と preflight に合わせた。Test 258。Test 231 の見張り（異常停止では戻らない）を新しい文言でも効くように更新
+- Status: resolved (2026-10-20)
+
+## BL-293
+
+- Source: 2026-10-20 の人間の依頼（archive に入れるときに feature のフォルダ名に日付と時間を入れてほしい）/ 起票 2026-10-20・人間が承認
+- Severity: Minor
+- Trigger: すぐ
+- Summary: feature の archive は `archive/<featureId>/` で、いつの feature かがフォルダ名から分からなかった（並べても時系列にならない）
+- 対処（2026-10-20）: `featureArchiveDir`（postActions.ts）に置き場を1つにまとめた。新しい feature は `archive/<日付時刻>-<featureId>/`
+  （日付時刻は最初にその feature を archive したとき・UTC・タスクの退避先 `<日付時刻>-<task>` と同じ書式）。同じ feature の2本目以降のフェーズと feature.md も同じフォルダへ。
+  以前からある日付なしの `archive/<featureId>/` は同じ feature のものとして使い続ける（進行中の feature を 2 つに割らない）。単一タスクは `archive/single/` のまま。
+  タスクの退避（archiveArtifacts）と feature.md の退避（archiveFeature）の両方がここを通る。Test 259（日付なしに戻すと落ちることを確認）。テストの置き場の組み立ても同じ関数へ
+- 既存の archive の改名（2026-10-20 人間の依頼）: 日付なしの 35 フォルダを `<日付時刻>-<名前>` へ改名した。日付時刻は中のタスクのフォルダで一番古いもの
+  （新しい規則の「最初に archive したとき」と同じ意味）。中身に日付時刻が無い 2 つ（`FEAT-yosan-torikimegai-modonyu-input` / `fuzzy-search-selectors`）は中身の名前の日付に `T000000`。
+  知識ファイル `research/tougai-design-conformance.md` の参照 4 か所を書き換え（古いタスクの `runs/` の記録は書き換えていない）。対応表は runtime の `runs/archive-rename-20261020.json`（元に戻すとき用）。
+  1 回目は `FEAT-table-ag-grid` で EPERM（中のファイルを何かが開いていた）になり 27 件で止まった。スクリプトを「失敗は飛ばして記録」に直して流し直し、全件通った
+- Status: resolved (2026-10-20)

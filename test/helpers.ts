@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { CompletionOptions, PipelineOutcome } from "../src/engine/completion.js";
 import { approve, initRoot, loadConfig, runStep } from "../src/engine/engine.js";
+import { featureArchiveDir } from "../src/engine/postActions.js";
 import { RUNTIME_DIR_NAME } from "../src/engine/paths.js";
 import { updateState } from "../src/engine/state.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
@@ -185,8 +186,13 @@ export function seedReflectionOutputs(root: string): void {
 
 // archive/<feature>/ 配下のタスクディレクトリ（新しい順）。退避先は
 // <timestamp>-<taskId> で一意になるため、テストは名前を決め打ちせずここから引く。
+// BL-293（2026-10-20）: feature の置き場は archive/<日付時刻>-<featureId>/。エンジンと同じ関数で引く（テストに置き場の規則を複製しない）
+export function archiveOf(root: string, feature = "single"): string {
+  return feature === "single" ? path.join(path.resolve(root), "archive", "single") : featureArchiveDir(root, feature);
+}
+
 export function archivedTaskDirs(root: string, feature = "single"): string[] {
-  const dir = path.join(path.resolve(root), "archive", feature);
+  const dir = archiveOf(root, feature);
   return existsSync(dir) ? readdirSync(dir).sort().reverse() : [];
 }
 

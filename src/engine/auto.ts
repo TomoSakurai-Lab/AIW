@@ -95,6 +95,27 @@ export function autoIneligibility(step: WorkflowStep): "clipboard" | "out-of-zon
  * auto 自身は承認を呼ばない（前提5）。それ以外（halt・予算・executor 失敗・無進行・中断・起動拒否）は
  * 異常なので drive も終わり、人が停止理由を見る。戻る先は drive に既にある分岐だけで、状態は増えない。
  */
+/**
+ * drive の auto モードが drive へ戻るときの1行（2026-10-20）。**戻った理由を出す**——以前は理由に関係なく「人の番なので」とだけ出し、
+ * reflection が自動になった後も、手で貼る番に戻ったように読めた（承認待ち・人の作業待ち・手で貼るステップ・区間外・完了を区別する）
+ */
+export function returnToDriveLine(stop: Pick<AutoStop, "stop" | "step">): string {
+  const step = stop.step ?? "";
+  const why =
+    stop.stop === "gate"
+      ? `${step} の承認待ちなので`
+      : stop.stop === "preflight"
+        ? `${step} の前に人の作業が要るので`
+        : stop.stop === "clipboard"
+          ? `${step} は手で貼るステップなので`
+          : stop.stop === "out-of-zone"
+            ? `${step} は auto の区間外なので`
+            : stop.stop === "complete"
+              ? "完了したので"
+              : "人の番なので";
+  return `↩ ${why} drive に戻ります。`;
+}
+
 export function returnsToDrive(stop: Pick<AutoStop, "exitCode">): boolean {
   return stop.exitCode === AUTO_EXIT.humanTurn;
 }

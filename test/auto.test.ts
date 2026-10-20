@@ -20,6 +20,7 @@ import {
   acquireAutoLock,
   autoIneligibility,
   returnsToDrive,
+  returnToDriveLine,
   autoLockFile,
   deriveAutoBudget,
   findUnboundedCycle,
@@ -878,7 +879,8 @@ test("231: drive's `a` enters auto on the spot: the lock is taken at that moment
   assert.match(joined.stdout, /▶ \[1\/\d+\] probe-auto/);
   assert.match(joined.stdout, /executor 失敗\(permanent\) probe-auto/);
   assert.equal(joined.stdout.split("[y=実行 / n=クリップボードへ").length - 1, 1, "異常停止の後は drive の質問へ戻らない");
-  assert.doesNotMatch(joined.stdout, /人の番なので drive に戻ります/);
+  // 戻るときの文言は「↩ <理由>なので drive に戻ります。」（2026-10-20）。auto モードに入るときの案内（「…人の番で drive に戻ります」）とは区別する
+  assert.doesNotMatch(joined.stdout, /↩ .*なので drive に戻ります/, "異常停止では drive へ戻らない");
   const stopped = autoEvents(root).filter((e) => e.event === "auto.stopped");
   assert.equal(stopped.at(-1)?.condition, "A12");
   assert.equal(existsSync(autoLockFile(root)), false, "終わればロックを外す");
@@ -1111,4 +1113,14 @@ test("247: the A17 line also points at a possible request for human work", async
   const r = await runAuto(root, zoned(config), { executor, sleep: recordingSleep().sleep });
   assert.equal(r.condition, "A17");
   assert.match(r.line, /executor が status を書かなかった。人に作業を頼んで終わった可能性もある（aiw log improve-check で最後の発言を確認/);
+});
+
+// Test 258 — 2026-10-20: drive の auto モードが戻るときに、理由を出す。以前は理由に関係なく「人の番なので」とだけ出し、
+// reflection が自動になった後も、手で貼る番に戻ったように読めた
+test("258: the line shown when auto hands back to drive says why", () => {
+  assert.equal(returnToDriveLine({ stop: "gate", step: "reflection" }), "↩ reflection の承認待ちなので drive に戻ります。");
+  assert.equal(returnToDriveLine({ stop: "preflight", step: "implementation" }), "↩ implementation の前に人の作業が要るので drive に戻ります。");
+  assert.equal(returnToDriveLine({ stop: "clipboard", step: "x" }), "↩ x は手で貼るステップなので drive に戻ります。");
+  assert.equal(returnToDriveLine({ stop: "out-of-zone", step: "research" }), "↩ research は auto の区間外なので drive に戻ります。");
+  assert.equal(returnToDriveLine({ stop: "complete", step: null }), "↩ 完了したので drive に戻ります。");
 });

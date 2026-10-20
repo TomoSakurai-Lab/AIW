@@ -33,7 +33,7 @@ import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
 import { allocateCuts, describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
 import { readKnowledgeDiff } from "./engine/knowledgeSnapshot.js";
-import { autoIneligibility, releaseAutoLock, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
+import { autoIneligibility, releaseAutoLock, returnToDriveLine, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
 
@@ -869,7 +869,7 @@ async function runDrive(): Promise<void> {
       console.log("drive を終了します（auto の停止理由を確認してから、再度 `aiw drive` か `aiw auto`）。");
       return false;
     }
-    console.log("\n↩ 人の番なので drive に戻ります。\n");
+    console.log(`\n${returnToDriveLine(result)}\n`);
     return true;
   };
 

@@ -95,6 +95,26 @@ function archiveStamp(now = new Date()): string {
   return now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "");
 }
 
+/**
+ * feature の archive の置き場（2026-10-20・BL-293）。単一タスクは `archive/single/`。
+ * feature は `archive/<日付時刻>-<featureId>/`（日付時刻は最初にその feature を archive したとき・UTC・タスクの退避先と同じ書式）。
+ * **同じ feature の2本目以降のフェーズは同じフォルダへ入れる**（既にある `<日付時刻>-<featureId>` を探して使う）。
+ * 以前からある `archive/<featureId>/`（日付なし）も同じ feature のものとして使い続ける（進行中の feature を2つのフォルダに割らない）。
+ * タスクの退避（archiveArtifacts）と feature.md の退避（archiveFeature）は、どちらもここで決める（置き場を2箇所に持たない）。
+ */
+export function featureArchiveDir(root: string, featureId: string | null): string {
+  const { archiveDir } = rootPaths(root);
+  if (!featureId) return path.join(archiveDir, "single");
+  if (existsSync(archiveDir)) {
+    const escaped = featureId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const stamped = new RegExp(`^\\d{8}T\\d{6}-${escaped}$`);
+    const names = readdirSync(archiveDir);
+    const hit = names.filter((n) => stamped.test(n)).sort().pop() ?? (names.includes(featureId) ? featureId : undefined);
+    if (hit) return path.join(archiveDir, hit);
+  }
+  return path.join(archiveDir, `${archiveStamp()}-${featureId}`);
+}
+
 // Copy attempts/ + current-* into archive/<feature>/<timestamp>-<task>/.
 //
 // The timestamp is what makes the destination unique. Before it, the path was
@@ -133,11 +153,10 @@ function resolveFeatureId(root: string, draft: EngineState): string | null {
 }
 
 const archiveArtifacts: PostActionFn = ({ root, draft }) => {
-  const { archiveDir, attemptsDir } = rootPaths(root);
+  const { attemptsDir } = rootPaths(root);
   draft.featureId = resolveFeatureId(root, draft);
-  const feature = draft.featureId ?? "single";
   const task = draft.taskId ?? "task";
-  const dest = path.join(archiveDir, feature, `${archiveStamp()}-${task}`);
+  const dest = path.join(featureArchiveDir(root, draft.featureId), `${archiveStamp()}-${task}`);
   mkdirSync(dest, { recursive: true });
   for (const f of [
     "user-task.md",
@@ -327,8 +346,7 @@ function fileFeatureMd(root: string, featureId: string | null): void {
   if ((parseFeaturePhases(root) ?? []).length === 0) {
     return;
   }
-  const { archiveDir } = rootPaths(root);
-  const dir = path.join(archiveDir, featureId ?? "single");
+  const dir = featureArchiveDir(root, featureId); // BL-293: タスクの退避と同じフォルダ（日付時刻つき）
   mkdirSync(dir, { recursive: true });
   const content = readFileSync(src);
   const filed = readdirSync(dir).some(
