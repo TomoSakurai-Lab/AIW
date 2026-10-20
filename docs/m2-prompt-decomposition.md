@@ -108,6 +108,8 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(2026-10-06 追加・判断インフレ対策)** 逆向きの網: `[要回答]` のうち一意に決まる / 推奨を立てられたものを `research起因（過剰）` として Minor で指摘（Fix 原因の分類3値には加えない）。既定採用が context-package に載り実装が従っているか | **新規追加**（人間の注文） | review Skill（v7） | ✅ |
 | 対象ディレクトリ（旧 `.ai-workflow` との識別） | **死んでいる** | 🗑 削除（2026-09-02。下記） | 🗑 |
 | 対象ディレクトリ（`.ai-workflow/` 配下） | 恒久規則 | Instructions（coding-rules と共有・1行へ縮約） | ✅ |
+| **(2026-10-20 追加・aiw pr)** 画面の after スクショ: env で出力先を受け `after-` で始まる名前で書く spec に限り `runs/<Task ID>/screenshots/` へ。撮る手段は作らない・判定に使わない（NOT VERIFIED にしない・Evidence に数えない） | **新規追加**（人間の注文・設計 docs/design-pr.md §C の案 (a)） | review Skill（v9） | ✅ |
+| ↑ のうち、どの spec がその env を受けるか（spec 名と env 名） | 環境固有 | **Skill に書かない**（不変条件7。実測は backlog と runtime の baseline） | ✅ |
 
 ### improve-check.md
 
