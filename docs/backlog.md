@@ -807,3 +807,15 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 観測（executor 化の後）: **承認 / 却下の比**（数十タスクで却下 0 なら「異常候補ゼロなら自動承認」をデータ付きで再検討）・却下の理由（差分のどこを見たか）・
   異常候補の件数と的中・差分の大きさ・所要・`nextPhaseId` の書き漏れの halt が消えたか（before: 9 回中 8 回）・「メモ候補」が実際にメモ化された率
 - Status: resolved (2026-10-19・観測待ち)
+
+## BL-289
+
+- Source: 2026-10-20 の人間の問い（feature のフェーズが長い・effort を下げたら短くなるか）/ 起票 2026-10-20・人間が承認
+- Severity: Minor
+- Trigger: すぐ（人間の指示）
+- Summary: **codex（implementation / fix）の effort を aiw から指定できなかった。** フェーズの時間で一番大きい implementation（25〜100 分）が、どの effort で走っているかも
+  記録に残っていなかった（`--ignore-user-config` なので、ユーザー設定ではなくモデルの既定＝gpt-6.1-sol は medium で走っていたと推定）
+- 対処（2026-10-20）: `steps.<id>.effort` → `settings.codexEffort` を `-c model_reasoning_effort=<値>` で渡す。未指定なら渡さない。記録は `meta.effortRequested`。
+  値はロード時に検査。0.160.1 で low の受け付けと、不正値が invalid_request_error（permanent）になることを実測。Test 255 / 256。設計は design-codex-executor の「effort を設定できるようにした」
+- runtime の値: **まだ入れていない**（今までどおりモデルの既定 medium）。下げるかは実験で決める（人間の判断待ち）
+- Status: resolved (2026-10-20・値の実験は人間の判断待ち)

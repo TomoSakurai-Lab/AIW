@@ -7,6 +7,7 @@ import {
   EFFORT_LEVELS,
   EXECUTOR_NAMES,
   EXECUTOR_STEP_KEYS,
+  INEFFECTIVE_REASON,
   STEP_KEYS_INEFFECTIVE_ON,
   type EffortLevel,
   type ExecutorName,
@@ -130,8 +131,9 @@ export function findIneffectiveStepKeys(steps: Record<string, WorkflowStep>): st
     for (const [key, executors] of Object.entries(STEP_KEYS_INEFFECTIVE_ON)) {
       const value = (step as Record<string, unknown>)[key];
       if (value !== undefined && value !== false && executors.includes(step.executor)) {
+        const why = INEFFECTIVE_REASON[key] ?? `aiw auto は ${step.executor} のステップで必ず人の番として止まる`;
         out.push(
-          `steps.${id}.${key} は executor "${step.executor}" では効かない（aiw auto は ${step.executor} のステップで必ず人の番として止まる）。` +
+          `steps.${id}.${key} は executor "${step.executor}" では効かない（${why}）。` +
             `削除するか executor を見直す（戻した直後なら残してよい・不変条件5）`
         );
       }
@@ -192,6 +194,10 @@ export function loadWorkflow(root: string): WorkflowConfig {
   }
 
   const { settings, deprecations } = migrateSettings(parsed.settings ?? {});
+  // BL-289: executor の effort の既定も、ステップの effort と同じ値の集合で読み込み時に検査する（実行して初めて弾かれるより早く分かる）
+  for (const key of ["claudeEffort", "codexEffort"] as const) {
+    resolveEffort(`settings.${key}`, (settings as Record<string, unknown>)[key]);
+  }
   const ineffectiveStepKeys = findIneffectiveStepKeys(steps);
   return {
     version: parsed.version,

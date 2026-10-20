@@ -866,6 +866,17 @@ runtime の `codexModel` を `gpt-6.1-sol` へ変えるため。**0.147.0 では
 - aiw のテスト 277 件 green（fake の codex なので、実物の差は上の起動確認だけが見ている）
 - ⚠️ 戻すときは `package.json` の pin と `codexModel` を**組で**戻す（0.147.0 に `gpt-6.1-sol` は通らない）
 
+### effort を設定できるようにした（2026-10-20・BL-289）
+
+- 解決順: `steps.<id>.effort` → `settings.codexEffort`。指定があれば `-c model_reasoning_effort=<値>` を渡す。**未指定なら渡さず、モデルの既定に委ねる**
+  （gpt-6.1-sol / gpt-6-sol の既定は `medium`。隔離 CODEX_HOME の `models_cache.json` の `default_reasoning_level`。対応値は low / medium / high / xhigh / max / ultra）
+- 0.160.1 の実測: `-c model_reasoning_effort=low` は `--ignore-user-config` / `--strict-config` と併用して受け付けられ応答した。存在しない値はサーバの
+  `invalid_request_error`（`[ReasoningEffortParam] … Invalid value`）で exit 1 になり、`classifyCodexFailure` は permanent に分類する（再試行しない）
+- 値の集合はステップの effort と同じ `EFFORT_LEVELS`（claude と共通の low〜max）でロード時に検査する（`ultra` は codex だけなので入れていない）
+- 記録は `meta.effortRequested`（指定値・未指定は `"unspecified"`）。**実行時の値は出力に出ない**（claude と同じく観測できない）
+- `effort` は codex と claude の両方が読むので、ステップ設定キーの表は「claude だけが読む」（`EXECUTOR_STEP_KEYS`）から「clipboard では効かない」（`STEP_KEYS_INEFFECTIVE_ON`）へ移した
+- Test 255（解決順・`-c` の位置・記録）/ 256（settings の値の検査）。渡す処理を外すと 255 が落ちることを確認
+
 ### model-policy.json との統合は見送る
 
 `config/model-policy.json` は step ごとにモデルを宣言しているが、

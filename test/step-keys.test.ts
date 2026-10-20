@@ -54,9 +54,10 @@ test("179: claude-only keys on a codex step are listed as ineffective instead of
     )
   );
   assert.equal(config.steps["implementation"].executor, "codex");
-  assert.equal(config.ineffectiveStepKeys?.length, 2);
+  // 2026-10-20（BL-289）: effort は codex も読む（-c model_reasoning_effort）。効かないと列挙されるのは model だけ
+  assert.equal(config.ineffectiveStepKeys?.length, 1);
   assert.match(config.ineffectiveStepKeys![0], /steps\.implementation\.model は executor "codex" では読まれない（読むのは claude だけ）/);
-  assert.match(config.ineffectiveStepKeys![1], /steps\.implementation\.effort/);
+  assert.doesNotMatch(config.ineffectiveStepKeys!.join("\n"), /steps\.implementation\.effort/);
 });
 
 // Test 180 — ⚠️ **ロード時エラーにしない理由**: claude のステップを executor の 1 行だけ clipboard へ戻しても読める（不変条件5）。
@@ -78,4 +79,14 @@ test("180: rolling a claude step back to clipboard by one line still loads, and 
 
   // 出荷する assets はそのままで効かないキーを含まない
   assert.equal(makeRoot().config.ineffectiveStepKeys, undefined);
+});
+
+// Test 256 — BL-289: settings の effort の既定（claudeEffort / codexEffort）も、ステップの effort と同じ値の集合でロード時に検査する
+test("256: an unknown settings.codexEffort fails at load time instead of at the server", () => {
+  assert.throws(
+    () => loadEdited((y, eol) => y.replace(`settings:${eol}`, `settings:${eol}  codexEffort: turbo${eol}`)),
+    /settings\.codexEffort" declares an unknown effort "turbo"/
+  );
+  const ok = loadEdited((y, eol) => y.replace(`settings:${eol}`, `settings:${eol}  codexEffort: low${eol}`));
+  assert.equal(ok.settings.codexEffort, "low");
 });

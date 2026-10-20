@@ -472,7 +472,9 @@ export function stateFingerprint(state: EngineState): string {
 export function describeExecutor(step: WorkflowStep, config: WorkflowConfig): { executor: string; model: string | null; effort: string | null } {
   const s = config.settings;
   if (step.executor === "codex") {
-    return { executor: "codex", model: typeof s.codexModel === "string" ? s.codexModel : null, effort: null };
+    // BL-289: codex も effort を読む（steps.<id>.effort → settings.codexEffort）
+    const effort = step.effort ?? (typeof s.codexEffort === "string" ? s.codexEffort : null);
+    return { executor: "codex", model: typeof s.codexModel === "string" ? s.codexModel : null, effort };
   }
   if (step.executor === "claude") {
     const model = step.model ?? (typeof s.claudeModel === "string" ? s.claudeModel : null);

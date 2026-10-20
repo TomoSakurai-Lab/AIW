@@ -103,7 +103,8 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 export const EXECUTOR_STEP_KEYS: Record<ExecutorName, readonly string[]> = {
   clipboard: [],
   codex: [],
-  claude: ["model", "effort", "bashAllow"]
+  // 2026-10-20（BL-289）: effort は codex も読むようになったので、ここ（「その executor だけが読む」）から STEP_KEYS_INEFFECTIVE_ON へ移した
+  claude: ["model", "bashAllow"]
 };
 
 /**
@@ -119,7 +120,14 @@ export const EXECUTOR_STEP_KEYS: Record<ExecutorName, readonly string[]> = {
 export const STEP_KEYS_INEFFECTIVE_ON: Readonly<Record<string, readonly ExecutorName[]>> = {
   auto: ["clipboard"],
   // BL-286: preflight も aiw auto が読む。clipboard のステップでは auto が A2 で先に止まるので効かない
-  preflight: ["clipboard"]
+  preflight: ["clipboard"],
+  // BL-289（2026-10-20）: effort は claude（--effort）と codex（-c model_reasoning_effort=…）の両方が読む。clipboard では効かない
+  effort: ["clipboard"]
+};
+
+/** STEP_KEYS_INEFFECTIVE_ON の各キーが「なぜ効かないか」（表示の文言）。無いキーは auto の説明を使う */
+export const INEFFECTIVE_REASON: Readonly<Record<string, string>> = {
+  effort: "人が貼る実行には effort を渡す口が無い"
 };
 
 export type WorkflowStep = {
@@ -239,6 +247,10 @@ export type WorkflowConfig = {
      *  先頭から各1回・即時に試すモデル（順序付き）。範囲はその exec だけ（sticky にしない）。既定は空 = 発動しない。
      *  ⚠️ 入れる前に、そのモデルが pin した CLI で呼べることを確かめる（2026-10-07: 古い CLI では新モデルが 400 になった） */
     codexModelFallbacks?: string[];
+    /** BL-289（2026-10-20）: codex のステップの effort の既定（`-c model_reasoning_effort=<値>`）。steps.<id>.effort が優先される。
+     *  未指定なら渡さず、モデルの既定（gpt-6.1-sol は medium・models_cache の default_reasoning_level）に委ねる。
+     *  ⚠️ 実行時の値は出力に出ない（claude と同じ）。記録は effortRequested（指定値）のみ */
+    codexEffort?: EffortLevel;
     /** D2: claude のステップ用。起点は steps.<id>.model ?? claudeModel。それ以外は codexModelFallbacks と同じ */
     claudeModelFallbacks?: string[];
     /** claude executor（M4）。runtimeRoot からの相対、または絶対パス。

@@ -562,3 +562,31 @@ test("243: codex attaches a transient cause from the raw error text, and the eng
   const failed = (log as Array<Record<string, any>>).filter((r) => r.event === "exec.failed").pop();
   assert.equal(failed?.transientCause, "capacity", "Event Log で内訳を数えられる");
 });
+
+// Test 255 — BL-289（2026-10-20）: codex の effort。steps.<id>.effort → settings.codexEffort の順で解決し、`-c model_reasoning_effort=<値>` で渡す。
+// 未指定なら渡さない（モデルの既定に委ねる）。記録は effortRequested（指定値・未指定は "unspecified"）。
+// 0.160.1 の実測: low は受け付けられ、存在しない値はサーバの invalid_request_error（permanent）になる。値の集合はロード時に検査する
+test("255: codex passes the effort from the step or settings.codexEffort, and records what it asked for", async () => {
+  const { root, config } = readyRoot();
+  const step = config.steps["implementation"];
+  const effortArg = (argv: string[]) => {
+    const i = argv.indexOf("-c");
+    return i >= 0 ? argv[i + 1] : null;
+  };
+
+  const none = fakeCodex(OK_EVENTS);
+  const r0 = await createCodexExecutor({ launch: none.launch }).execute({ root, config, step, projectRoot: root });
+  assert.equal(effortArg(none.captured.argv), null, "未指定なら -c を渡さない（モデルの既定）");
+  assert.equal((r0.meta as any).effortRequested, "unspecified");
+
+  const withSetting = { ...config, settings: { ...config.settings, codexEffort: "low" } } as typeof config;
+  const low = fakeCodex(OK_EVENTS);
+  const r1 = await createCodexExecutor({ launch: low.launch }).execute({ root, config: withSetting, step, projectRoot: root });
+  assert.equal(effortArg(low.captured.argv), "model_reasoning_effort=low");
+  assert.equal((r1.meta as any).effortRequested, "low");
+
+  const high = fakeCodex(OK_EVENTS);
+  await createCodexExecutor({ launch: high.launch }).execute({ root, config: withSetting, step: { ...step, effort: "high" }, projectRoot: root });
+  assert.equal(effortArg(high.captured.argv), "model_reasoning_effort=high", "ステップの宣言が settings より優先");
+  assert.ok(high.captured.argv.indexOf("-c") < high.captured.argv.indexOf("-"), "プロンプト（stdin の -）より前");
+});

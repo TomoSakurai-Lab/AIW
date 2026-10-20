@@ -304,11 +304,15 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
       // codex doctor も `<default>` としか言わない）。だから記録は「指定値」であり、
       // 実測値ではない。フィールド名を modelRequested にしてその区別を型で持たせる。
       const model = stringSetting(req.config.settings.codexModel);
+      // BL-289（2026-10-20）: effort。steps.<id>.effort → settings.codexEffort。未指定なら渡さずモデルの既定（gpt-6.1-sol は medium）に委ねる。
+      // 値の集合はロード時に検査済み。サーバが受け付けない値は invalid_request_error（permanent）で返る（0.160.1 実測）
+      const effort = stringSetting(req.step.effort) ?? stringSetting(req.config.settings.codexEffort);
 
       const argv = [
         codexEntrypoint(),
         "exec",
         ...(model ? ["-m", model] : []),
+        ...(effort ? ["-c", `model_reasoning_effort=${effort}`] : []),
         "--json",
         "--ephemeral",
         "--ignore-user-config",
@@ -457,6 +461,8 @@ export function createCodexExecutor(deps: CodexDeps = {}): StepExecutor {
         // 未指定を null や欠落にしないのは、「未指定と記録した」と「記録が無い」を
         // 区別するため（三値の規律と同じ）。
         modelRequested: model ?? "unspecified",
+        // BL-289: 指定値（実行時の値は出力に出ない）。未指定は「モデルの既定」を意味し、"unspecified" と明示する（null にしない）
+        effortRequested: effort ?? "unspecified",
         exitCode: outcome.code,
         durationMs,
         jsonl: path.relative(paths.root, jsonlPath).replace(/\\/g, "/"),
