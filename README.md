@@ -31,6 +31,7 @@ aiw --root <dir> drive      # 対話 y/n ドライバ（各フェーズを誘導
 aiw --root <dir> auto       # 承認ゲートの後の無人区間を exec → run で進める（M5。下記）
 aiw --root <dir> tokens <file...>  # token-range の validator と同じ見積もりでトークン数（合計・範囲・セクション別）を出す。読むだけ
 aiw --root <dir> new-task   # 次タスク用にリセット（user-task.md + current-* をテンプレへ）
+aiw --root <dir> pr [--dry-run|--check] [--task <dir>]  # archive の記録から Azure DevOps に draft PR（下記）。state は触らない
 ```
 
 ルート解決は `--root` → 環境変数 `AIW_ROOT` → 上位ディレクトリ探索（`config/workflow.yaml`）→ 既定 `.ai-workflow2/`。
@@ -137,6 +138,23 @@ npm run aiw -- new-task     # state を task-planning へ戻し、user-task.md �
 ```
 
 その後 `user-task.md` に依頼を書いて `aiw drive`。`drive` の完了時プロンプトから `y` を選んでも同じ。
+
+### `aiw pr` — タスクの記録から draft PR を作る（v1・設計は `docs/design-pr.md`）
+
+reflection の承認後に人間が手で打つ。**公開（draft の解除）は人間の操作**（公開ボタン = 署名）。
+
+```powershell
+npm run aiw -- pr --check      # 接続確認（読み取りのみ）。settings.pr が無ければ git remote からの導出値を表示
+npm run aiw -- pr --dry-run    # API を呼ばず、説明文と実行予定の操作を表示（Event Log にも書かない）
+npm run aiw -- pr              # draft PR を作成 / 同じブランチの draft PR の説明文を更新
+```
+
+- 準備: PAT（Code: Read & Write のみ）を**ユーザー環境変数 `AZURE_DEVOPS_PAT`** に GUI で設定（値をチャット・ファイル・コマンドラインに書かない）。
+  runtime の `config/workflow.yaml` に `settings.pr`（organizationUrl / project / repository）。`--check` の表示を確かめて貼る
+- ブランチ: feature のブランチを作って push してから（aiw は push もブランチ作成もしない）。対象ブランチ上・未 push なら作らない
+- 入力は archive の最新タスク（`--task` で指定可）と `runs/<Task ID>/screenshots/after-*.png`。欠けた記録は「記録なし」と書く
+- 公開済みの PR・人が説明文を直した PR（末尾の生成キーが合わない）は触らない。直した後に新しい内容を見たいときは `--dry-run`
+- 公開前に人間が見る: 画面に実データ・実名が映っていないか / 説明文に内部の用語が残っていないか（`--dry-run` が残りの語数を出す）
 
 ## shell（REPL）で連続実行 — `npm run` を毎回打たない
 

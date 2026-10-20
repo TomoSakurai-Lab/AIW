@@ -1006,3 +1006,48 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   知識ファイル `research/tougai-design-conformance.md` の参照 4 か所を書き換え（古いタスクの `runs/` の記録は書き換えていない）。対応表は runtime の `runs/archive-rename-20261020.json`（元に戻すとき用）。
   1 回目は `FEAT-table-ag-grid` で EPERM（中のファイルを何かが開いていた）になり 27 件で止まった。スクリプトを「失敗は飛ばして記録」に直して流し直し、全件通った
 - Status: resolved (2026-10-20)
+
+## BL-371
+
+- Source: 2026-10-20 の人間の依頼（aiw pr コマンドの v1。設計 → 承認 → 実装）/ 起票 2026-10-20・人間が承認（設計 docs/design-pr.md・Q1〜Q4 の裁定）
+- Severity: Minor
+- Trigger: すぐ
+- Summary: タスク完了後、成果物から PR の説明文を機械生成し、Azure DevOps に draft PR として作る。公開は人間の操作に残す
+- 対処（2026-10-20）: `aiw pr [--dry-run] [--check] [--task]`（src/engine/pr/）。state.json を読まず変えない・PAT は env のみで出力の最終段で伏せる・
+  REST 直叩き・冪等キーはブランチ（同じブランチの draft PR は説明文だけ更新。公開済み・人が直した PR は触らない）・添付失敗は保存先パスへ縮退・
+  4000 字へ段階的に削る・欠けた記録は「記録なし」。archiveArtifacts に context-package.md を追加。review Skill v9（after スクショ）。Test 260〜275
+- 残り（人間の作業）: Stage 0（PAT を GUI でユーザー環境変数へ → `aiw pr --check` → settings.pr を貼る）と、初回の実 PR（実タスクで `--dry-run` を読む → 本実行 → 生成キーの往復を実測。Azure DevOps が説明文を正規化すると 2 回目以降が「人が直した」扱いになる）
+- Status: resolved (2026-10-20・Stage 0 と初回の実 PR は未実施)
+
+## BL-372
+
+- Source: 2026-10-20 aiw pr の実装中に発見（archive の実データで AC の集計を確かめたとき）/ 起票 2026-10-20・承認待ち
+- Severity: Major
+- Trigger: 次に `aiw status --summary`（summary.ts）か sections.ts の `countTriStatus` を触るタスクの前
+- Summary: 実物の `current-result.md` の `## Acceptance Criteria Verification` は表（`| AC-01 | PASS | ... |`）で書かれていることが多く、
+  `countTriStatus` は `Status:` 行しか数えないので 0 件になる。`aiw status --summary` の Claimed の AC 三値が、表で書かれたタスクでは全部 0 に見える
+  （FEAT-grid-common surface-bc の実データで確認: 表では 6 / 0 / 14、countTriStatus は 0）。aiw pr は表も読む `countTriStatusAny` を使っている。
+  summary を `countTriStatusAny` へ替えるのは表示の変更だが、承認ゲートで人間が見る数なので単独のタスクで
+  （`## Manual Verification Required` が散文で書かれると countListItems が 0 になる同じ形の盲点もある）
+- Status: open
+
+## BL-373
+
+- Source: 2026-10-20 aiw pr の実装中に発見（設計 §C の実現性の確認）/ 起票 2026-10-20・承認待ち
+- Severity: Minor
+- Trigger: aiw pr を実タスクで 3 回走らせ、`--dry-run` の「画像の添付」の枚数を数えた後
+- Summary: review は spec を書けず Bash も書き込み不可なので、after スクショを撮れるのは「spec が出力先を env で受け、`after-` で始まる名前で書く」画面だけ。
+  2026-10-20 時点で env を受ける spec は 4 本（`grid-surface-unify` / `grid-cell-validation` / `budget-row-hierarchy` の 2 箇所）で、
+  `after-` で書くのは `grid-surface-unify`（`GRID_SURFACE_SHOTS`）の 1 本だけ。さらに env を前置したコマンドが review の許可（`./tools/nrun.cmd:*`）に当たるかは未実測。
+  枚数が少なければ設計 §C の案 (b)（製品側の playwright に after スクショの reporter を入れる製品タスク）を起票する。案 (c)（review に cp を許す）は採らない
+- Status: open
+
+## BL-374
+
+- Source: 2026-10-20 aiw pr の設計（docs/design-pr.md §A-3・§D・§E-3・§E-4 の v2 判定）/ 起票 2026-10-20・承認待ち
+- Severity: 仕様判断
+- Trigger: aiw pr で実 PR を 3 本作った後
+- Summary: v1 で見送った 4 件の判定。(1) 説明文の自由記述を人がどれだけ直したか（`--dry-run` の「内部用語の残り」の語数と、公開時の差分）→ 多ければ reflection に客先向けの要約欄を足す
+  (2) 起動を reflection の postAction か aiw auto の終端へつなぐか（失敗は report・pendingTransition の冪等チェックポイントに乗せる）
+  (3) feature の全フェーズを集約した説明文（今は最新フェーズの 1 タスク分）(4) タスク開始時のブランチ作成の postAction（aiw が初めて git に書く経路。diff-scope の baseline との順序を別に設計する）
+- Status: open
