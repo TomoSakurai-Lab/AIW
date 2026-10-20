@@ -94,6 +94,30 @@ export function currentTaskWindow(records: LogRecord[]): LogRecord[] {
   return records.slice(start);
 }
 
+/**
+ * aiw pr（2026-10-20・docs/design-pr.md §A-2）: **終わったタスク**の窓。
+ *
+ * `currentTaskWindow` と同じ境界（reflection からの transition）を、終端つきにしたもの。
+ * 終端 = `endAt`（archive の日付時刻 = archiveArtifacts が付けた UTC）以降で最初の reflection からの transition、
+ * 始端 = それより前で直近の同じ transition の次。終端が見つからなければ null（どのタスクの記録か決められない）。
+ * 境界の定義を2箇所に持たないため、ここに置く。
+ */
+export function completedTaskWindow(records: LogRecord[], endAt: Date): LogRecord[] | null {
+  const isBoundary = (r: LogRecord): boolean => r.event === "transition" && r.from === "reflection";
+  const end = records.findIndex((r) => isBoundary(r) && Date.parse(String(r.timestamp ?? "")) >= endAt.getTime());
+  if (end < 0) {
+    return null;
+  }
+  let start = 0;
+  for (let i = end - 1; i >= 0; i--) {
+    if (isBoundary(records[i])) {
+      start = i + 1;
+      break;
+    }
+  }
+  return records.slice(start, end + 1);
+}
+
 export function buildObserved(root: string): Observed {
   const log = readEventLog(root);
   if (log === "missing" || log === "unreadable") {
@@ -151,7 +175,9 @@ export function buildObserved(root: string): Observed {
     validators: [...byStep.values()].flat(),
     reported,
     fixAttempts,
-    eventsInWindow: window.length,
+    // aiw pr の記録（pr.*）は reflection の後に書かれるので次のタスクの窓に入るが、タスクの進行ではない。
+    // 数えると「このタスクはまだイベントを出していない」の表示が aiw pr 1 回で消えるので除く（表示だけ・不変条件1）
+    eventsInWindow: window.filter((r) => !String(r.event ?? "").startsWith("pr.")).length,
     ...(lastAuto ? { lastAuto } : {})
   };
 }

@@ -33,6 +33,8 @@ import { readState as readEngineState } from "./engine/state.js";
 import type { PipelineOutcome, ValidationNotice } from "./engine/completion.js";
 import { allocateCuts, describeTokenRange, estimateTokens, estimateTokensBySection, tokenTargetBand } from "./engine/tokens.js";
 import { readKnowledgeDiff } from "./engine/knowledgeSnapshot.js";
+import { runPr } from "./engine/pr/run.js";
+import { execFileSync } from "node:child_process";
 import { autoIneligibility, releaseAutoLock, returnToDriveLine, returnsToDrive, runAuto, type AutoExecution, type AutoResult, type AutoRetrySettings } from "./engine/auto.js";
 
 const program = new Command();
@@ -730,6 +732,30 @@ program
   .command("new-task")
   .description('Reset to a fresh Task Planning start (clears user-task.md + current-* to templates)')
   .action(() => engineNewTaskCmd());
+
+// `aiw pr`（2026-10-20・docs/design-pr.md）: archive の成果物から説明文を作り、Azure DevOps に **draft** PR を作る / 説明文を更新する。
+// state.json は読まず変えない。PAT は env AZURE_DEVOPS_PAT からのみ。公開（draft の解除）は人間の操作。
+program
+  .command("pr")
+  .description("Create or update a DRAFT pull request on Azure DevOps from the archived task record (state.json is not touched)")
+  .option("--dry-run", "API を一切呼ばず、説明文と実行予定の操作を表示するだけ（Event Log にも書かない）")
+  .option("--check", "接続確認（読み取り API のみ: リポジトリ情報と PR 一覧）。settings.pr が無ければ git remote からの導出値を表示する")
+  .option("--task <dir>", "archive のタスクディレクトリ（省略時は最新）")
+  .action(async (opts: { dryRun?: boolean; check?: boolean; task?: string }) => {
+    const root = engineRoot();
+    const outcome = await runPr(
+      { root, config: loadConfig(root), dryRun: opts.dryRun, check: opts.check, taskDir: opts.task },
+      {
+        fetch: (url, init) => fetch(url, init),
+        env: process.env,
+        git: (repoRoot, args) =>
+          execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }),
+        out: (line) => console.log(line),
+        err: (line) => console.error(line)
+      }
+    );
+    process.exitCode = outcome.exitCode;
+  });
 
 program.command("shell").description("Start an interactive REPL that accepts workflow commands").action(runShell);
 

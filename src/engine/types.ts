@@ -270,6 +270,9 @@ export type WorkflowConfig = {
     claudeEffort?: string;
     // `claudeTimeoutMs` は 2026-09-17（M4.4）に削除した。エンジン経由では一度も参照されない
     // 死んだ宣言だった。書かれていればローダーが「効果なし」の deprecation を出す（黙って無視しない）。
+    /** aiw pr（2026-10-20・docs/design-pr.md §2）。**runtime にだけ書く**（値は環境固有・assets はコメントの雛形のみ）。
+     *  ⚠️ **PAT のキーは無い。** PAT は env `AZURE_DEVOPS_PAT` からのみ読む（書ける場所を作らない）。 */
+    pr?: PrSettings;
     [key: string]: unknown;
   };
   defaults?: Record<string, unknown>;
@@ -283,6 +286,18 @@ export type WorkflowConfig = {
   /** そのステップの executor が読まない設定キー（BL-219。表は EXECUTOR_STEP_KEYS）。deprecations と同じ経路で CLI が表示する。
    *  無ければキーごと無い。 */
   ineffectiveStepKeys?: string[];
+};
+
+/** settings.pr（aiw pr）。 */
+export type PrSettings = {
+  /** Services: `https://dev.azure.com/<org>` / `https://<org>.visualstudio.com`。Server: `https://<host>/<collection>` */
+  organizationUrl?: string;
+  project?: string;
+  repository?: string;
+  /** 省略時はリポジトリの defaultBranch */
+  targetBranch?: string;
+  /** Services は省略可（7.1）。**Server は必須**（推測しない） */
+  apiVersion?: string;
 };
 
 // current-status.json — the AI/CLI declaration that drives branching (§6.1)

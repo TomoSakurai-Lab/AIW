@@ -162,6 +162,9 @@ const archiveArtifacts: PostActionFn = ({ root, draft }) => {
     "user-task.md",
     "current-task.md",
     "research-findings.md", // M1: current-review.md の監査が参照した findings を残す
+    // 2026-10-20（aiw pr・docs/design-pr.md Q3）: 実装へ渡した宣言（## Modify）を残す。restore 対象ではない
+    // （次の research が上書きする）ので、退避しないと「どのファイルを変える宣言だったか」が記録から消える
+    "context-package.md",
     "current-result.md",
     "current-review.md",
     "current-status.json",

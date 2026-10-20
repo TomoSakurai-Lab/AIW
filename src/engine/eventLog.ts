@@ -37,7 +37,14 @@ export type EventType =
   // BL-286: 起動前チェック（steps.<id>.preflight）が通らず、人の番（A26）で止まった。command / exitCode / reason / message
   | "auto.preflight"
   | "auto.stopped"
-  | "auto.refused";
+  | "auto.refused"
+  // aiw pr（2026-10-20・docs/design-pr.md §F-2）。**PAT と説明文の本文は載せない。** state には触らない（判定の記録ではない）
+  | "pr.checked"
+  | "pr.created"
+  | "pr.updated"
+  | "pr.skipped"
+  | "pr.attachment-failed"
+  | "pr.failed";
 
 export type EventRecord = {
   timestamp: string;

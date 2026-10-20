@@ -38,4 +38,5 @@ import "./situation.test.js";
 import "./auto.test.js";
 import "./tokens-cli.test.js";
 import "./request-mapping.test.js";
+import "./pr.test.js";
 import "./knowledge-snapshot.test.js";

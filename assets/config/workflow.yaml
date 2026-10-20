@@ -35,6 +35,15 @@ settings:
   #     countFilesExcluding: ["node_modules"]
   #     timeoutMs: 120000
   #     notChecked: "<このコマンドが見ていない範囲>"
+  # aiw pr（2026-10-20・tools/aiw/docs/design-pr.md）: archive の成果物から Azure DevOps に **draft** PR を作る。
+  # 値は環境固有なので runtime 側で設定すること（`aiw pr --check` が git remote から導出した値を表示する）。
+  # ⚠️ **PAT はここに書かない。** env AZURE_DEVOPS_PAT からのみ読む（スコープは Code: Read & Write のみ）。
+  # pr:
+  #   organizationUrl: https://dev.azure.com/<org>   # Server は https://<host>/<collection>
+  #   project: "<project>"
+  #   repository: "<repository>"
+  #   targetBranch: master                          # 省略時はリポジトリの既定ブランチ
+  #   apiVersion: "7.1"                             # Services は省略可。Server は必須（2020 = 6.0 / 2022 = 7.0 / 2022.1 以降 = 7.1）
 
 defaults:
   escalation:

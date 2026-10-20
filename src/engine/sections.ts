@@ -79,3 +79,64 @@ export function countTriStatus(markdown: string, spec: string): TriCount | null 
   }
   return counts;
 }
+
+function addTriValue(counts: TriCount, raw: string): void {
+  const value = raw.replace(/[`*_]/g, "").trim().toUpperCase();
+  if (value === "PASS") {
+    counts.pass++;
+  } else if (value === "FAIL") {
+    counts.fail++;
+  } else if (value === "NOT VERIFIED" || value === "NOT_VERIFIED") {
+    counts.notVerified++;
+  } else {
+    counts.unrecognized++;
+  }
+}
+
+function tableCells(line: string): string[] | null {
+  const t = line.trim();
+  if (!t.startsWith("|")) {
+    return null;
+  }
+  return t.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+/**
+ * aiw pr（2026-10-20）: `Status:` 行に加えて、**`Status` 列を持つ表**も数える。
+ *
+ * 実物の `## Acceptance Criteria Verification` は表で書かれることが多く（`| AC-01 | PASS | ... |`）、
+ * `countTriStatus` は表を 0 件と数える。`countTriStatus` は `aiw status --summary` の表示に使われているので
+ * **ここでは変えず**、表も読む版を別に足した（summary 側の同じ盲点は backlog に起票）。
+ * 表の見出し行のあとの区切り行（`|---|`）は読み飛ばす。値が三値でない行は unrecognized。
+ */
+export function countTriStatusAny(markdown: string, spec: string): TriCount | null {
+  const body = extractSection(markdown, spec);
+  if (body === null) {
+    return null;
+  }
+  const counts: TriCount = { pass: 0, fail: 0, notVerified: 0, unrecognized: 0 };
+  let statusColumn: number | null = null;
+  for (const line of stripHtmlComments(body).split(/\r?\n/)) {
+    const cells = tableCells(line);
+    if (cells === null) {
+      statusColumn = null; // 表の外に出た
+      const m = line.match(STATUS_LINE);
+      if (m) {
+        addTriValue(counts, m[1]);
+      }
+      continue;
+    }
+    if (statusColumn === null) {
+      const i = cells.findIndex((c) => c.replace(/[`*_]/g, "").trim().toLowerCase() === "status");
+      statusColumn = i >= 0 ? i : -1; // 見出し行。Status 列が無い表は -1（数えない）
+      continue;
+    }
+    if (statusColumn < 0 || cells.every((c) => /^:?-{2,}:?$/.test(c))) {
+      continue;
+    }
+    if (statusColumn < cells.length) {
+      addTriValue(counts, cells[statusColumn]);
+    }
+  }
+  return counts;
+}
