@@ -27,6 +27,20 @@ function abs(root: string, rel: string): string {
 // starts with "Phase list". Each item's leading token (backticks stripped, up to whitespace
 // or ':') is the phase ID. Returns null if feature.md is absent. Single source of feature.md
 // phase parsing — reused by the M1 nextPhaseId validation (§5.8).
+/**
+ * 2026-10-20: feature.md の「Current phase」と、Phase list でその次の ID（表示用）。どちらかが読めなければ null。
+ * reflection が feature-continue で nextPhaseId を書き漏らしたとき、halt の文言に正解の候補を出すために使う（判定には使わない・不変条件1）
+ */
+export function suggestNextPhase(root: string): { current: string; next: string | null } | null {
+  const file = abs(root, "feature.md");
+  const phases = parseFeaturePhases(root);
+  if (!phases || phases.length === 0 || !existsSync(file)) return null;
+  const current = readFileSync(file, "utf8").match(/^Current phase:\s*(\S+)/m)?.[1];
+  if (!current) return null;
+  const i = phases.indexOf(current);
+  return { current, next: i >= 0 && i + 1 < phases.length ? phases[i + 1] : null };
+}
+
 export function parseFeaturePhases(root: string): string[] | null {
   const file = abs(root, "feature.md");
   if (!existsSync(file)) {

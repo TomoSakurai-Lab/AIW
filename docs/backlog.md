@@ -420,6 +420,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   前提の BL-213 は、明示の完了申告を外すと research-findings の見出しだけのテンプレートが**完了扱いで素通り**するため。
   見積もりと実測の根拠は設計文書の課題I（区間の invalid-status は executor 化以降 0件）。
 - Status: open
+- 追記（2026-10-20・BL-291）: reflection の `nextPhaseId` の書き漏れは、claude executor にしても消えなかった（10-20 03:47）。手貼りの頃から reflection の halt 11 件中 9 件。
+  feature.md の Current phase と Phase list から**機械的に導ける値**なので、根治はこの BL（status の機械導出）。ただし `aiw run` の挙動を変える（不変条件1）ので設計と承認が要る。
+  当面は Skill の1行と、halt の文言に正解の候補を出す表示で手当てした（BL-291）
 
 ## BL-240
 
@@ -838,3 +841,141 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 観測: 次の数フェーズで implementation の E2E の時間と回数（同じ集計で並べる）
 - 別件（記録のみ）: 1 コマンドの上限（約 120 秒）がもう効いていない（15〜17 分のコマンドが最後まで走った）。Skill の「上限で打ち切られたら NOT VERIFIED」の前提が変わっている。いつから・なぜかは未調査
 - Status: resolved (2026-10-20・観測待ち)
+
+## BL-193
+
+- Source: TASK-2026-09-15-execution-budget-failing-specs / current-review.md Backlog 候補 2（Major M1）
+- Severity: Major (deferred)
+- Trigger: **次に `tests/`（gitignore 配下）の変更を含むタスクで、最終フル e2e を要求するとき**
+- Summary: **`tests/` が gitignore のため、フル e2e を流したツリーを SHA で特定できない。** 更新日時の一覧が唯一の手段だが、今回は作業開始時に取っていたため、フル実行のあとに調査用の変更を撤回した（＝最終フルが納品ツリーではなかった）ことを成果物から検知できなかった。
+  **対処**: フル実行の直前に、対象ディレクトリの更新日時とハッシュを証跡として残す運用へ寄せる。research の `# Required Tests` の手順に組み込むか、`tools/aiw` の verify-local で自動取得するかを決める（後者は aiw 側の変更）。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-233
+
+- Source: TASK-2026-09-24-diff-scope-alias / current-review.md `## Backlog`
+- Severity: Minor
+- Trigger: `scope-violation-report.md` に `## Declaration Issues` が出た最初の 3 タスクを終えたとき
+- Summary: `unresolvedDeclarations` は「実在しないパス」を集めるため、**まだ作っていない新規ファイルを `## Modify` に宣言する通常の運用でも載る。**
+  雑音が多ければ `Declaration Issues` の文面か収集条件を調整する。⚠️ **実運用でどれだけ雑音が出るかは未測定**（research が backlog 送りを予告していた項目）。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-234
+
+- Source: TASK-2026-09-24-diff-scope-alias / current-review.md `## Backlog`
+- Severity: Minor
+- Trigger: 次に `versions.skills.*` のどれかを意図して bump するとき
+- Summary: `tools/aiw/test/review-executor.test.ts:230` が版数をリテラルで固定しているため、**意図した bump のたびに必ず 1 回赤くなる**（今回がまさにそれ。`5` → `6` で落ちた）。
+  テスト自身のコメントは「契約は『値』ではなく『SKILL.md と versions が同じコミットで動く』こと」と書いている。**その契約を直接検査する形**（SKILL.md の変更と版数の変更が同じ未コミット集合に載っているか）へ置き換えれば、この定期的な赤は無くせる。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-235
+
+- Source: TASK-2026-09-24-diff-scope-alias / current-result.md `## Manual Verification Required`
+- Severity: Minor
+- Trigger: 次に `tools/aiw` のテストを全件流すとき（緑なのに exit 1 になったら）
+- Summary: ⚠️ **`tools/aiw` のテストは 228 件すべて pass でも、プロセスの終了コードが 1 になる。**
+  原因は Test 174 の**終了後に起きる非同期の `ERR_STREAM_WRITE_AFTER_END`**。集計は緑なので、終了コードだけを見ると「落ちた」と誤読する。
+  ⚠️ **切り分けは未着手**（本タスクの Fix Scope 外だった）。直すか、少なくとも「集計が緑なら成功」と判断する手順を書き残す。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-244
+
+- Source: TASK-2026-09-25-test-hardening / current-review.md `## Backlog`（research-findings.md `# Open Decisions` D-1 からの申し送り）
+- Severity: Major (deferred)
+- Trigger: 次に `tools/aiw`（エンジン）を触るタスク枠が開いたとき
+- Summary: `BL-201` は人間の決定により**案 A（親リポジトリの `tools/testlog.ps1`）**で解消したが、
+  **案 A には構造的な弱点が 2 つ残る**:
+  (1) ⚠️ **`/tools/` は親リポジトリで gitignore なので、ラッパ自身が履歴に残らず、消えても誰も気づかない。**
+  (2) ⚠️ **research が `# Required Tests` に `testlog.ps1` 経由の呼び出しを書かない限り呼ばれない**ので、
+  次のタスクで黙って保存が止まる（＝ review がまた実行結果を再現できなくなる）。
+  恒久化には**案 B（executor が step ごとに shell 出力を `runs/<taskId>/` へ自動保存）**が要る。
+  ⚠️ 本タスクは `tools/aiw/` を触らない決定（AC-04）だったので着手していない。
+  ⚠️ 着手するときは `BL-241`（`npm test` 一式が executor の上限 ~120 秒を超える）と併せて見る。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-249
+
+- Source: TASK-2026-09-26-lock-force-release / 運用（本セッションで 9 回 halt）
+- Severity: Minor
+- Trigger: 次に `tools/aiw` を触るタスク枠が開いたとき、または token-range の halt がもう一度出たとき
+- Summary: **`context-package.md` の `token-range`（上限 1500）超過での halt が常態化している。**
+  本セッションだけで 9 回、直近は 1 回の resume で収まらず 4 回削った。
+  ⚠️ 原因は `## Modify` の**フルパス・略記禁止**の規則で、13 ファイルの宣言だけで**上限の 2 割近く**を食うこと。
+  ⚠️⚠️ **上限の緩和は不変条件で禁止されている**（「上限は Codex の焦点を守るための制約であり緩和しない」）ので、
+  取りうるのは **`# Files` の節をトークン計算から除く**案（`tools/aiw` 側）。
+  上限の趣旨（長文を読ませない）を保ったまま、繰り返しの halt だけを消せる。
+  ⚠️ **削るたびに宣言の情報が落ちる**ので、運用でしのぐほど危ない。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-252
+
+- Source: TASK-2026-09-28-subtotal-rate / current-result.md `## Risk Areas`（AC-09 が NOT VERIFIED）
+- Severity: Minor
+- Trigger: 次に「禁止ファイルに差分が無い」を AC に書くとき、または溜まった未コミット差分をコミットするとき
+- Summary: ⚠️⚠️ **作業ツリーに無関係の未コミット差分が溜まりすぎて、「このタスクは触っていない」を `git diff` で示せない。**
+  2 タスク連続で同じ理由の `NOT VERIFIED` が出ている
+  （`TASK-2026-09-26-lock-force-release` の AC-08 / 本タスクの AC-09）。
+  現状の回避策は **(a) 実装開始時刻より前の mtime** と **(b) 実装中に取った `git status --short` のログ**の
+  2 つで裏取りすることだが、⚠️ **毎回 review 側の工夫に依存している。**
+  ⚠️ **根本の対処は溜まった差分をコミットすること**（`Front.csproj` の publish 対策・`.gitignore` 3 件・
+  工種別予算管理表の AG Grid 化と背景色修正・引用廃止・束 1〜5・FEAT-ex-session6 の 3 フェーズ）。
+  それまでは **AC に「`git diff` が空」と書かず、「開始時刻より新しいファイルの一覧」を根拠に指定する**。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-291
+
+- Source: TASK-2026-10-07-misc-dialogs-ag-grid / reflection（知識ファイルの巻き戻りを検出）
+- Severity: Major (deferred)
+- Trigger: 次に `tools/aiw` を触るタスク枠が開いたとき、または reflection の追記がまた消えたとき
+- Summary: ⚠️⚠️ **phase 4 の reflection が書いた `context.md` / `learnings.md` / `backlog.md` の追記が、phase 5 の fix 開始直後に 3 ファイルとも古い版へ戻されて消えた。**
+  `context.md` と `learnings.md` の mtime は同時刻 2026-10-07T09:23:37Z。直前の 09:22:57Z に `approval.rejected review`（`rejected via drive`）、
+  09:23:04Z に `baseline.captured fix`、09:23:16Z に fix の Codex 起動。Codex の fix ログ（`runs/codex/2026-10-07T09-23-16-082Z-fix.jsonl`）には
+  この 2 ファイルを書くコマンドが見当たらない。**`aiw reject`（drive）か fix 開始時のエンジン処理が、作業ファイルを古いスナップショットから戻している疑い。**
+  ⚠️ 知識ファイルは reflection の唯一の出力先なので、黙って戻ると次のタスクに知識が届かない（不変条件 2「再実行可能性」の前提も崩れる）。
+  → エンジンの reject / drive / fix 開始の経路で、`.ai-workflow/` 直下のファイルを書き戻す処理が無いかを確かめる。今回の消えた内容は phase 5 の reflection で復元済み。
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-313
+
+- Source: TASK-2026-10-13-tougai-save-messages / current-review.md ## Backlog 2
+- Severity: Minor
+- Trigger: 次に当該予算費消管理表の表示仕様を変えるタスクに着手するとき
+- Summary: FEAT-tougai-yosan-design-align は phase 1〜4 が未コミットのまま積み上がり、「phase N 直前」の画面を再現できないため前後比較の画像が取れなかった（phase 4 の AC-14 が NOT VERIFIED）。phase 着手時に before を撮る、または phase 境界でコミットする
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-329
+
+- Source: TASK-2026-10-15-koushubetsu-columns / current-review.md ## Backlog（Minor m1）
+- Severity: Minor
+- Trigger: 次に `# Acceptance Criteria Matrix` へ「既知の `BL-xxx` 以外の失敗が増えない」型の AC を入れるとき
+- Summary: `context-package.md` の `## Ignore` が `backlog.md` を除外したまま「既知 BL 以外の失敗が増えない」AC を課すと、実装側は既知失敗の中身を読めず構造的に NOT VERIFIED しか書けない（今回 1 回発生）。該当 `BL-xxx` の症状（spec:行・期待値と実測値）を `# Constraints` か `## Reference` へ 1 行ずつ転記する運用にする
+- Note (2026-10-20): `.ai-workflow/backlog.md` から移管（人間の指示: aiw 系はアプリの backlog から隔離して件数に数えない）
+- Status: open
+
+## BL-291
+
+- Source: 2026-10-20 の人間の依頼（reflection がたびたび halt する原因の調査）/ 起票 2026-10-20・人間が承認
+- Severity: Major
+- Trigger: すぐ（人間の指示）
+- Summary: 10-19〜20 の reflection 周りの halt 3 件は、原因がそれぞれ別だった:
+  1. 10-19 10:40 reflection `post-action-failed`（`unknown postAction discardSnapshots`）: 小枠A で runtime の設定に新しい postAction を足したとき、
+     **動いていた aiw は古いコードのまま**だった（設定がコードより先に行った）。resume 1 回で通過・再発しない。
+     **教訓: 新しい postAction / validator を runtime の設定へ足すのは、動いている auto が止まってから**（Claude の作業手順の誤り）
+  2. 10-19 10:48 task-planning `validation-failed`（request-mapping）: 写像先 `G（phase 1 で完了）` の括弧の注記を、検査が空白で区切って ID として扱った（Claude の実装の不具合）
+  3. 10-20 03:47 reflection `validation-failed`: feature-continue の `nextPhaseId` の書き漏れ。手貼りの頃から reflection の halt 11 件中 9 件で、executor 化でも消えなかった。
+     指示はプロンプトの後半に1か所だけで、Skill の手順には無かった（この回の reflection は大きなファイルの読み込みで 3 回エラーを出しながら作業していた）
+- 対処（2026-10-20）: (2) request-mapping は写像先の括弧の中を注記として読み飛ばす（括弧の外の ID は従来どおり検査）/
+  (3) reflection Skill v8 の手順6に1行・json-schema の nextPhaseId の書き漏れの halt に feature.md から正解の候補を添える（表示だけ・判定は同じ・`detail.suggestedNextPhaseId`）。根治は BL-239 /
+  あわせて knowledge-diff の research/ のファイル名に git の引用符が残る表示の不具合も直した（`research/x.md"` → `research/x.md`）。
+  Test 248（注記）/ 257（候補の表示・ファイル名）。それぞれ直しを外すと落ちることを確認（変異 3 種）
+- Status: resolved (2026-10-20)

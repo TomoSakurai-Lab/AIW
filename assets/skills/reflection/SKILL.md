@@ -39,7 +39,8 @@ AI がやると二重処理になる。
    ⚠️ この後、人間は**知識の差分**（`knowledge-diff.md`。異常候補が先頭）を見て承認する。既存の項目を大きく消す・同じ BL を二重に足す・大量に書き足す、は異常候補に出る。
    直すべき既存の記述を消すときは、消す理由を `learnings.md` に1行残す
 5. `.ai-workflow/task-metadata.json` を書く（下記）
-6. `.ai-workflow/current-status.json` を書く
+6. `.ai-workflow/current-status.json` を書く。⚠️ **`feature-continue` なら `nextPhaseId` を必ず書く**——値は `feature.md` の `Current phase` の**次の Phase ID**
+   （書き漏れは reflection の halt の大半を占める: 11 件中 9 件。書き漏れると halt の文言に正解の候補が出る）
 
 ## fix が見送った Major の転記
 

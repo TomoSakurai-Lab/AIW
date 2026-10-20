@@ -94,6 +94,11 @@ test("248: request-mapping passes the real task and fails the three injected fau
   assert.match(problemsOf(REAL_TASK.replace("- AC-02:", "- AC-01:")).join("\n"), /AC-01 appears twice/);
   assert.match(problemsOf(REAL_TASK.replace(/### Added Requirements[\s\S]*$/, "")).join("\n"), /### Added Requirements is missing/);
 
+  // 2026-10-20: 写像先の括弧の中は注記（実例: 10-19 の task-planning が `G（phase 1 で完了）` で halt した）。ID の検査は続ける
+  const annotated = REAL_TASK.replace("| G |", "| G（phase 1 で完了） |").replace("| R1, AC-01 |", "| R1（主）, AC-01 (e2e) |");
+  assert.deepEqual(problemsOf(annotated), [], "括弧の注記は ID として読まない");
+  assert.match(problemsOf(REAL_TASK.replace("| R5 |", "| R9（注記） |")).join("\n"), /row 7: R9 is not defined/, "括弧の外の ID は従来どおり検査する");
+
   // テンプレートそのものは通らない（書かずに素通りしない・BL-213 の教訓）
   const template = readFileSync(path.resolve(import.meta.dirname ?? ".", "..", "assets", "templates", "current-task.md"), "utf8");
   const t = problemsOf(template).join("\n");

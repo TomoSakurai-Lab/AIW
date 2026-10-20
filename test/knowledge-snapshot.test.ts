@@ -158,3 +158,23 @@ test("254: two tasks in a row keep separate knowledge diffs; an unwritten task-m
   assert.equal(halted.kind, "halted");
   assert.match((halted as any).message, /task-metadata\.json is empty \(no one wrote it/);
 });
+
+// Test 257 — 2026-10-20: feature-continue で nextPhaseId を書き漏らしたとき、halt の文言に feature.md から正解の候補を出す（表示だけ・判定は同じ halt）。
+// あわせて、research/ のファイル名に git の引用符が残らない（knowledge-diff の表示の不具合）
+test("257: a missing nextPhaseId halts with the next phase suggested from feature.md, and research/ files are labelled cleanly", () => {
+  const { root, config } = makeRoot();
+  writeIn(root, "feature.md", "# Feature: FEAT-x\n\n## Phase list\n\n- `p1`: one\n- `p2`: two\n\nCurrent phase: p1\n");
+  enterReflection(root, config);
+  writeIn(root, "research/note.md", "# memo\n- new\n");
+  writeReflection(root);
+  writeStatus(root, { step: "reflection", result: "feature-continue", reason: "x" }); // nextPhaseId を書き漏らした
+  const out = runStep(root, config, "reflection");
+  assert.equal(out.kind, "halted");
+  assert.match((out as any).message, /nextPhaseId/);
+  assert.match((out as any).message, /feature\.md の Current phase は p1。次の Phase ID は p2——current-status\.json に "nextPhaseId": "p2" を足して aiw resume/);
+
+  const diff = events(root, "knowledge.diff").pop();
+  const research = diff.files.find((f: any) => f.path.startsWith("research/"));
+  assert.ok(research, "research/ の新しいファイルも差分に出る");
+  assert.equal(research.path, "research/note.md", "引用符や {a => b} が残らない");
+});

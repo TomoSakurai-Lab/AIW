@@ -129,7 +129,10 @@ export function writeKnowledgeDiff(root: string, stepId: string, logBase: Record
       const [a, r] = line.split("\t");
       const added = Number(a) || 0;
       const removed = Number(r) || 0;
-      const label = t.dir ? `${t.path}${line.split("\t")[2]?.split(/[\\/]/).pop() ?? ""}` : t.path;
+      // 2026-10-20: git は \ を含むパスを "…" で囲み、--no-index の改名は {a => b} で出す。ファイル名だけを取り出す（以前は末尾に " が残った）
+      const raw = (line.split("\t")[2] ?? "").replace(/^"|"$/g, "");
+      const name = (raw.includes(" => ") ? raw.split(" => ").pop()! : raw).replace(/[{}"]/g, "").split(/[\\/]+/).pop() ?? "";
+      const label = t.dir ? `${t.path}${name}` : t.path;
       files.push({ path: label, added, removed });
       if (removed >= LARGE_DELETION_LINES) anomalies.push(`${label}: 既存の大幅削除（-${removed} 行）`);
       if (added >= LARGE_ADDITION_LINES) anomalies.push(`${label}: 大量追加（+${added} 行）`);

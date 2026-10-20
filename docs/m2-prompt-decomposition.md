@@ -174,6 +174,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(2026-10-20 追加・BL-290)** feature の途中のフェーズではフル e2e を要求せず最後のフェーズで 1 回。Required Tests に「フル e2e は最後のフェーズ（<phase>）で実行」と1行 | **新規追加**（実測: implementation の 65% が E2E・途中のフル e2e は 1 回 15〜17 分） | research Skill（v13） | ✅ |
 | **(2026-10-20 追加・BL-290)** 直しながらの再実行は落ちた spec / テストだけ。まとめた組は最後の 1 回。e2e のフル実行は codex-prompt の Required Tests に従い、unit / build の一式は毎回 | **新規追加**（実測: 約 7 分の組を直すたびに 3 回） | implementation Skill（v8） | ✅ |
 | **(2026-10-20 追加・BL-290)** 同上（fix の開発中の再実行は落ちた spec だけ・e2e のフル実行は Required Tests に従う） | **新規追加** | fix Skill（v8） | ✅ |
+| **(2026-10-20 追加・BL-291)** 手順6（current-status.json）に「feature-continue なら nextPhaseId を必ず書く。値は feature.md の Current phase の次の Phase ID」 | **新規追加**（それまではプロンプトの後半に1か所だけ。reflection の halt 11 件中 9 件がこの書き漏れ） | reflection Skill（v8） | ✅ |
 | ↑ のうち、この環境での測り方（`node tools/aiw/dist/cli.js tokens …`・`cd` を挟まない） | 環境固有 | **local-environment**（v7・runtime のみ）+ research の `bashAllow` | ✅ |
 
 ---

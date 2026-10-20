@@ -9,6 +9,7 @@ import { resolveConfigRef } from "./paths.js";
 import { estimateTokens, estimateTokensBySection } from "./tokens.js";
 import { parseJsonText } from "./jsonText.js";
 import { checkRequestMapping } from "./requestMapping.js";
+import { suggestNextPhase } from "./postActions.js";
 import { isDeclared, parseDeclaredFiles } from "./declaredFiles.js";
 import { compareToBaseline, readBaseline, readRepoState, resolveCheckRepoRoot } from "./gitScope.js";
 import { knownFailureHint, runVerifyLocal, scopeNote, type VerifyLocalCommand } from "./verifyLocal.js";
@@ -153,10 +154,19 @@ function runOne(root: string, config: WorkflowConfig, v: ValidatorRef, ctx?: Val
       }
       const validate = compileSchema(schemaPath);
       const ok = validate(data);
+      // 2026-10-20: nextPhaseId の書き漏れ（reflection の halt の大半・手貼りの頃から 11 件中 9 件）には、feature.md から正解の候補を添える。
+      // 表示だけで判定は変えない（不変条件1・4）。根治の機械導出は BL-239（run の挙動を変えるので設計と承認が要る）
+      const missingNext =
+        !ok && (validate.errors ?? []).some((e: { params?: unknown }) => (e.params as { missingProperty?: string } | undefined)?.missingProperty === "nextPhaseId");
+      const phase = missingNext ? suggestNextPhase(root) : null;
+      const hint = phase
+        ? `（feature.md の Current phase は ${phase.current}。` +
+          (phase.next ? `次の Phase ID は ${phase.next}——current-status.json に "nextPhaseId": "${phase.next}" を足して aiw resume）` : `これが最後の phase なので feature-complete の可能性）`)
+        : "";
       return withBom(
         ok
           ? passed(`${target} matches schema`, target)
-          : failed(`${target} schema violation: ${ajv.errorsText(validate.errors)}`, target),
+          : failed(`${target} schema violation: ${ajv.errorsText(validate.errors)}${hint}`, target, phase ? { suggestedNextPhaseId: phase.next } : undefined),
         bom
       );
     }

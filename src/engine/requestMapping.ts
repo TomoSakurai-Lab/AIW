@@ -90,7 +90,8 @@ export function checkRequestMapping(raw: string): RequestMappingCheck {
       const cells = row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
       if (cells.every((c) => c === "")) continue;
       rows++;
-      const target = cells[cells.length - 1] ?? "";
+      // 2026-10-20: 括弧の中は注記として読み飛ばす（実例: `G（phase 1 で完了）`）。以前は空白で区切って「phase」「1」を ID として落としていた
+      const target = (cells[cells.length - 1] ?? "").replace(/（[^）]*）|\([^)]*\)/g, " ");
       const tokens = target.split(/[,、\s]+/).map((t) => t.replace(/`/g, "").trim()).filter(Boolean);
       if (tokens.length === 0) {
         problems.push(`${REQUEST_MAPPING_HEADING} row ${i + 1}: empty mapping`);
