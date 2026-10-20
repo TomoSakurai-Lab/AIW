@@ -215,6 +215,11 @@ research はそれを引き継ぎ、**コードの言葉＝`## Modify` のファ
 複数 spec を要求する場合は、**1コマンドにまとめた形**で書くこと。
 spec ごとに分けて書くと `webServer` が本数分だけ再起動し、待ち時間が積み上がる。
 
+⚠️ **feature の途中のフェーズ（`feature.md` の Phase list の最後でない phase）では、フル e2e（一式）を要求しない。**
+関係する spec だけを書き、フル e2e と基準線の比較は**最後のフェーズで 1 回**にまとめる（`feature.md` に別の決定があればそれに従う）。
+`# Required Tests` には「フル e2e は最後のフェーズ（`<phase>`）で実行」と1行で書く——書かないと実装フェーズが一式を回す。
+実測（FEAT-grid-common・2026-10-19）: implementation の時間の 65% が E2E で、途中のフェーズのフル e2e は 1 回 15〜17 分だった
+
 > **実際に書くコマンドは Local Environment に従う。** 上に結合されていればその手順が正しい。
 > 無い環境では `package.json` の scripts を確認して決める。
 > `# Required Tests` には**実体を書く**こと。実装フェーズの入力は

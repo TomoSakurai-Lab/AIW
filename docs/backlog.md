@@ -818,4 +818,23 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - 対処（2026-10-20）: `steps.<id>.effort` → `settings.codexEffort` を `-c model_reasoning_effort=<値>` で渡す。未指定なら渡さない。記録は `meta.effortRequested`。
   値はロード時に検査。0.160.1 で low の受け付けと、不正値が invalid_request_error（permanent）になることを実測。Test 255 / 256。設計は design-codex-executor の「effort を設定できるようにした」
 - runtime の値: **まだ入れていない**（今までどおりモデルの既定 medium）。下げるかは実験で決める（人間の判断待ち）
+- 実験の開始（2026-10-20 人間の指示）: runtime に `settings.codexEffort: low`（workflow v17）。測るのは implementation / fix の**編集・思考の時間**（exec の時間 − testlog のコマンドの時間）と Fix 率。
+  before（medium・FEAT-grid-common の implementation 6 本）: 編集・思考 6.4 / 15.3 / 12.2 / 14.1 / 12.1 / 14.5 分（中央値 約 13 分）。Fix 率の上昇か短縮なしなら外す。
+  ⚠️ 同じ日に E2E の回し方（BL-290）も変えたので、比べるのは E2E を除いた編集・思考の部分だけ（集計スクリプトは exec − testlog で分けられる）
 - Status: resolved (2026-10-20・値の実験は人間の判断待ち)
+
+## BL-290
+
+- Source: 2026-10-20 の implementation の時間内訳の集計（FEAT-grid-common の 6 本）/ 起票 2026-10-20・人間が承認
+- Severity: Major（1 フェーズ約 2 時間 20 分のうち、implementation の 65% が E2E）
+- Trigger: すぐ（人間の指示）
+- Summary: implementation 234.6 分の内訳 = E2E 151.4（65%）/ build 7.5（3%）/ その他のコマンド 1.1 / 編集・思考 74.6（32%）
+  （Event Log の exec の時間と、`tools/testlog.ps1` が各コマンドのログに残す開始・終了の時刻から算出）。E2E が大きい理由は2つ:
+  (1) 途中のフェーズでフル e2e（1 回 15〜17 分）が流れていた——ただしこの feature では、フル e2e を見た後に feature.md へ「最後のフェーズで 1 回」を書き足したので違反ではない（人間の説明）。
+  一般の規則が Skill に無かった / (2) 直すたびに複数 spec の組（約 7 分）を流し直していた（move-d で 3 回）
+- 対処（2026-10-20）: research Skill v13（feature の途中のフェーズではフル e2e を要求しない・最後のフェーズで 1 回・Required Tests に1行）/
+  implementation Skill v8・fix Skill v8（再実行は落ちた spec だけ・まとめた組は最後の 1 回・e2e のフル実行は Required Tests に従う・unit / build の一式は毎回）。
+  「最後の一式1回を省略した完了報告は不完全」（人間の注文の1行）は、unit / build の一式として残している（弱めていない）
+- 観測: 次の数フェーズで implementation の E2E の時間と回数（同じ集計で並べる）
+- 別件（記録のみ）: 1 コマンドの上限（約 120 秒）がもう効いていない（15〜17 分のコマンドが最後まで走った）。Skill の「上限で打ち切られたら NOT VERIFIED」の前提が変わっている。いつから・なぜかは未調査
+- Status: resolved (2026-10-20・観測待ち)
