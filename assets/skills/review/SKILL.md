@@ -124,15 +124,10 @@ checkRepoRoot からのフルパスをインラインコードで書き、接頭
 ⚠️ **PASS へ丸めない。** 「たぶん動く」を PASS にするのは、この Skill が
 `## Acceptance Criteria Evidence Audit` で禁じていることを Reviewer 自身がやることになる。
 
-### 画面の after スクショ（`aiw pr` が draft PR に添付する。**判定には使わない**）
+### 画面のスクショは撮らない
 
-- E2E を当てた画面のうち、**spec がスクショの出力先を env で受け、`after-` で始まる名前で書くもの**に限り、
-  その env を `.ai-workflow/runs/<Task ID>/screenshots/` に向けて走らせる（Task ID は `current-task.md` の `- Task ID:`）。
-  対象画面は E2E を当てた画面のまま（新しい宣言は増やさない）
-- 受けない spec のために撮る手段を作らない（spec・スクリプトを書かない。上の「計測コードを書かない」と同じ）。**撮れなければ撮らない**
-- 撮れなかったことを NOT VERIFIED / Manual Verification Required にしない。撮った画像を AC の Evidence に数えない
-  （Evidence の規則は `## Acceptance Criteria Evidence Audit` のまま）
-- 画面に実データ・実名が映っていないかは、PR の公開前に人間が見る（review の判定ではない）
+PR に添付する変更前・変更後のスクショは implementation / fix が撮る（2026-10-23 に review から移した。review は spec を書けず、
+変更前を撮れないため）。`runs/<task-id>/screenshots/` の画像は判定にも Evidence にも使わない。
 
 ### 文字化けの検査（BL-071）
 

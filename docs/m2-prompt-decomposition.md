@@ -70,6 +70,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(2026-10-06 追加)** 絞った実行に入らない故障注入・防衛線は一式にしか含まれない。最後の一式1回を省いた完了報告は不完全（分割実行は網の免除ではない） | **新規追加**（人間の注文。improve-check の確認項目にするかは数タスク見てから） | implementation Skill（v6） | ✅ |
 | **(2026-10-09 追加・BL-282)** `consumerChecks[].root` はディレクトリを指す（ファイルを書かない）。エンジン側は理由付きの failed を返す（ファイル単体の検査には広げない） | **新規追加**（書き手の規則。pathBase と同じ両面の型） | implementation Skill（v7） | ✅ |
 | ↑ のうち、aiw 自身のテストのファイル単位の実行コマンド | 環境固有 | **Skill に書かない**（runtime の `context.md`「ワークフロー構成」。assets は他環境へ配られる・不変条件7） | ✅ |
+| **(2026-10-23 追加・aiw pr)** 画面の見た目・操作が変わるタスクでは、製品コードを変える前に `before-<画面名>.png`・変えた後に `after-<画面名>.png` を `runs/<task-id>/screenshots/` へ（同じ名前で対にする・撮影のコードを製品へ足さない・判定に使わない・撮れなければ Deviations に 1 行） | **新規追加**（人間の注文・設計 docs/design-pr.md §A-6） | implementation Skill（v9） | ✅ |
 
 新規追加の意図: 三値規律の強化。**M1 版の `implementation.md` には存在しない**。
 「常に空になるのは、実際に何も無いのではなく書いていないだけのことが多い」という
@@ -91,6 +92,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | Read の `test-report.md` を「Testing 失敗経由」と説明 | **死んでいる** | 🗑 verify-local 失敗時へ修正 | 🗑 |
 | **(2026-10-05 追加・BL-241)** 検証の段階制にコマンドの上限の扱い（一式が上限に近ければファイル列挙で代える・上限で打ち切られたら NOT VERIFIED） | **新規追加** | fix Skill（v6） | ✅ |
 | **(2026-10-06 追加)** 絞った実行に入らない故障注入・防衛線は一式にしか含まれない。一式1回を省いた完了報告は不完全 | **新規追加**（人間の注文） | fix Skill（v7） | ✅ |
+| **(2026-10-23 追加・aiw pr)** 修正で画面を変えたら `after-<画面名>.png` を implementation と同じ名前で撮り直す（before は撮り直さない・判定に使わない） | **新規追加**（設計 docs/design-pr.md §A-6） | fix Skill（v9） | ✅ |
 
 ### review.md
 
@@ -108,7 +110,7 @@ Stage 3 で内容を動かすたび、この表の「状態」列を更新する
 | **(2026-10-06 追加・判断インフレ対策)** 逆向きの網: `[要回答]` のうち一意に決まる / 推奨を立てられたものを `research起因（過剰）` として Minor で指摘（Fix 原因の分類3値には加えない）。既定採用が context-package に載り実装が従っているか | **新規追加**（人間の注文） | review Skill（v7） | ✅ |
 | 対象ディレクトリ（旧 `.ai-workflow` との識別） | **死んでいる** | 🗑 削除（2026-09-02。下記） | 🗑 |
 | 対象ディレクトリ（`.ai-workflow/` 配下） | 恒久規則 | Instructions（coding-rules と共有・1行へ縮約） | ✅ |
-| **(2026-10-20 追加・aiw pr)** 画面の after スクショ: env で出力先を受け `after-` で始まる名前で書く spec に限り `runs/<Task ID>/screenshots/` へ。撮る手段は作らない・判定に使わない（NOT VERIFIED にしない・Evidence に数えない） | **新規追加**（人間の注文・設計 docs/design-pr.md §C の案 (a)） | review Skill（v9） | ✅ |
+| **(2026-10-20 追加・aiw pr)** 画面の after スクショ: env で出力先を受け `after-` で始まる名前で書く spec に限り `runs/<Task ID>/screenshots/` へ。撮る手段は作らない・判定に使わない（NOT VERIFIED にしない・Evidence に数えない） | **新規追加**（人間の注文・設計 docs/design-pr.md §C の案 (a)） | 🗑 **2026-10-23 取り下げ**（review は変更前を撮れない。implementation / fix へ移した。review Skill v10 は「撮らない」の 1 節） | 🗑 |
 | ↑ のうち、どの spec がその env を受けるか（spec 名と env 名） | 環境固有 | **Skill に書かない**（不変条件7。実測は backlog と runtime の baseline） | ✅ |
 
 ### improve-check.md

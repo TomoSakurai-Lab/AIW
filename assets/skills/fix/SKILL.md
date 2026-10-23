@@ -64,6 +64,12 @@ fix 1周 50 分のうち約 40 分が e2e の反復に消えた。
 理由に数値（直近の所要の実測と上限）を書く。再試行しても同じなので、手段を変えて証拠を取る
 （実測 2026-09-25: implementation の一式が上限で殺されて AC の証拠がゼロになり、fix がファイル単位で取り直した）。
 
+## 画面の変更後のスクショの撮り直し（`aiw pr` 用・**判定には使わない**）
+
+修正で画面の見た目・操作を変えたら、変えた画面の `after-<画面名>.png` を `.ai-workflow/runs/<task-id>/screenshots/` に
+**implementation と同じ名前で**撮り直す（`before-*` は撮り直さない・消さない）。撮り方と扱い（判定に使わない・Evidence に数えない・
+撮れなければ `## Deviations` に 1 行）は implementation Skill の同じ節に従う。画面を変えない修正では撮らない。
+
 ## current-result.md の書き方
 
 implementation と同じ Artifact Contract を使う。必須見出しとその順序は
