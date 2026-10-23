@@ -63,6 +63,15 @@ export function placeScreens(headings: string[], screens: ScreenPair[]): { byHea
   return { byHeading, rest };
 }
 
+/** 同じ見出しに複数の対があるときの小見出し: 補足（`…タブ（右側の列）` の「右側の列」）。補足が無い（ラベル = 見出し）なら「全体」 */
+function captionOf(s: ScreenPair, heading: string): string {
+  const label = s.label ?? s.name;
+  const norm = (x: string): string => x.normalize("NFKC").replace(/\s+/g, "");
+  if (norm(label) === norm(heading)) return "全体";
+  const caption = label.match(/[（(]([^（()）]*)[)）]\s*$/)?.[1];
+  return caption && norm(label.replace(/\s*[（(][^（()）]*[)）]\s*$/, "")).endsWith(norm(heading).split("/").pop() ?? "") ? caption : label;
+}
+
 /** 変更前 → 変更後の画像の行（見出しは呼び出し側） */
 function pairLines(s: ScreenPair): string[] {
   const label = s.label ?? s.name;
@@ -281,21 +290,13 @@ export function buildScreensComment(src: PrSource, screens: ScreenPair[]): Scree
   const groups = src.requested ?? [];
   const placed = placeScreens(groups.map((g) => g.heading), screens);
   const out: string[] = [SCREENS_HEADING];
-  // 同じ見出しに複数の対があるときの小見出し: 補足（`…タブ（右側の列）` の「右側の列」）。補足が無い（ラベル = 見出し）なら「全体」
-  const subheading = (s: ScreenPair, heading: string): string => {
-    const label = s.label ?? s.name;
-    const norm = (x: string): string => x.normalize("NFKC").replace(/\s+/g, "");
-    if (norm(label) === norm(heading)) return "全体";
-    const caption = label.match(/[（(]([^（()）]*)[)）]\s*$/)?.[1];
-    return caption && norm(label.replace(/\s*[（(][^（()）]*[)）]\s*$/, "")).endsWith(norm(heading).split("/").pop() ?? "") ? caption : label;
-  };
   groups.forEach((g, gi) => {
     const mine = placed.byHeading.get(gi) ?? [];
     if (mine.length === 0) return;
     out.push("", `### ${g.heading}`);
     for (const s of mine) {
       out.push("");
-      if (mine.length > 1) out.push(`#### ${subheading(s, g.heading)}`, "");
+      if (mine.length > 1) out.push(`#### ${captionOf(s, g.heading)}`, "");
       out.push(...pairLines(s));
     }
   });
@@ -307,6 +308,61 @@ export function buildScreensComment(src: PrSource, screens: ScreenPair[]): Scree
   const key = keyOf(body);
   const content = `${normalize(body)}${SEPARATOR}${screensFooter(key)}`;
   return { content, generationKey: key, chars: content.length };
+}
+
+// ---- 指摘への対応（第 n 回）のコメント（2026-10-23・§I 指摘の運用）-----------------------------------
+
+const REPLY_HEADING = /^## 指摘への対応（第 (\d+) 回）/;
+
+function replyFooter(taskId: string, key: string): string {
+  return `この回の対応はタスクの記録から自動生成しました（対応の記録: ${taskId}・生成キー: ${key}）。`;
+}
+
+/**
+ * 回のコメント: その回のタスクの依頼の項目（見出しごと）と、**その見出しの直下に**その回の変更前 → 変更後。
+ * コメントには 4000 字の制限が無いので、説明文と違って画像を項目の直下に置ける（人間の注文「タブごとの比較」§A-6b）。
+ * 見出しに当たらない画像は最後に「その他の画面」。依頼の項目が無ければ作業記録の要約で代える（説明文と同じ）
+ */
+export function buildReplyComment(src: PrSource, screens: ScreenPair[], round: number): ScreensComment {
+  const out: string[] = [`## 指摘への対応（第 ${round} 回）`];
+  const groups = src.requested ?? [];
+  const placed = placeScreens(groups.map((g) => g.heading), screens);
+  const pairs = (list: ScreenPair[], heading: string): void => {
+    for (const s of list) {
+      out.push("");
+      if (list.length > 1) out.push(`#### ${captionOf(s, heading)}`, "");
+      out.push(...pairLines(s));
+    }
+  };
+  if (src.requested === null) {
+    out.push("", "依頼の記録なし");
+  } else if (groups.length === 0) {
+    out.push("", src.metadata?.summary ? scrub(src.metadata.summary) : "要約の記録なし");
+  }
+  groups.forEach((g, gi) => {
+    out.push("", `### ${g.heading}`);
+    for (const item of g.items) {
+      out.push(`- ${scrub(item.text)}`);
+      for (const s of item.sub) out.push(`  ${scrub(s)}`);
+    }
+    pairs(placed.byHeading.get(gi) ?? [], g.heading);
+  });
+  if (placed.rest.length > 0) {
+    out.push("", groups.length > 0 ? "### その他の画面" : "### 画面");
+    for (const s of placed.rest) out.push("", `#### ${s.label ?? s.name}`, "", ...pairLines(s));
+  }
+  const body = out.join("\n");
+  const key = keyOf(body);
+  const content = `${normalize(body)}${SEPARATOR}${replyFooter(src.taskId ?? "不明", key)}`;
+  return { content, generationKey: key, chars: content.length };
+}
+
+/** aiw の回のコメントなら、その回の番号と対応の記録（Task ID）。違えば null */
+export function parseReplyComment(content: string): { round: number; taskId: string } | null {
+  const text = content.replace(/\r\n/g, "\n");
+  const round = text.match(REPLY_HEADING)?.[1];
+  const taskId = text.match(/この回の対応はタスクの記録から自動生成しました（対応の記録: ([^・）]+)・生成キー: [0-9a-f]{12}）/)?.[1];
+  return round && taskId ? { round: Number(round), taskId } : null;
 }
 
 /** そのコメントが aiw の画像のコメントか（見出しと生成キーの行の両方がある） */

@@ -322,9 +322,10 @@ function shotsOf(root: string, taskId: string | null): string[] {
  * feature の全タスク（このタスクまで・古い順）のスクショを名前で対にする。変更前は**最初に撮ったもの**、
  * 変更後は**最後に撮ったもの**（feature = ブランチ = PR なので、PR 全体の変更前 → 変更後）。単一タスクはそのタスクだけ。
  */
-function collectShots(root: string, taskDir: string, taskId: string | null): ShotPair[] {
+function collectShots(root: string, taskDir: string, taskId: string | null, ownOnly = false): ShotPair[] {
   const group = path.dirname(taskDir);
-  const isSingle = path.basename(group) === "single";
+  // ownOnly: 指摘への対応の回のコメント用。その回のタスクの変更前 → 変更後だけ（feature の最初の変更前ではない）
+  const isSingle = ownOnly || path.basename(group) === "single";
   const mine = path.basename(taskDir);
   const taskIds = isSingle
     ? [taskId]
@@ -348,7 +349,7 @@ function collectShots(root: string, taskDir: string, taskId: string | null): Sho
   return [...pairs.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-export function readPrSource(root: string, taskDir: string): PrSource {
+export function readPrSource(root: string, taskDir: string, opts: { ownShotsOnly?: boolean } = {}): PrSource {
   const stamp = path.basename(taskDir).match(TASK_DIR)?.[1] ?? "";
   const taskId = readTaskId(taskDir);
   const result = readText(path.join(taskDir, "current-result.md"));
@@ -358,7 +359,7 @@ export function readPrSource(root: string, taskDir: string): PrSource {
     stamp,
     taskId,
     requested: userTask === null ? null : parseRequested(userTask),
-    shots: collectShots(root, taskDir, taskId),
+    shots: collectShots(root, taskDir, taskId, opts.ownShotsOnly === true),
     metadata: readMetadata(taskDir),
     declared: readDeclared(taskDir),
     acceptance: result === null ? null : countTriStatusAny(result, "## Acceptance Criteria Verification"),

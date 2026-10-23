@@ -740,11 +740,12 @@ program
   .description("Create or update a DRAFT pull request on Azure DevOps from the archived task record (state.json is not touched)")
   .option("--dry-run", "API を一切呼ばず、説明文と実行予定の操作を表示するだけ（Event Log にも書かない）")
   .option("--check", "接続確認（読み取り API のみ: リポジトリ情報と PR 一覧）。settings.pr が無ければ git remote からの導出値を表示する")
+  .option("--reply", "指摘への対応（第 n 回）のコメントを既存の PR に投稿する（前回の報告より後に終わったタスクの記録から。--dry-run と併用で内容だけ表示）")
   .option("--task <dir>", "archive のタスクディレクトリ（省略時は最新）")
-  .action(async (opts: { dryRun?: boolean; check?: boolean; task?: string }) => {
+  .action(async (opts: { dryRun?: boolean; check?: boolean; reply?: boolean; task?: string }) => {
     const root = engineRoot();
     const outcome = await runPr(
-      { root, config: loadConfig(root), dryRun: opts.dryRun, check: opts.check, taskDir: opts.task },
+      { root, config: loadConfig(root), dryRun: opts.dryRun, check: opts.check, reply: opts.reply, taskDir: opts.task },
       {
         fetch: (url, init) => fetch(url, init),
         env: process.env,

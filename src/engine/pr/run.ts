@@ -11,11 +11,14 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { appendEvent, type EventType } from "../eventLog.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
+import { readEventLog } from "../observed.js";
 import type { PrSettings, WorkflowConfig } from "../types.js";
 import { AzdoClient, AzdoError, deriveFromRemote, resolveTarget, type AzdoPullRequest, type FetchImpl } from "./azdo.js";
 import {
   buildDescription,
+  buildReplyComment,
   buildScreensComment,
+  parseReplyComment,
   DESCRIPTION_LIMIT,
   headingsWithoutScreens,
   internalReport,
@@ -45,6 +48,8 @@ export type PrOptions = {
   config: WorkflowConfig;
   dryRun?: boolean;
   check?: boolean;
+  /** 指摘への対応（第 n 回）のコメントを既存の PR に投稿する（2026-10-23・§I） */
+  reply?: boolean;
   /** archive のタスクディレクトリ。省略時は最新 */
   taskDir?: string;
 };
@@ -86,6 +91,9 @@ export async function runPr(opts: PrOptions, deps: PrDeps): Promise<PrOutcome> {
     }
     if (opts.check) {
       return await runCheck(opts, deps, pat, settings, say, warn, record);
+    }
+    if (opts.reply) {
+      return await runReply(opts, deps, pat, settings, say, warn, record);
     }
     return await runCreateOrUpdate(opts, deps, pat, settings, say, warn, record);
   } catch (error) {
@@ -631,6 +639,178 @@ async function update(
   record("pr.updated", { ...base, prId: id, descriptionChars: desc.chars, generationKey: desc.generationKey, truncations: desc.truncations });
   say(`draft PR の説明文を更新しました: ${prUrl(id)}`);
   return { exitCode: 0, kind: "updated", prId: id };
+}
+
+// ---- 指摘への対応（第 n 回）: --reply（2026-10-23・設計 §I）----------------------------------------
+//
+// 運用（人間の判断）: 指摘は同じブランチ・同じ PR で直す。指摘 1 回分 = 単一タスク 1 本（依頼文に指摘をチェックボックスで）。
+// 公開済みの説明文と画面のコメントは書き換えず、回ごとに「指摘への対応（第 n 回）」のコメントを足す。
+// 投稿は人間が --reply を打ったときだけ（--dry-run で内容を見てから。客先から見える書き込みなので、打つことを署名とみなす）。
+
+const stampOf = (dir: string): string => path.basename(dir).match(/^(\d{8}T\d{6})-/)?.[1] ?? "";
+
+/** このブランチで報告済みのタスク（pr.created / pr.updated / pr.reply の taskDir）。Event Log から */
+function reportedTasks(root: string, branch: string): { dirs: string[]; replies: number; replyDirs: string[] } {
+  const log = readEventLog(root);
+  if (log === "missing" || log === "unreadable") return { dirs: [], replies: 0, replyDirs: [] };
+  const dirs = new Set<string>();
+  const replyTasks = new Set<string>();
+  const replyDirs = new Set<string>();
+  for (const r of log) {
+    if (!["pr.created", "pr.updated", "pr.reply"].includes(String(r.event)) || r.sourceBranch !== branch) continue;
+    if (typeof r.taskDir !== "string") continue;
+    if (r.event === "pr.reply") {
+      if (r.action === "skipped") continue; // 投稿していない回は報告に数えない
+      replyDirs.add(r.taskDir);
+      if (r.action === "created") replyTasks.add(r.taskDir);
+    }
+    dirs.add(r.taskDir);
+  }
+  return { dirs: [...dirs], replies: replyTasks.size, replyDirs: [...replyDirs] };
+}
+
+/**
+ * その回のタスク: --task が無ければ、このブランチで最後に報告したタスクより後に archive されたタスク。
+ * 1 本ならそれ。0 本・複数なら止まる（黙って選ばない）。単一タスクも feature のタスクも候補にする
+ */
+function pickReplyTask(opts: PrOptions, branch: string): { dir: string | null; error: string | null } {
+  if (opts.taskDir) {
+    const dir = path.resolve(opts.taskDir);
+    return existsSync(path.join(dir, "current-task.md")) ? { dir, error: null } : { dir: null, error: `--task ${opts.taskDir} にタスクの記録（current-task.md）がありません。` };
+  }
+  const { dirs: reported, replyDirs } = reportedTasks(opts.root, branch);
+  if (reported.length === 0) {
+    return { dir: null, error: `ブランチ ${branch} では、まだ aiw pr で PR を作った記録がありません。先に \`aiw pr\` で PR を作ってください。` };
+  }
+  const last = reported.map(stampOf).sort().pop() ?? "";
+  const base = path.dirname(path.resolve(opts.root));
+  const reportedAbs = new Set(reported.map((d) => path.resolve(base, d)));
+  const candidates = listArchivedTaskDirs(opts.root).filter((d) => stampOf(d) > last && !reportedAbs.has(path.resolve(d)));
+  if (candidates.length === 1) return { dir: candidates[0], error: null };
+  const rel = (d: string): string => path.relative(base, d).replace(/\\/g, "/");
+  // 新しいタスクが無く、最後の報告が回のコメントなら、打ち直し = その回のコメントの更新（同じタスク）
+  const lastReply = replyDirs.sort((x, y) => (stampOf(x) < stampOf(y) ? -1 : 1)).pop();
+  if (candidates.length === 0 && lastReply && stampOf(lastReply) === last) {
+    return { dir: path.resolve(base, lastReply), error: null };
+  }
+  if (candidates.length === 0) {
+    return { dir: null, error: `前回の報告（${last}）より後に終わったタスクの記録がありません。指摘への対応のタスクを reflection まで終えてから打ってください。` };
+  }
+  return { dir: null, error: `前回の報告より後のタスクが ${candidates.length} 本あります。--task で選んでください:\n${candidates.map((d) => `  - ${rel(d)}`).join("\n")}` };
+}
+
+async function runReply(
+  opts: PrOptions,
+  deps: PrDeps,
+  pat: PatSecret | null,
+  settings: PrSettings | undefined,
+  say: (l: string) => void,
+  warn: (l: string) => void,
+  record: (e: EventType, f: Record<string, unknown>) => void
+): Promise<PrOutcome> {
+  const local = localBranch(opts, deps);
+  if (!local.branch) {
+    warn(`指摘への対応を投稿できません: ${local.reason}`);
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const picked = pickReplyTask(opts, local.branch);
+  if (!picked.dir) {
+    warn(picked.error ?? "その回のタスクの記録を決められません。");
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const src = readPrSource(opts.root, picked.dir, { ownShotsOnly: true });
+  const planned = planImages(opts.root, src);
+  const relTask = path.relative(path.dirname(path.resolve(opts.root)), picked.dir).replace(/\\/g, "/");
+
+  if (opts.dryRun) {
+    const round = reportedTasks(opts.root, local.branch).replies + 1;
+    const refs = new Map<string, ImageRef>(planned.map((p) => [p.file, { url: p.skipReason ? null : `<${p.uploadName} の添付後の URL>`, displayPath: p.displayPath }]));
+    const comment = buildReplyComment(src, screensOf(src, planned, refs), round);
+    say("=== aiw pr --reply --dry-run（API は呼びません。Event Log にも書きません）===");
+    say(`ブランチ: ${local.branch}`);
+    say(`その回のタスク: ${relTask}${src.taskId ? `（${src.taskId}）` : ""}`);
+    say(`回の番号: 第 ${round} 回（本実行では PR の既存のコメントから決める）`);
+    say(`画像: ${planned.length} 枚（このタスクの runs/<Task ID>/screenshots/ だけ）`);
+    reportShotCoverage(src, say);
+    const hits = sensitiveCandidates(comment.content);
+    if (hits.length > 0) say(`⚠ 実データらしい語: ${hits.join(" / ")}`);
+    say("投稿先: このブランチの active な PR（draft でも公開済みでも）。説明文と画面のコメントには触りません");
+    say(`----- コメント（指摘への対応）: ${comment.chars} 字 -----`);
+    for (const l of comment.content.split("\n")) say(l);
+    say("------------------");
+    return { exitCode: 0, kind: "dry-run" };
+  }
+
+  const resolved = resolveTarget(settings);
+  if (!resolved.ok) {
+    warn(`settings.pr が足りません: ${resolved.missing.join(", ")}`);
+    return { exitCode: 1, kind: "failed" };
+  }
+  if (!pat) {
+    patGuidance(warn);
+    return { exitCode: 1, kind: "failed" };
+  }
+  const client = new AzdoClient(resolved.target, pat, deps.fetch);
+  const repo = await client.getRepository();
+  const targetBranch = shortName(settings?.targetBranch?.trim() || repo.defaultBranch || "");
+  const prs = await client.listActivePullRequests({ source: heads(local.branch), target: heads(targetBranch) });
+  const base = { sourceBranch: local.branch, targetBranch, taskDir: relTask };
+  if (prs.length !== 1) {
+    warn(prs.length === 0 ? `ブランチ ${local.branch} の active な PR がありません。先に \`aiw pr\` で作ってください。` : `同じブランチの active な PR が ${prs.length} 件あります。どれに投稿するか決められないので触りません。`);
+    record("pr.reply", { ...base, action: "skipped", reason: prs.length === 0 ? "no-pr" : "multiple" });
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const prId = prs[0].pullRequestId;
+  const prUrl = repo.webUrl ? `${repo.webUrl}/pullrequest/${prId}` : `#${prId}`;
+
+  let existing = new Map<string, string>();
+  if (planned.length > 0) {
+    try {
+      existing = new Map((await client.listAttachments(prId)).map((a) => [a.displayName, a.url]));
+    } catch (error) {
+      warn(`⚠ 既存の添付を一覧できませんでした（${(error as Error).message}）。必要な画像は添付し直します。`);
+    }
+  }
+  const a = await attach(client, prId, planned, existing);
+  reportAttachFailures(a.failures, prId, warn, record);
+  const screens = screensOf(src, planned, a.refs);
+  const replies = (await client.listThreads(prId)).map((t) => ({ t, parsed: parseReplyComment(t.content) })).filter((x) => x.parsed !== null);
+  const mine = replies.filter((x) => x.parsed!.taskId === src.taskId);
+  const fields = { ...base, prId, attachmentsUploaded: a.uploaded, attachmentsReused: a.reused };
+
+  let kind: PrOutcome["kind"];
+  if (mine.length === 0) {
+    const round = Math.max(0, ...replies.map((x) => x.parsed!.round)) + 1;
+    const comment = buildReplyComment(src, screens, round);
+    await client.createThread(prId, comment.content);
+    record("pr.reply", { ...fields, action: "created", round, generationKey: comment.generationKey, chars: comment.chars });
+    say(`指摘への対応（第 ${round} 回）のコメントを投稿しました: ${prUrl}`);
+    kind = "created";
+  } else if (mine.length > 1) {
+    warn(`⚠ このタスク（${src.taskId}）の回のコメントが ${mine.length} 件あります。どれを更新するか決められないので触りません。`);
+    record("pr.reply", { ...fields, action: "skipped", reason: "multiple" });
+    return { exitCode: 1, kind: "skipped", prId };
+  } else if (!isUntouchedByHuman(mine[0].t.content)) {
+    warn("⚠ この回のコメントは人の手で直されています（生成キーが一致しない）。上書きしません。");
+    record("pr.reply", { ...fields, action: "skipped", reason: "human-edited", round: mine[0].parsed!.round });
+    return { exitCode: 1, kind: "skipped", prId };
+  } else {
+    const round = mine[0].parsed!.round;
+    const comment = buildReplyComment(src, screens, round);
+    if (mine[0].t.content.replace(/\r\n/g, "\n").trim() === comment.content.trim()) {
+      record("pr.reply", { ...fields, action: "unchanged", round });
+      say(`指摘への対応（第 ${round} 回）のコメントは最新です（変更なし）。`);
+      kind = "unchanged";
+    } else {
+      await client.updateComment(prId, mine[0].t.id, mine[0].t.commentId, comment.content);
+      record("pr.reply", { ...fields, action: "updated", round, generationKey: comment.generationKey, chars: comment.chars });
+      say(`指摘への対応（第 ${round} 回）のコメントを更新しました: ${prUrl}`);
+      kind = "updated";
+    }
+  }
+  reportShotCoverage(src, warn);
+  if (!prs[0].isDraft) say("⚠ この PR は公開済みです。投稿したコメントは客先から見えます（画面に実データ・実名が映っていないか確認してください）。");
+  return { exitCode: 0, kind, prId };
 }
 
 // ---- --dry-run ------------------------------------------------------------------------------

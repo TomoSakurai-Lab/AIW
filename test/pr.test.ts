@@ -916,3 +916,97 @@ test("287: twenty images (ten tabs' pairs) are all attached; only an absurd coun
   await runPr({ root, config: withPr(config), dryRun: true }, h.d);
   assert.match(h.all(), /⚠ 添付しない画像が 2 枚あります（コメントには保存先のパスを書きます）: 60 枚を超えた/);
 });
+
+// ---- 指摘への対応（第 n 回）: --reply（2026-10-23・設計 §I）--------------------------------------------
+
+/** 指摘への対応の単一タスク（archive/single）。依頼文に指摘のチェックボックス、スクショはそのタスクの分 */
+function seedFeedbackTask(root: string, stamp: string, taskId: string, items: string[], shots: string[] = []): string {
+  const dir = path.join(root, "archive", "single", `${stamp}-task`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "current-task.md"), `# Task\n\n- Task ID: ${taskId}\n`, "utf8");
+  writeFileSync(path.join(dir, "user-task.md"), `# U\n\n### 1. 実行予算作成画面\n\n#### 予算編集タブ\n\n${items.map((i) => `- [ ] ${i}`).join("\n")}\n`, "utf8");
+  for (const s of shots) seedScreenshot(root, s, taskId);
+  return dir;
+}
+
+test("288: the round's task is the one archived after the branch's last report; none or several stop with the reason", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  // まだ PR を作っていない
+  let h = deps(fakeAzdo().fetch);
+  assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).exitCode, 1);
+  assert.match(h.all(), /まだ aiw pr で PR を作った記録がありません/);
+
+  // PR を作った（Event Log に pr.created と taskDir）
+  const azdo = fakeAzdo();
+  assert.equal((await runPr({ root, config: withPr(config) }, deps(azdo.fetch).d)).kind, "created");
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).exitCode, 1);
+  assert.match(h.all(), /前回の報告（20261020T054338）より後に終わったタスクの記録がありません/);
+
+  // 指摘への対応のタスクが 1 本 → それを使う（第 1 回）
+  seedFeedbackTask(root, "20261021T000000", "TASK-2026-10-21-fb1", ["予算キーの列を消す。"]);
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).kind, "dry-run");
+  assert.match(h.all(), /その回のタスク: \.ai-workflow\/archive\/single\/20261021T000000-task（TASK-2026-10-21-fb1）/);
+  assert.match(h.all(), /## 指摘への対応（第 1 回）\n\n### 実行予算作成画面 \/ 予算編集タブ\n- 予算キーの列を消す。/);
+
+  // 2 本ある → 黙って選ばない
+  seedFeedbackTask(root, "20261021T010000", "TASK-2026-10-21-fb2", ["別の指摘。"]);
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).exitCode, 1);
+  assert.match(h.all(), /前回の報告より後のタスクが 2 本あります。--task で選んでください/);
+});
+
+test("289: --reply posts round comments on the same PR, keeps the description and screens comment, and is idempotent per task", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  seedScreenshot(root, "before-top.png");
+  seedScreenshot(root, "after-top.png");
+  const azdo = fakeAzdo();
+  assert.equal((await runPr({ root, config: withPr(config) }, deps(azdo.fetch).d)).kind, "created");
+  const description = azdo.prs[0].description;
+  const screensComment = azdo.threads.get(500)![0].comments[0].content;
+  azdo.prs[0].isDraft = false; // 人間が公開した（客先レビュー中）
+
+  // 第 1 回: その回のタスクの項目と、その回のスクショだけ（見出しの直下）
+  seedFeedbackTask(root, "20261021T000000", "TASK-2026-10-21-fb1", ["予算キーの列を消す。"], ["before-edit.png", "after-edit.png"]);
+  writeFileSync(path.join(root, "runs", "TASK-2026-10-21-fb1", "screenshots", "labels.json"), JSON.stringify({ edit: "実行予算作成画面 / 予算編集タブ" }), "utf8");
+  let h = deps(azdo.fetch);
+  let r = await runPr({ root, config: withPr(config), reply: true }, h.d);
+  assert.equal(r.kind, "created", h.all());
+  const reply1 = () => azdo.threads.get(500)![1].comments[0].content;
+  assert.match(reply1(), /^## 指摘への対応（第 1 回）\n\n### 実行予算作成画面 \/ 予算編集タブ\n- 予算キーの列を消す。\n\n\*\*変更前\*\*\n\n!\[変更前 実行予算作成画面 \/ 予算編集タブ\]\(https:[^)]+before-edit\.[0-9a-f]{8}\.png\)/);
+  assert.doesNotMatch(reply1(), /top/, "only this round's screenshots");
+  assert.match(reply1(), /対応の記録: TASK-2026-10-21-fb1・生成キー: [0-9a-f]{12}/);
+  assert.match(h.all(), /この PR は公開済みです。投稿したコメントは客先から見えます/);
+  assert.equal(azdo.prs[0].description, description, "the published description is untouched");
+  assert.equal(azdo.threads.get(500)![0].comments[0].content, screensComment, "the screens comment is untouched");
+
+  // 同じ回をもう一度 → 変更なし（2 つ目のコメントを作らない）
+  r = await runPr({ root, config: withPr(config), reply: true }, deps(azdo.fetch).d);
+  assert.equal(r.kind, "unchanged");
+  assert.equal(azdo.threads.get(500)!.length, 2);
+
+  // 人がこの回のコメントを直した → 上書きしない
+  azdo.threads.get(500)![1].comments[0].content = reply1().replace("- 予算キーの列を消す。", "- 予算キーの列を消す。（補足しました）");
+  h = deps(azdo.fetch);
+  r = await runPr({ root, config: withPr(config), reply: true, taskDir: path.join(root, "archive", "single", "20261021T000000-task") }, h.d);
+  assert.equal(r.kind, "skipped");
+  assert.match(h.all(), /この回のコメントは人の手で直されています/);
+
+  // 第 2 回: 次の指摘への対応のタスク
+  seedFeedbackTask(root, "20261022T000000", "TASK-2026-10-22-fb2", ["合計行を太字にする。"]);
+  r = await runPr({ root, config: withPr(config), reply: true }, deps(azdo.fetch).d);
+  assert.equal(r.kind, "created");
+  assert.match(azdo.threads.get(500)![2].comments[0].content, /^## 指摘への対応（第 2 回）\n\n### 実行予算作成画面 \/ 予算編集タブ\n- 合計行を太字にする。/);
+  assert.match(eventLog(root), /"pr\.reply"[^\n]*"action":"created"[^\n]*"round":2/);
+
+  // PR が無いブランチ → 投稿しない
+  const empty = fakeAzdo();
+  h = deps(empty.fetch);
+  r = await runPr({ root, config: withPr(config), reply: true, taskDir: path.join(root, "archive", "single", "20261022T000000-task") }, h.d);
+  assert.equal(r.exitCode, 1);
+  assert.match(h.all(), /active な PR がありません/);
+  assert.deepEqual(writes(empty.calls), []);
+});
