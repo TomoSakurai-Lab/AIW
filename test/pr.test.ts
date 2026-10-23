@@ -123,11 +123,15 @@ function fakeAzdo(opts: {
   remoteBranches?: string[];
   failAttach?: (message: string) => Response | null;
   intercept?: (method: string, p: string) => Response | null;
+  /** 最初から置いておくスレッド（PR ID → API の形のスレッド）。指摘の取り込みのテスト用 */
+  seedThreads?: Record<number, any[]>;
 } = {}) {
   const calls: Call[] = [];
   const prs: FakePr[] = [...(opts.prs ?? [])];
   const attachments = new Map<number, Array<{ displayName: string; url: string }>>();
-  const threads = new Map<number, Array<{ id: number; comments: Array<{ id: number; parentCommentId: number; content: string }> }>>();
+  const threads = new Map<number, Array<{ id: number; comments: Array<{ id: number; parentCommentId: number; content: string }> }>>(
+    Object.entries(opts.seedThreads ?? {}).map(([k, v]) => [Number(k), v])
+  );
   let nextId = 500;
   const json = (status: number, v: unknown): Response =>
     new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -1009,4 +1013,104 @@ test("289: --reply posts round comments on the same PR, keeps the description an
   assert.equal(r.exitCode, 1);
   assert.match(h.all(), /active な PR がありません/);
   assert.deepEqual(writes(empty.calls), []);
+});
+
+// ---- 指摘の取り込み: --import-feedback（2026-10-23・設計 §I-2）-------------------------------------
+
+const PR_THREADS = [
+  // 未解決・PR 全体・複数行と返信つき → 取り込む
+  {
+    id: 11,
+    status: "active",
+    comments: [
+      { id: 1, parentCommentId: 0, commentType: "text", content: "取極外タブの列の順番が違います。\n- 現在見込損益はコメントの前\n- 合計行は太字" },
+      { id: 2, parentCommentId: 1, commentType: "text", content: "承知しました。確認します。" },
+      { id: 3, parentCommentId: 1, commentType: "text", content: "消した返信", isDeleted: true }
+    ]
+  },
+  // 未解決・ファイルの行に付いた指摘 → ファイルの見出しで取り込む
+  { id: 12, status: "pending", threadContext: { filePath: "/src/Grid.tsx", rightFileStart: { line: 42 } }, comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "ここは右寄せに。" }] },
+  // 解決済み → 除く
+  { id: 13, status: "fixed", comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "直っています。" }] },
+  // system → 除く
+  { id: 14, comments: [{ id: 1, parentCommentId: 0, commentType: "system", content: "The reference was updated." }] },
+  // aiw の画面のコメント → 除く
+  { id: 15, status: "active", comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "## 画面（変更前 → 変更後）\n\nx\n\n---\nこの画面の比較はタスクの記録から自動生成しました（生成キー: 0123456789ab）。" }] },
+  // 削除されたスレッド → 除く
+  { id: 16, status: "active", isDeleted: true, comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "消した指摘" }] }
+];
+
+function feedbackPr(threads = PR_THREADS) {
+  return fakeAzdo({
+    prs: [{ pullRequestId: 7, isDraft: false, status: "active", title: "t", description: "d", sourceRefName: "refs/heads/feature/sample", targetRefName: "refs/heads/master" }],
+    seedThreads: { 7: JSON.parse(JSON.stringify(threads)) }
+  });
+}
+
+test("290: --import-feedback writes the open, human PR comments into user-task.md as a checkbox draft", async () => {
+  const { root, config } = makeRoot();
+  const userTask = path.join(root, "user-task.md");
+  copyFileSync(path.join(root, "templates", "user-task.md"), userTask); // 雛形のまま
+  const before = stateBytes(root);
+  const azdo = feedbackPr();
+
+  // --dry-run: 読み取りの API だけ・書かない
+  let h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config: withPr(config), importFeedback: true, dryRun: true }, h.d)).kind, "dry-run");
+  assert.equal(readFileSync(userTask, "utf8"), readFileSync(path.join(root, "templates", "user-task.md"), "utf8"), "dry-run does not write");
+  assert.deepEqual(writes(azdo.calls), [], "only read APIs");
+  // 対象外 3 件 = 解決済み・system・aiw のコメント（削除されたスレッドは一覧の段階で除くので数えない）
+  assert.match(h.all(), /未解決の指摘: 2 件（新しく取り込む 2 件・取り込み済み 0 件）／対象外 3 件/);
+
+  // 本実行: 雛形なので全体を書く
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h.d)).kind, "updated");
+  const text = readFileSync(userTask, "utf8");
+  assert.match(text, /^# User Task\n\n## PR の指摘への対応（\d{4}-\d{2}-\d{2} 取り込み）\n/);
+  assert.match(
+    text,
+    /### PR 全体への指摘\n\n- \[ \] 取極外タブの列の順番が違います。（PR コメント #11）\n  - 現在見込損益はコメントの前\n  - 合計行は太字\n  - 返信: 承知しました。確認します。\n/
+  );
+  assert.match(text, /### src\/Grid\.tsx\n\n- \[ \] ここは右寄せに。（42 行目）（PR コメント #12）\n/);
+  for (const excluded of ["直っています", "The reference", "画面（変更前", "消した"]) assert.ok(!text.includes(excluded), excluded);
+  assert.deepEqual(writes(azdo.calls), [], "still only read APIs");
+  assert.match(eventLog(root), /"pr\.feedback-imported"[^\n]*"imported":\[11,12\]/);
+  assert.equal(stateBytes(root), before, "state.json is not touched");
+
+  // 取り込んだ下書きは依頼のチェックリストとして読める（--reply の項目の出所）
+  assert.deepEqual(parseRequested(text).map((g) => [g.heading, g.items.length]), [["PR 全体への指摘", 1], ["src/Grid.tsx", 1]]);
+
+  // 打ち直し: 同じ指摘は二重に入れない
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h.d)).kind, "unchanged");
+  assert.equal(readFileSync(userTask, "utf8"), text);
+});
+
+test("291: a hand-written user-task.md gets an appended section; nothing is written without a PR or without new comments", async () => {
+  const { root, config } = makeRoot();
+  const userTask = path.join(root, "user-task.md");
+  writeFileSync(userTask, "# User Task\n\n## 次タスク：自分で書いた依頼\n\n- [ ] 手で書いた項目。\n", "utf8");
+  // 一部はもう手で写してある（印つき）→ その指摘は取り込まない
+  writeFileSync(userTask, `${readFileSync(userTask, "utf8")}- [ ] 写した指摘（PR コメント #12）\n`, "utf8");
+  const h = deps(feedbackPr().fetch);
+  assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h.d)).kind, "updated");
+  const text = readFileSync(userTask, "utf8");
+  assert.ok(text.startsWith("# User Task\n\n## 次タスク：自分で書いた依頼\n\n- [ ] 手で書いた項目。\n- [ ] 写した指摘（PR コメント #12）\n\n## PR の指摘への対応（"), "existing text is kept and the section is appended");
+  assert.equal((text.match(/PR コメント #12/g) ?? []).length, 1, "#12 is not imported twice");
+  assert.match(text, /（PR コメント #11）/);
+  assert.match(h.all(), /末尾に節を足します/);
+
+  // PR が無い → 書かない
+  const none = fakeAzdo();
+  const h2 = deps(none.fetch);
+  const r = await runPr({ root, config: withPr(config), importFeedback: true }, h2.d);
+  assert.equal(r.exitCode, 1);
+  assert.match(h2.all(), /active な PR がありません/);
+  assert.equal(readFileSync(userTask, "utf8"), text);
+
+  // 未解決の人のコメントが無い → 書かない
+  const h3 = deps(feedbackPr(PR_THREADS.filter((t) => t.id >= 13)).fetch);
+  assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h3.d)).kind, "unchanged");
+  assert.match(h3.all(), /新しく取り込む指摘はありません/);
+  assert.equal(readFileSync(userTask, "utf8"), text);
 });

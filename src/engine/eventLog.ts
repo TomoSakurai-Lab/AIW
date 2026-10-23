@@ -48,6 +48,8 @@ export type EventType =
   | "pr.screens"
   // 指摘への対応（第 n 回）のコメント（2026-10-23・§I）。action: created / updated / unchanged / skipped・round・taskDir
   | "pr.reply"
+  // 指摘の取り込み（2026-10-23・§I-2）。user-task.md へ書いたスレッド ID と mode（new / append）。本文は載せない
+  | "pr.feedback-imported"
   | "pr.failed";
 
 export type EventRecord = {

@@ -1064,4 +1064,7 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: PR の未解決のコメント（客先の指摘）を読み、指摘への対応のタスクの依頼文（user-task.md）の下書きをチェックボックスで作る
   `aiw pr --import-feedback`。読み取りの API だけ（スレッドの一覧）で、下書きは人間が直してから task-planning へ渡す。
   aiw 自身のコメント（画面のコメント・回のコメント）と system のコメントは除く
-- Status: open
+- 対処（2026-10-23・人間の注文「コマンドで取ってきて user-task.md に書き込むところまで」）: `aiw pr --import-feedback` を実装（設計 §I-2）。
+  未解決のスレッドだけ・1 スレッド = チェックボックス 1 つ・印（PR コメント #ID）で二重に入れない・雛形なら全体 / 書きかけなら末尾に節・
+  投稿者の名前は書かない・--dry-run は書かない。Test 290 / 291
+- Status: resolved (2026-10-23)

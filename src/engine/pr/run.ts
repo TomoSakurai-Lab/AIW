@@ -7,7 +7,7 @@
 //
 // 出力（stdout / stderr / Event Log）は**すべて最終段で redactPat を通す**（F-1）。
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { appendEvent, type EventType } from "../eventLog.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
@@ -33,6 +33,7 @@ import {
 } from "./describe.js";
 import { PAT_ENV, patFromEnv, redactPat, type PatSecret } from "./secret.js";
 import { branchKey, listArchivedTaskDirs, readPrSource, taskDirKey, type PrSource } from "./source.js";
+import { buildFeedbackDraft } from "./feedback.js";
 
 export type PrDeps = {
   fetch: FetchImpl;
@@ -50,6 +51,8 @@ export type PrOptions = {
   check?: boolean;
   /** 指摘への対応（第 n 回）のコメントを既存の PR に投稿する（2026-10-23・§I） */
   reply?: boolean;
+  /** PR の未解決のコメントを、次のタスクの依頼文（user-task.md）の下書きに書き込む（2026-10-23・§I-2） */
+  importFeedback?: boolean;
   /** archive のタスクディレクトリ。省略時は最新 */
   taskDir?: string;
 };
@@ -94,6 +97,9 @@ export async function runPr(opts: PrOptions, deps: PrDeps): Promise<PrOutcome> {
     }
     if (opts.reply) {
       return await runReply(opts, deps, pat, settings, say, warn, record);
+    }
+    if (opts.importFeedback) {
+      return await runImportFeedback(opts, deps, pat, settings, say, warn, record);
     }
     return await runCreateOrUpdate(opts, deps, pat, settings, say, warn, record);
   } catch (error) {
@@ -811,6 +817,75 @@ async function runReply(
   reportShotCoverage(src, warn);
   if (!prs[0].isDraft) say("⚠ この PR は公開済みです。投稿したコメントは客先から見えます（画面に実データ・実名が映っていないか確認してください）。");
   return { exitCode: 0, kind, prId };
+}
+
+// ---- 指摘の取り込み: --import-feedback（2026-10-23・設計 §I-2）-----------------------------------
+//
+// PR の未解決のコメントを読み（API は読み取りだけ）、次のタスクの依頼文（user-task.md）の下書きに書き込む。
+// state.json は読まず変えない（書くのは user-task.md だけ。task-planning の入力で、人間が直してから使う）。
+// 雛形のままなら全体を書き、人が書きかけていれば末尾に節を足す。同じ指摘は二重に入れない（印で判定）。
+
+async function runImportFeedback(
+  opts: PrOptions,
+  deps: PrDeps,
+  pat: PatSecret | null,
+  settings: PrSettings | undefined,
+  say: (l: string) => void,
+  warn: (l: string) => void,
+  record: (e: EventType, f: Record<string, unknown>) => void
+): Promise<PrOutcome> {
+  const local = localBranch(opts, deps);
+  if (!local.branch) {
+    warn(`指摘を取り込めません: ${local.reason}`);
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const resolved = resolveTarget(settings);
+  if (!resolved.ok) {
+    warn(`settings.pr が足りません: ${resolved.missing.join(", ")}`);
+    return { exitCode: 1, kind: "failed" };
+  }
+  // --dry-run でも PR のコメントを読む必要がある（読み取りの API だけ。書き込みと Event Log は無し）
+  if (!pat) {
+    patGuidance(warn);
+    return { exitCode: 1, kind: "failed" };
+  }
+  const client = new AzdoClient(resolved.target, pat, deps.fetch);
+  const repo = await client.getRepository();
+  const targetBranch = shortName(settings?.targetBranch?.trim() || repo.defaultBranch || "");
+  const prs = await client.listActivePullRequests({ source: heads(local.branch), target: heads(targetBranch) });
+  if (prs.length !== 1) {
+    warn(prs.length === 0 ? `ブランチ ${local.branch} の active な PR がありません。` : `同じブランチの active な PR が ${prs.length} 件あります。どれから取り込むか決められません。`);
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const prId = prs[0].pullRequestId;
+  const prUrl = repo.webUrl ? `${repo.webUrl}/pullrequest/${prId}` : `#${prId}`;
+  const threads = await client.listThreadDetails(prId);
+
+  const file = path.join(path.resolve(opts.root), "user-task.md");
+  const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const draft = buildFeedbackDraft(threads, current, today, prUrl);
+
+  say(`PR: ${prUrl}`);
+  say(`未解決の指摘: ${draft.imported.length + draft.alreadyPresent.length} 件（新しく取り込む ${draft.imported.length} 件・取り込み済み ${draft.alreadyPresent.length} 件）／対象外 ${draft.excluded} 件（解決済み・system・aiw のコメント）`);
+  if (draft.imported.length === 0) {
+    say("新しく取り込む指摘はありません。user-task.md は変えていません。");
+    return { exitCode: 0, kind: "unchanged", prId };
+  }
+  say(draft.mode === "new" ? "user-task.md は雛形のままなので、下書きとして全体を書きます。" : "user-task.md に書きかけの内容があるので、末尾に節を足します（既存の内容は変えません）。");
+  if (opts.dryRun) {
+    say("=== --dry-run（user-task.md には書きません。Event Log にも書きません）===");
+    say("----- user-task.md -----");
+    for (const l of draft.text.split("\n")) say(l);
+    say("------------------");
+    return { exitCode: 0, kind: "dry-run", prId };
+  }
+  writeFileSync(file, draft.text, "utf8");
+  record("pr.feedback-imported", { sourceBranch: local.branch, prId, imported: draft.imported, alreadyPresent: draft.alreadyPresent.length, mode: draft.mode });
+  say(`user-task.md に指摘 ${draft.imported.length} 件を書き込みました。`);
+  say("次: 見出しを画面 / タブに整理し、指摘を依頼の言葉に直してから task-planning へ（同じブランチのまま）。");
+  return { exitCode: 0, kind: "updated", prId };
 }
 
 // ---- --dry-run ------------------------------------------------------------------------------
