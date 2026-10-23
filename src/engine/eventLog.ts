@@ -44,6 +44,8 @@ export type EventType =
   | "pr.updated"
   | "pr.skipped"
   | "pr.attachment-failed"
+  // 画像のコメント（2026-10-23・docs/design-pr.md §A-6c）。action: created / updated / unchanged / skipped
+  | "pr.screens"
   | "pr.failed";
 
 export type EventRecord = {

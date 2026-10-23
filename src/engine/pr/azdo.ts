@@ -132,6 +132,8 @@ export type AzdoPullRequest = {
   targetRefName: string;
 };
 export type AzdoAttachment = { displayName: string; url: string };
+/** スレッドと、その先頭のコメント */
+export type AzdoThread = { id: number; commentId: number; content: string };
 
 const TIMEOUT_MS = 30_000;
 const MESSAGE_LIMIT = 200;
@@ -256,6 +258,32 @@ export class AzdoClient {
           .filter((a: any) => typeof a?.displayName === "string" && typeof a?.url === "string")
           .map((a: any) => ({ displayName: a.displayName, url: a.url }))
       : [];
+  }
+
+  /** PR のスレッド（削除されたものは除く）。各スレッドの先頭のコメントだけを返す（aiw のコメントはスレッドの先頭に 1 つ） */
+  async listThreads(id: number): Promise<AzdoThread[]> {
+    const v = await this.call("コメントの一覧", "GET", this.repoUrl(`/pullRequests/${id}/threads`));
+    if (!Array.isArray(v?.value)) return [];
+    return v.value
+      .filter((t: any) => t?.isDeleted !== true && Array.isArray(t?.comments) && t.comments.length > 0)
+      .map((t: any) => {
+        const first = t.comments.find((c: any) => c?.isDeleted !== true && Number(c?.parentCommentId ?? 0) === 0) ?? t.comments[0];
+        return { id: Number(t.id), commentId: Number(first?.id), content: typeof first?.content === "string" ? first.content : "" };
+      });
+  }
+
+  /** PR 全体へのコメント（ファイルの行に付けない）を 1 つ持つスレッドを作る */
+  async createThread(id: number, content: string): Promise<AzdoThread> {
+    const v = await this.call("コメントの作成", "POST", this.repoUrl(`/pullRequests/${id}/threads`), {
+      json: { comments: [{ parentCommentId: 0, content, commentType: 1 }], status: 1 }
+    });
+    const first = Array.isArray(v?.comments) ? v.comments[0] : undefined;
+    return { id: Number(v?.id), commentId: Number(first?.id ?? 1), content };
+  }
+
+  /** コメントの本文だけを更新する */
+  async updateComment(id: number, threadId: number, commentId: number, content: string): Promise<void> {
+    await this.call("コメントの更新", "PATCH", this.repoUrl(`/pullRequests/${id}/threads/${threadId}/comments/${commentId}`), { json: { content } });
   }
 
   async uploadAttachment(id: number, fileName: string, bytes: Buffer): Promise<AzdoAttachment> {

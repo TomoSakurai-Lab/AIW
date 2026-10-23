@@ -9,7 +9,16 @@ import path from "node:path";
 import { completedTaskWindow } from "../src/engine/observed.js";
 import { countTriStatusAny } from "../src/engine/sections.js";
 import { deriveFromRemote, type FetchImpl } from "../src/engine/pr/azdo.js";
-import { buildDescription, DESCRIPTION_LIMIT, internalReport, isUntouchedByHuman, scrub } from "../src/engine/pr/describe.js";
+import {
+  buildDescription,
+  buildScreensComment,
+  DESCRIPTION_LIMIT,
+  internalReport,
+  isScreensComment,
+  isUntouchedByHuman,
+  placeScreens,
+  scrub
+} from "../src/engine/pr/describe.js";
 import { runPr, type PrDeps } from "../src/engine/pr/run.js";
 import { parseRequested, readPrSource } from "../src/engine/pr/source.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
@@ -118,6 +127,7 @@ function fakeAzdo(opts: {
   const calls: Call[] = [];
   const prs: FakePr[] = [...(opts.prs ?? [])];
   const attachments = new Map<number, Array<{ displayName: string; url: string }>>();
+  const threads = new Map<number, Array<{ id: number; comments: Array<{ id: number; parentCommentId: number; content: string }> }>>();
   let nextId = 500;
   const json = (status: number, v: unknown): Response =>
     new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -159,6 +169,20 @@ function fakeAzdo(opts: {
       if (typeof body.description === "string") pr.description = body.description;
       return json(200, pr);
     }
+    if (method === "GET" && (m = p.match(/\/pullRequests\/(\d+)\/threads$/))) {
+      return json(200, { value: threads.get(Number(m[1])) ?? [], count: (threads.get(Number(m[1])) ?? []).length });
+    }
+    if (method === "POST" && (m = p.match(/\/pullRequests\/(\d+)\/threads$/))) {
+      const list = threads.get(Number(m[1])) ?? [];
+      const t = { id: 900 + list.length, comments: [{ id: 1, parentCommentId: 0, content: body.comments[0].content }] };
+      threads.set(Number(m[1]), [...list, t]);
+      return json(200, t);
+    }
+    if (method === "PATCH" && (m = p.match(/\/pullRequests\/(\d+)\/threads\/(\d+)\/comments\/(\d+)$/))) {
+      const t = (threads.get(Number(m[1])) ?? []).find((x) => x.id === Number(m[2]))!;
+      t.comments.find((c) => c.id === Number(m![3]))!.content = body.content;
+      return json(200, t.comments[0]);
+    }
     if (method === "GET" && (m = p.match(/\/pullRequests\/(\d+)\/attachments$/))) {
       return json(200, { value: attachments.get(Number(m[1])) ?? [], count: 0 });
     }
@@ -171,7 +195,7 @@ function fakeAzdo(opts: {
     }
     return json(404, { message: `no route ${method} ${p}` });
   };
-  return { fetch, calls, prs, attachments };
+  return { fetch, calls, prs, attachments, threads };
 }
 
 /** 偽の git が返すブランチの差分。null なら差分の取得が失敗する */
@@ -342,23 +366,25 @@ test("263: when the attachment API fails, the draft PR is still created and the 
   assert.equal(created.length, 1);
   assert.equal(created[0].body.isDraft, true, "always draft");
   assert.match(
-    azdo.prs[0].description,
-    /### top\n\n\*\*変更前\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/before-top\.png`\n\n\*\*変更後\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png`/
+    azdo.threads.get(500)![0].comments[0].content,
+    /#### top\n\n\*\*変更前\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/before-top\.png`\n\n\*\*変更後\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png`/
   );
   assert.match(eventLog(root), /"pr\.attachment-failed"/);
   assert.match(h.all(), /公開前に確認/);
   assert.equal(stateBytes(root), before);
 
-  // 添付が成功する場合: 作成 → 添付 → 説明文に変更前 → 変更後の表
+  // 添付が成功する場合: 作成 → 添付 → コメントに変更前 → 変更後（説明文には画像を載せず、コメントを指す 1 行だけ）
   const { root: root2, config: config2 } = makeRoot();
   seedArchive(root2);
   seedScreenshot(root2, "before-top.png");
   seedScreenshot(root2, "after-top.png");
   const ok = fakeAzdo();
   assert.equal((await runPr({ root: root2, config: withPr(config2) }, deps(ok.fetch).d)).kind, "created");
+  assert.doesNotMatch(ok.prs[0].description, /!\[|attachments/, "no image in the description");
+  assert.match(ok.prs[0].description, /変更前 → 変更後の画面は、この PR のコメント「画面（変更前 → 変更後）」に載せています。/);
   assert.match(
-    ok.prs[0].description,
-    /## 画面（変更前 → 変更後）\n\n### top\n\n\*\*変更前\*\*\n\n!\[変更前 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/before-top\.[0-9a-f]{8}\.png\)\n\n\*\*変更後\*\*\n\n!\[変更後 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\)/
+    ok.threads.get(500)![0].comments[0].content,
+    /^## 画面（変更前 → 変更後）\n\n### その他の画面\n\n#### top\n\n\*\*変更前\*\*\n\n!\[変更前 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/before-top\.[0-9a-f]{8}\.png\)\n\n\*\*変更後\*\*\n\n!\[変更後 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\)/
   );
 });
 
@@ -660,13 +686,15 @@ test("281: screenshots pair by name across the feature's tasks — the first 'be
     { name: "grid", before: "runs/TASK-a/screenshots/before-grid.png", after: "runs/TASK-b/screenshots/after-grid.png" }
   ]);
   assert.equal(readPrSource(root, first).shots.length, 1);
-  const d = buildDescription(readPrSource(root, second), [
+  const c = buildScreensComment(readPrSource(root, second), [
     { name: "dialog", before: null, after: { url: "u1", displayPath: "p1" } },
     { name: "grid", before: { url: null, displayPath: "runs/x/before-grid.png" }, after: { url: "u2", displayPath: "p2" } }
-  ]);
-  assert.match(d.description, /### dialog\n\n\*\*変更前\*\*\n\n（なし）\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(u1\)/);
-  assert.match(d.description, /### grid\n\n\*\*変更前\*\*\n\n保存先: `runs\/x\/before-grid\.png`\n\n\*\*変更後\*\*\n\n!\[変更後 grid\]\(u2\)/);
-  assert.doesNotMatch(d.description, /\| --- \|/, "no table: images are not squeezed into columns");
+  ])!;
+  assert.match(c.content, /#### dialog\n\n\*\*変更前\*\*\n\n（なし）\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(u1\)/);
+  assert.match(c.content, /#### grid\n\n\*\*変更前\*\*\n\n保存先: `runs\/x\/before-grid\.png`\n\n\*\*変更後\*\*\n\n!\[変更後 grid\]\(u2\)/);
+  assert.doesNotMatch(c.content, /\| --- \|/, "no table: images are not squeezed into columns");
+  assert.ok(isScreensComment(c.content) && isUntouchedByHuman(c.content), "the comment carries its marker and key");
+  assert.equal(buildScreensComment(readPrSource(root, second), []), null, "no screens, no comment");
 });
 
 test("282: the description has only the two sections; the internal record stays on stdout", async () => {
@@ -775,23 +803,93 @@ test("284: per-tab screenshots labelled in labels.json sit right under that tab'
   );
   const h = deps(fakeAzdo().fetch);
   await runPr({ root, config, dryRun: true }, h.d);
-  const [head, body] = h.all().split("----- 説明文 -----");
+  const [head, rest] = h.all().split("----- 説明文 -----");
+  const [description, comment] = rest.split("----- コメント（画面）");
+  assert.doesNotMatch(description, /!\[/, "images live in the comment, not in the description");
 
-  // 取極（実績）タブ: 項目の直下に 2 対（複数なのでラベルの小見出し）
+  // 取極（実績）タブ: 説明文と同じ見出しの下に 2 対（複数なので小見出し。ラベル = 見出しなら「全体」）
   assert.match(
-    body,
-    /### 工種別予算管理表 \/ 取極（実績）タブ\n- ボタンを常に活性にする。\n\n#### 工種別予算管理表 \/ 取極（実績）タブ\n\n\*\*変更前\*\*\n\n!\[変更前 工種別予算管理表 \/ 取極（実績）タブ\]/
+    comment,
+    /### 工種別予算管理表 \/ 取極（実績）タブ\n\n#### 全体\n\n\*\*変更前\*\*\n\n!\[変更前 工種別予算管理表 \/ 取極（実績）タブ\]/
   );
-  // 取極外タブ: 末尾一致で項目の直下に 1 対（小見出しなし）
-  assert.match(body, /### 工種別予算管理表 \/ 取極外タブ\n- 列を移動する。\n\n\*\*変更前\*\*\n\n!\[変更前 取極外タブ\]/);
-  // 置けない画像は「画面」節へ（ラベルがあればラベルを見出しに）
-  const tail = body.split("## 画面（変更前 → 変更後）")[1];
+  // 取極外タブ: 末尾一致で当たる・1 対なので小見出しなし
+  assert.match(comment, /### 工種別予算管理表 \/ 取極外タブ\n\n\*\*変更前\*\*\n\n!\[変更前 取極外タブ\]/);
+  // 置けない画像は「その他の画面」へ（ラベルがあればラベルを小見出しに）
+  const tail = comment.split("### その他の画面")[1];
   assert.ok(tail, "the leftover section exists");
-  for (const s of ["### 共通", "### loose", "### 存在しない画面"]) assert.ok(tail.includes(s), s);
+  for (const s of ["#### 共通", "#### loose", "#### 存在しない画面"]) assert.ok(tail.includes(s), s);
   assert.ok(!tail.includes("取極（実績）タブ"), "placed screens are not repeated");
 
   // PR を作る前に気づけるように
   assert.match(head, /⚠ 比較のスクショが無い見出し（2 件）: 工種別予算管理表 \/ 共通、当該予算費消管理表 \/ 共通/);
   assert.match(head, /common（ラベル「共通」が見出しに当たらない）/);
   assert.match(head, /loose（labels\.json にラベルが無い）/);
+});
+
+test("285: a trailing caption in the label tells shots of the same tab apart, without breaking headings that end in parentheses", () => {
+  const headings = ["工種別予算管理表 / 取極（実績）タブ", "工種別予算管理表 / 取極（今後所要）", "当該予算費消管理表 / 共通"];
+  const screen = (name: string, label: string) => ({ name, before: null, after: null, label });
+  const { byHeading, rest } = placeScreens(headings, [
+    screen("a", "工種別予算管理表 / 取極（実績）タブ"),
+    screen("a-right", "工種別予算管理表 / 取極（実績）タブ（右側の列）"), // 補足を外して当たる
+    screen("b", "取極（今後所要）"), // 見出し自体が（…）で終わる: 補足と誤解しない（末尾一致で当たる）
+    screen("c", "当該予算費消管理表 / 共通（工種を複数選んだ状態）"),
+    screen("d", "存在しない画面（補足）")
+  ]);
+  assert.deepEqual(byHeading.get(0)?.map((s) => s.name), ["a", "a-right"]);
+  assert.deepEqual(byHeading.get(1)?.map((s) => s.name), ["b"]);
+  assert.deepEqual(byHeading.get(2)?.map((s) => s.name), ["c"]);
+  assert.deepEqual(rest.map((s) => s.name), ["d"]);
+});
+
+test("286: the screens comment is created once, left alone when unchanged or edited by a human, and updated otherwise; a failure keeps the PR", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  seedScreenshot(root, "before-top.png");
+  seedScreenshot(root, "after-top.png");
+  const azdo = fakeAzdo();
+  const run = async () => runPr({ root, config: withPr(config) }, deps(azdo.fetch).d);
+  const threadsOf = () => azdo.threads.get(500) ?? [];
+  const posts = () => azdo.calls.filter((c) => c.method === "POST" && c.path.endsWith("/threads")).length;
+  const patches = () => azdo.calls.filter((c) => c.method === "PATCH" && /\/comments\/\d+$/.test(c.path)).length;
+
+  assert.equal((await run()).kind, "created");
+  assert.equal(threadsOf().length, 1);
+  assert.equal(posts(), 1);
+
+  // 2 回目: 説明文もコメントも変わらない → 何も書かない（画像も再利用）
+  assert.equal((await run()).kind, "unchanged");
+  assert.equal(posts(), 1, "no second comment");
+  assert.equal(patches(), 0);
+  assert.equal(azdo.calls.filter((c) => c.method === "POST" && c.path.includes("/attachments/")).length, 2, "images reused");
+
+  // 変更後の画像を撮り直した → コメントだけ更新
+  writeFileSync(path.join(root, "runs", TASK_ID, "screenshots", "after-top.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]));
+  await run();
+  assert.equal(posts(), 1);
+  assert.equal(patches(), 1);
+  assert.match(eventLog(root), /"pr\.screens"[^\n]*"action":"updated"/);
+
+  // 人がコメントを直した → 上書きしない
+  threadsOf()[0].comments[0].content = threadsOf()[0].comments[0].content.replace("### その他の画面", "### その他の画面\n人が足した一文。");
+  seedScreenshot(root, "after-top.png"); // 内容を戻して差分を作る
+  const h = deps(azdo.fetch);
+  await runPr({ root, config: withPr(config) }, h.d);
+  assert.equal(patches(), 1, "a human-edited comment is not overwritten");
+  assert.match(h.all(), /画面のコメントは人の手で直されています/);
+
+  // コメントの API が落ちても PR の作成は取り消さない（report）
+  const { root: r2, config: c2 } = makeRoot();
+  seedArchive(r2);
+  seedScreenshot(r2, "before-top.png");
+  seedScreenshot(r2, "after-top.png");
+  const broken = fakeAzdo({
+    intercept: (m, p) => (m === "POST" && p.endsWith("/threads") ? new Response(JSON.stringify({ message: "boom" }), { status: 500, headers: { "content-type": "application/json" } }) : null)
+  });
+  const h2 = deps(broken.fetch);
+  const r = await runPr({ root: r2, config: withPr(c2) }, h2.d);
+  assert.equal(r.kind, "created");
+  assert.equal(r.exitCode, 0);
+  assert.match(h2.all(), /画面のコメントを作れませんでした（PR はそのままです）/);
+  assert.match(eventLog(r2), /"stage":"comment"/);
 });

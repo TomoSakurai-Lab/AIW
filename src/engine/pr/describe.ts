@@ -40,13 +40,21 @@ export function placeScreens(headings: string[], screens: ScreenPair[]): { byHea
   for (const s of screens) {
     let at = -1;
     if (s.label) {
-      const ls = segments(s.label);
-      const exact = hs.findIndex((h) => h.join("/") === ls.join("/"));
-      if (exact >= 0) {
-        at = exact;
-      } else {
+      // まずラベルのまま照合し、当たらなければ末尾の補足（`…タブ（右側の列）`）を外して照合する。
+      // 補足は同じタブの 2 枚目以降を区別するための書き方（implementation Skill v10）。見出し自体が（…）で終わる場合を先に拾うため、この順にする
+      const stripped = s.label.replace(/\s*[（(][^（()）]*[)）]\s*$/, "");
+      for (const candidate of stripped === s.label ? [s.label] : [s.label, stripped]) {
+        const ls = segments(candidate);
+        const exact = hs.findIndex((h) => h.join("/") === ls.join("/"));
+        if (exact >= 0) {
+          at = exact;
+          break;
+        }
         const tail = hs.map((h, i) => (ls.length > 0 && ls.length < h.length && h.slice(-ls.length).join("/") === ls.join("/") ? i : -1)).filter((i) => i >= 0);
-        if (tail.length === 1) at = tail[0];
+        if (tail.length === 1) {
+          at = tail[0];
+          break;
+        }
       }
     }
     if (at >= 0) byHeading.set(at, [...(byHeading.get(at) ?? []), s]);
@@ -226,18 +234,11 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
     out.splice(0, 1, "## 対応した内容（作業記録の要約）");
     out.push(src.metadata?.summary ? scrub(src.metadata.summary) : "要約の記録なし");
   }
-  // タブごとに改修するので、比較の画像はそのタブの項目の直下に置く（2026-10-23・§A-6b・人間の注文）
-  const placed = groups && groups.length > 0 ? placeScreens(groups.map((g) => g.heading), screens) : { byHeading: new Map<number, ScreenPair[]>(), rest: screens };
-  const rest = [...placed.rest];
   if (groups && groups.length > 0) {
     let shown = 0;
     const total = groups.reduce((n, g) => n + g.items.length, 0);
-    groups.forEach((g, gi) => {
-      const mine = placed.byHeading.get(gi) ?? [];
-      if (b.maxItems !== null && shown >= b.maxItems) {
-        rest.push(...mine); // 出さなかった見出しの画像は「画面」節へ（黙って落とさない）
-        return;
-      }
+    for (const g of groups) {
+      if (b.maxItems !== null && shown >= b.maxItems) break;
       out.push("", `### ${g.heading}`);
       for (const item of g.items) {
         if (b.maxItems !== null && shown >= b.maxItems) break;
@@ -246,25 +247,72 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
         else if (item.sub.length > 0) cuts.add("対応した内容");
         shown++;
       }
-      for (const s of mine) {
-        out.push("");
-        if (mine.length > 1) out.push(`#### ${s.label ?? s.name}`, "");
-        out.push(...pairLines(s));
-      }
-    });
+    }
     if (shown < total) {
       cuts.add("対応した内容");
       out.push("", `ほか ${total - shown} 件`);
     }
     if (cuts.has("対応した内容")) out.push("", OMITTED);
   }
-
-  // 見出しに当たらない画面は最後にまとめる。表に入れると画像が列の幅まで縮むので縦に並べる（2026-10-23・人間の注文「画像をもう少し大きく」）
-  if (rest.length > 0) {
-    out.push("", "## 画面（変更前 → 変更後）");
-    for (const s of rest) out.push("", `### ${s.label ?? s.name}`, "", ...pairLines(s));
-  }
+  // 画像は説明文に載せない（2026-10-23・§A-6c）。添付の URL は 1 枚約 200 字で、タブごとに撮ると 4000 字に収まらない（実例: 20 枚）。
+  // 画像は PR のコメント（buildScreensComment）に、同じ見出しで並べる
+  if (screens.length > 0) out.push("", SCREENS_POINTER);
   return out.join("\n");
+}
+
+/** 説明文から画像のコメントを指す 1 行 */
+const SCREENS_POINTER = "変更前 → 変更後の画面は、この PR のコメント「画面（変更前 → 変更後）」に載せています。";
+/** 画像のコメントの見出し。aiw が書いたコメントを探す目印も兼ねる（生成キーの行と両方で判定） */
+export const SCREENS_HEADING = "## 画面（変更前 → 変更後）";
+
+function screensFooter(key: string): string {
+  return `この画面の比較はタスクの記録から自動生成しました（生成キー: ${key}）。`;
+}
+
+export type ScreensComment = { content: string; generationKey: string; chars: number };
+
+/**
+ * 画像のコメント（2026-10-23・§A-6c）。説明文と同じ見出し（タブごと）で変更前 → 変更後を全幅で並べる。
+ * 同じ見出しに複数の対があれば小見出し（補足があれば補足だけ・無ければラベル）。見出しに当たらない画面は最後に「その他の画面」。
+ * 画面が無ければ null（コメントを作らない）。末尾の生成キーは説明文と同じ仕組み（人が直したら上書きしない）
+ */
+export function buildScreensComment(src: PrSource, screens: ScreenPair[]): ScreensComment | null {
+  if (screens.length === 0) return null;
+  const groups = src.requested ?? [];
+  const placed = placeScreens(groups.map((g) => g.heading), screens);
+  const out: string[] = [SCREENS_HEADING];
+  // 同じ見出しに複数の対があるときの小見出し: 補足（`…タブ（右側の列）` の「右側の列」）。補足が無い（ラベル = 見出し）なら「全体」
+  const subheading = (s: ScreenPair, heading: string): string => {
+    const label = s.label ?? s.name;
+    const norm = (x: string): string => x.normalize("NFKC").replace(/\s+/g, "");
+    if (norm(label) === norm(heading)) return "全体";
+    const caption = label.match(/[（(]([^（()）]*)[)）]\s*$/)?.[1];
+    return caption && norm(label.replace(/\s*[（(][^（()）]*[)）]\s*$/, "")).endsWith(norm(heading).split("/").pop() ?? "") ? caption : label;
+  };
+  groups.forEach((g, gi) => {
+    const mine = placed.byHeading.get(gi) ?? [];
+    if (mine.length === 0) return;
+    out.push("", `### ${g.heading}`);
+    for (const s of mine) {
+      out.push("");
+      if (mine.length > 1) out.push(`#### ${subheading(s, g.heading)}`, "");
+      out.push(...pairLines(s));
+    }
+  });
+  if (placed.rest.length > 0) {
+    out.push("", groups.length > 0 ? "### その他の画面" : "### 画面");
+    for (const s of placed.rest) out.push("", `#### ${s.label ?? s.name}`, "", ...pairLines(s));
+  }
+  const body = out.join("\n");
+  const key = keyOf(body);
+  const content = `${normalize(body)}${SEPARATOR}${screensFooter(key)}`;
+  return { content, generationKey: key, chars: content.length };
+}
+
+/** そのコメントが aiw の画像のコメントか（見出しと生成キーの行の両方がある） */
+export function isScreensComment(content: string): boolean {
+  const text = content.replace(/\r\n/g, "\n");
+  return text.startsWith(SCREENS_HEADING) && /この画面の比較はタスクの記録から自動生成しました（生成キー: [0-9a-f]{12}）/.test(text);
 }
 
 /** 比較の画像が 1 対も当たらない依頼の見出し（--dry-run の警告用）。依頼の項目が無ければ空 */

@@ -15,9 +15,11 @@ import type { PrSettings, WorkflowConfig } from "../types.js";
 import { AzdoClient, AzdoError, deriveFromRemote, resolveTarget, type AzdoPullRequest, type FetchImpl } from "./azdo.js";
 import {
   buildDescription,
+  buildScreensComment,
   DESCRIPTION_LIMIT,
   headingsWithoutScreens,
   internalReport,
+  isScreensComment,
   placeScreens,
   isUntouchedByHuman,
   sensitiveCandidates,
@@ -438,9 +440,9 @@ async function runCreateOrUpdate(
   const diff = branchChanges(opts, deps, local.branch, targetBranch);
   if (diff.note) warn(`⚠ ${diff.note}`);
   reportDeclaredGaps(opts, deps, src, diff.changes, warn);
-  const describe = (refs: Map<string, ImageRef>): Description => buildDescription(src, screensOf(src, planned, refs));
-  // 添付前の版（画像は全部「保存先」）。作成直後に PATCH が失敗しても、この版が正直な説明文として残る。API の書き込みより前に字数超過で止める
-  const initial = describe(new Map());
+  // 説明文はテキストだけ（§A-6c）。画像は PR のコメントへ（添付の URL が長く、タブごとに撮ると 4000 字に収まらない）。
+  // API の書き込みより前に字数超過で止める
+  const initial = buildDescription(src, screensOf(src, planned, new Map()));
   if (initial.overLimit) {
     warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${initial.chars} 字）。PR を作りません。--dry-run で内容を確認してください。`);
     record("pr.failed", { stage: "describe", chars: initial.chars, taskDir: relTask });
@@ -456,13 +458,10 @@ async function runCreateOrUpdate(
   }
 
   const prUrl = (id: number): string => (repo.webUrl ? `${repo.webUrl}/pullrequest/${id}` : `#${id}`);
-  let outcome: PrOutcome;
-  if (prs.length === 0) {
-    outcome = await create(client, describe, planned, initial, base, prUrl, say, warn, record);
-  } else {
-    outcome = await update(client, describe, planned, prs[0], base, prUrl, say, warn, record);
-  }
-  if (outcome.kind === "created" || outcome.kind === "updated") {
+  const outcome = prs.length === 0 ? await create(client, initial, base, prUrl, say, warn, record) : await update(client, initial, prs[0], base, prUrl, say, warn, record);
+  if (outcome.prId !== undefined && (outcome.kind === "created" || outcome.kind === "updated" || outcome.kind === "unchanged")) {
+    // 画像のコメントは説明文と独立に作る / 更新する。失敗しても PR は残る（report）
+    await syncScreens(client, outcome.prId, src, planned, outcome.kind !== "created", base, say, warn, record);
     reportSensitive(initial, warn);
     reportShotCoverage(src, warn);
     say("");
@@ -509,15 +508,69 @@ async function attach(
 
 function reportAttachFailures(failures: string[], prId: number, warn: (l: string) => void, record: (e: EventType, f: Record<string, unknown>) => void): void {
   if (failures.length === 0) return;
-  warn(`⚠ 画像 ${failures.length} 枚を添付できませんでした。説明文には保存先のパスを書きました（客先からは見えません。公開前に扱いを決めてください）:`);
+  warn(`⚠ 画像 ${failures.length} 枚を添付できませんでした。コメントには保存先のパスを書きました（客先からは見えません。公開前に扱いを決めてください）:`);
   for (const f of failures) warn(`  - ${f}`);
   record("pr.attachment-failed", { prId, count: failures.length, reasons: failures.map((f) => f.slice(0, 200)) });
 }
 
+/**
+ * 画像のコメント（§A-6c）: 添付してから、aiw のコメント（見出しと生成キーの行がある）を探して作る / 更新する。
+ * 人が直したコメント・aiw のコメントが複数ある場合は触らない（説明文と同じ規則）。どの失敗も PR の作成・更新を取り消さない（report）
+ */
+async function syncScreens(
+  client: AzdoClient,
+  prId: number,
+  src: PrSource,
+  planned: PlannedImage[],
+  existingPr: boolean,
+  base: Record<string, unknown>,
+  say: (l: string) => void,
+  warn: (l: string) => void,
+  record: (e: EventType, f: Record<string, unknown>) => void
+): Promise<void> {
+  if (planned.length === 0) return;
+  try {
+    let existing = new Map<string, string>();
+    if (existingPr) {
+      try {
+        existing = new Map((await client.listAttachments(prId)).map((a) => [a.displayName, a.url]));
+      } catch (error) {
+        warn(`⚠ 既存の添付を一覧できませんでした（${(error as Error).message}）。必要な画像は添付し直します。`);
+      }
+    }
+    const a = await attach(client, prId, planned, existing);
+    reportAttachFailures(a.failures, prId, warn, record);
+    const comment = buildScreensComment(src, screensOf(src, planned, a.refs));
+    if (comment === null) return;
+    const mine = (await client.listThreads(prId)).filter((t) => isScreensComment(t.content));
+    const fields = { ...base, prId, generationKey: comment.generationKey, chars: comment.chars, attachmentsUploaded: a.uploaded, attachmentsReused: a.reused };
+    if (mine.length === 0) {
+      await client.createThread(prId, comment.content);
+      record("pr.screens", { ...fields, action: "created" });
+      say("画面（変更前 → 変更後）のコメントを作りました。");
+    } else if (mine.length > 1) {
+      warn(`⚠ aiw の画面のコメントが ${mine.length} 件あります。どれを更新するか決められないので触りません。`);
+      record("pr.screens", { ...fields, action: "skipped", reason: "multiple" });
+    } else if (!isUntouchedByHuman(mine[0].content)) {
+      warn("⚠ 画面のコメントは人の手で直されています（生成キーが一致しない）。上書きしません。");
+      record("pr.screens", { ...fields, action: "skipped", reason: "human-edited" });
+    } else if (mine[0].content.replace(/\r\n/g, "\n").trim() === comment.content.trim()) {
+      record("pr.screens", { ...fields, action: "unchanged" });
+      say("画面のコメントは最新です（変更なし）。");
+    } else {
+      await client.updateComment(prId, mine[0].id, mine[0].commentId, comment.content);
+      record("pr.screens", { ...fields, action: "updated" });
+      say("画面のコメントを更新しました。");
+    }
+  } catch (error) {
+    const e = error as { message?: string; status?: number | null };
+    warn(`⚠ 画面のコメントを作れませんでした（PR はそのままです）: ${e.message ?? String(error)}`);
+    record("pr.attachment-failed", { prId, stage: "comment", status: e.status ?? null, message: String(e.message ?? error).slice(0, 300) });
+  }
+}
+
 async function create(
   client: AzdoClient,
-  describe: (refs: Map<string, ImageRef>) => Description,
-  planned: PlannedImage[],
   initial: Description,
   base: Record<string, unknown>,
   prUrl: (id: number) => string,
@@ -535,29 +588,14 @@ async function create(
   if (created.isDraft !== true) {
     warn("⚠ 作成した PR が draft になっていません（サーバーの版が draft に対応していない可能性）。公開前の状態か Web で確認してください。");
   }
-  let final = initial;
-  if (planned.length > 0) {
-    const a = await attach(client, id, planned, new Map());
-    const withImages = describe(a.refs);
-    if (a.uploaded > 0 && !withImages.overLimit) {
-      try {
-        await client.updateDescription(id, withImages.description);
-        final = withImages;
-      } catch (error) {
-        a.failures.push(`説明文への画像の反映: ${(error as Error).message}`);
-      }
-    }
-    reportAttachFailures(a.failures, id, warn, record);
-  }
-  record("pr.created", { ...base, prId: id, isDraft: created.isDraft, descriptionChars: final.chars, generationKey: final.generationKey, truncations: final.truncations });
+  record("pr.created", { ...base, prId: id, isDraft: created.isDraft, descriptionChars: initial.chars, generationKey: initial.generationKey, truncations: initial.truncations });
   say(`draft PR を作成しました: ${prUrl(id)}`);
   return { exitCode: 0, kind: "created", prId: id };
 }
 
 async function update(
   client: AzdoClient,
-  describe: (refs: Map<string, ImageRef>) => Description,
-  planned: PlannedImage[],
+  desc: Description,
   listed: AzdoPullRequest,
   base: Record<string, unknown>,
   prUrl: (id: number) => string,
@@ -578,22 +616,6 @@ async function update(
     record("pr.skipped", { ...base, prId: id, reason: "human-edited" });
     return { exitCode: 1, kind: "skipped", prId: id };
   }
-  let existing = new Map<string, string>();
-  if (planned.length > 0) {
-    try {
-      existing = new Map((await client.listAttachments(id)).map((a) => [a.displayName, a.url]));
-    } catch (error) {
-      warn(`⚠ 既存の添付を一覧できませんでした（${(error as Error).message}）。必要な画像は添付し直します。`);
-    }
-  }
-  const a = await attach(client, id, planned, existing);
-  const desc = describe(a.refs);
-  if (desc.overLimit) {
-    warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${desc.chars} 字）。更新しません。`);
-    record("pr.failed", { ...base, prId: id, stage: "describe", chars: desc.chars });
-    return { exitCode: 1, kind: "failed", prId: id };
-  }
-  reportAttachFailures(a.failures, id, warn, record);
   const norm = (s: string): string => s.replace(/\r\n/g, "\n").trim();
   if (norm(desc.description) === norm(pr.description)) {
     record("pr.updated", { ...base, prId: id, unchanged: true, generationKey: desc.generationKey });
@@ -601,7 +623,7 @@ async function update(
     return { exitCode: 0, kind: "unchanged", prId: id };
   }
   await client.updateDescription(id, desc.description);
-  record("pr.updated", { ...base, prId: id, descriptionChars: desc.chars, generationKey: desc.generationKey, truncations: desc.truncations, attachmentsUploaded: a.uploaded, attachmentsReused: a.reused });
+  record("pr.updated", { ...base, prId: id, descriptionChars: desc.chars, generationKey: desc.generationKey, truncations: desc.truncations });
   say(`draft PR の説明文を更新しました: ${prUrl(id)}`);
   return { exitCode: 0, kind: "updated", prId: id };
 }
@@ -646,9 +668,11 @@ function dryRun(
   say("  1. 同じソース・対象ブランチの active な PR を照会");
   say("  2a. 無ければ draft PR を作成（タイトル・説明文）");
   say("  2b. 1 件・draft・生成キー一致なら説明文だけ更新（タイトルは触らない）/ 公開済み・人が直した・複数なら触らない");
+  const comment = buildScreensComment(src, screensOf(src, planned, refs));
   if (planned.length > 0) {
     say(`  3. 画像の添付（${planned.length} 枚・同名の添付があれば再利用）:`);
     for (const p of planned) say(`     - ${p.uploadName}${p.skipReason ? `（添付しない: ${p.skipReason}）` : ""}`);
+    say("  4. 画面のコメント「画面（変更前 → 変更後）」を作る / aiw のコメントがあり人が直していなければ更新（説明文と同じ規則）");
   } else {
     say("  3. 画像の添付: なし（feature の各タスクの runs/<Task ID>/screenshots/ に before-* / after-* が無い）");
   }
@@ -658,5 +682,10 @@ function dryRun(
   say("----- 説明文 -----");
   for (const l of desc.description.split("\n")) say(l);
   say("------------------");
+  if (comment) {
+    say(`----- コメント（画面）: ${comment.chars} 字 -----`);
+    for (const l of comment.content.split("\n")) say(l);
+    say("------------------");
+  }
   return { exitCode: 0, kind: "dry-run" };
 }
