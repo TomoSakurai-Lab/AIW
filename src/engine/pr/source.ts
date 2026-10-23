@@ -33,6 +33,27 @@ export function listArchivedTaskDirs(root: string): string[] {
   return found.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0)).map((f) => f.dir);
 }
 
+/**
+ * ブランチ名とタスクの記録の照合（2026-10-23・設計 §E-5）。比べるのは「接頭辞を除いた小文字の名前」:
+ *   ブランチ `feature/review-feedback-1023`（`feature/` `feat/` `task/` を除く）
+ *   ↔ feature のフォルダ `<日付時刻>-FEAT-review-feedback-1023`（日付時刻と `FEAT-` を除く。日付なしの旧形式も同じ）
+ *   ↔ 単一タスク（`archive/single/`）は Task ID `TASK-2026-10-20-x`（`TASK-` を除く）
+ */
+export function branchKey(branch: string): string {
+  return branch.replace(/^refs\/heads\//, "").replace(/^(?:feature|features|feat|task|tasks)\//i, "").toLowerCase();
+}
+
+/** そのタスクの記録に対応するブランチのキー（feature のタスクは feature ID、単一タスクは Task ID から）。決められなければ null */
+export function taskDirKey(taskDir: string): string | null {
+  const group = path.basename(path.dirname(taskDir));
+  if (group !== "single") {
+    const featureId = group.replace(/^\d{8}T\d{6}-/, "");
+    return featureId.replace(/^FEAT-/i, "").toLowerCase() || null;
+  }
+  const taskId = readTaskId(taskDir);
+  return taskId ? taskId.replace(/^TASK-/i, "").toLowerCase() : null;
+}
+
 /** `20261020T054338` → Date（UTC）。archiveArtifacts の archiveStamp の逆。 */
 export function parseArchiveStamp(stamp: string): Date | null {
   const m = stamp.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);

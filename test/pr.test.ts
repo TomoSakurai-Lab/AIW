@@ -542,7 +542,8 @@ test("275: end to end — a real reflection's archive and Event Log feed the dry
   writeIn(root, "user-task.md", "# U\n\n### 一覧画面\n\n- [ ] 列を削除する。\n");
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
   assert.equal(runReflection(root, config).kind, "transitioned");
-  const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: ["src/first.tsx", "src/other.cs"] });
+  // 単一タスク（archive/single）は Task ID でブランチと照合する（TASK-2026-10-20-sample ↔ task/2026-10-20-sample）
+  const h = deps(fakeAzdo().fetch, undefined, "task/2026-10-20-sample", { changed: ["src/first.tsx", "src/other.cs"] });
   const r = await runPr({ root, config, dryRun: true }, h.d);
   assert.equal(r.kind, "dry-run");
   assert.match(h.all(), new RegExp(`（${TASK_ID}）`));
@@ -681,3 +682,47 @@ test("282: the description has only the two sections; the internal record stays 
   assert.match(head, /レビュー: Critical 0 \/ Major 1/);
 });
 
+
+test("283: the task record is chosen by the branch, not by recency; with no match nothing is made", async () => {
+  const { root, config } = makeRoot();
+  const seed = (group: string, stamp: string, featureName: string): string => {
+    const dir = path.join(root, "archive", group, `${stamp}-task`);
+    mkdirSync(dir, { recursive: true });
+    for (const [name, content] of Object.entries(FILES)) writeFileSync(path.join(dir, name), content, "utf8");
+    writeFileSync(path.join(dir, "task-metadata.json"), JSON.stringify({ featureName, summary: featureName }), "utf8");
+    return dir;
+  };
+  seed("20261022T085248-FEAT-alpha", "20261022T100000", "アルファ 1");
+  const alphaLatest = seed("20261022T085248-FEAT-alpha", "20261022T110000", "アルファ 2");
+  const beta = seed("20261023T010000-FEAT-beta", "20261023T020000", "ベータ（一番新しい）");
+  seed("FEAT-old", "20261001T000000", "日付なしの旧形式");
+
+  const title = (h: { all: () => string }): string | undefined => h.all().match(/^タイトル（作成時のみ）: (.+)$/m)?.[1];
+  // 一番新しい archive（beta）ではなく、ブランチ（alpha）の一番新しいタスク
+  let h = deps(fakeAzdo().fetch, undefined, "feature/alpha");
+  assert.equal((await runPr({ root, config, dryRun: true }, h.d)).kind, "dry-run");
+  assert.equal(title(h), "アルファ 2");
+  assert.ok(h.all().includes(path.basename(alphaLatest)), "the alpha task directory is the input");
+  // 日付なしの旧形式のフォルダも feature ID で引ける
+  h = deps(fakeAzdo().fetch, undefined, "feature/old");
+  await runPr({ root, config, dryRun: true }, h.d);
+  assert.equal(title(h), "日付なしの旧形式");
+
+  // 対応する記録が無い → dry-run でも本実行でも止まり、別の記録を使わない
+  h = deps(fakeAzdo().fetch, undefined, "feature/gamma");
+  const dry = await runPr({ root, config, dryRun: true }, h.d);
+  assert.equal(dry.exitCode, 1);
+  assert.match(h.all(), /ブランチ feature\/gamma に対応するタスクの記録が archive にありません（feature ID が「FEAT-gamma」/);
+  assert.doesNotMatch(h.all(), /----- 説明文 -----/);
+  const azdo = fakeAzdo({ remoteBranches: ["feature/gamma"] });
+  const real = await runPr({ root, config: withPr(config) }, deps(azdo.fetch, undefined, "feature/gamma").d);
+  assert.equal(real.exitCode, 1);
+  assert.deepEqual(azdo.calls, [], "no API call at all when there is no record for the branch");
+  assert.match(eventLog(root), /"reason":"no-task-record-for-branch"/);
+
+  // --task が明示されていれば使う。ブランチと合わなければ警告だけ
+  h = deps(fakeAzdo().fetch, undefined, "feature/alpha");
+  await runPr({ root, config, dryRun: true, taskDir: beta }, h.d);
+  assert.equal(title(h), "ベータ（一番新しい）");
+  assert.match(h.all(), /--task の記録（beta）は今のブランチ（feature\/alpha）と名前が合いません/);
+});

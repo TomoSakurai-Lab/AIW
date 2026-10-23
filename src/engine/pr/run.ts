@@ -25,7 +25,7 @@ import {
   type ScreenPair
 } from "./describe.js";
 import { PAT_ENV, patFromEnv, redactPat, type PatSecret } from "./secret.js";
-import { listArchivedTaskDirs, readPrSource, type PrSource } from "./source.js";
+import { branchKey, listArchivedTaskDirs, readPrSource, taskDirKey, type PrSource } from "./source.js";
 
 export type PrDeps = {
   fetch: FetchImpl;
@@ -176,12 +176,38 @@ async function runCheck(
 
 // ---- 入力の解決 ------------------------------------------------------------------------------
 
-function resolveTaskDir(opts: PrOptions): string | null {
+/**
+ * 説明文の元にするタスクの記録（2026-10-23・設計 §E-5）。
+ * `--task` が無ければ、**今のブランチに対応する feature（単一タスクは Task ID）の、一番新しいタスク**。
+ * 以前は「archive の一番新しいタスク」だったので、別の feature のブランチで打つと別の feature の記録で PR を作った（実例: 1023 のブランチで 1022 の記録）。
+ * 見つからなければ null（**黙って別の記録を使わない**）。`--task` がブランチと合わないときは警告だけ（人間が明示したので使う）。
+ */
+function resolveTaskDir(opts: PrOptions, branch: string | null): { dir: string | null; warning: string | null; error: string | null } {
   if (opts.taskDir) {
     const dir = path.resolve(opts.taskDir);
-    return existsSync(path.join(dir, "current-task.md")) ? dir : null;
+    if (!existsSync(path.join(dir, "current-task.md"))) {
+      return { dir: null, warning: null, error: `--task ${opts.taskDir} にタスクの記録（current-task.md）がありません。` };
+    }
+    const key = taskDirKey(dir);
+    const warning =
+      branch && key !== branchKey(branch) ? `--task の記録（${key ?? "不明"}）は今のブランチ（${branch}）と名前が合いません。指定どおりこの記録を使います。` : null;
+    return { dir, warning, error: null };
   }
-  return listArchivedTaskDirs(opts.root)[0] ?? null;
+  if (!branch) {
+    return { dir: null, warning: null, error: "今のブランチが決まらないため、どのタスクの記録を使うか決められません。--task で指定してください。" };
+  }
+  const want = branchKey(branch);
+  const dir = listArchivedTaskDirs(opts.root).find((d) => taskDirKey(d) === want) ?? null;
+  if (!dir) {
+    return {
+      dir: null,
+      warning: null,
+      error:
+        `ブランチ ${branch} に対応するタスクの記録が archive にありません（feature ID が「FEAT-${want}」の記録を探しました）。` +
+        "reflection の承認後に打つか、--task で記録のフォルダを指定してください。ブランチ名は feature ID から付けます（例: FEAT-x → feature/x）。"
+    };
+  }
+  return { dir, warning: null, error: null };
 }
 
 /** 変更前 → 変更後の順に、対の画像を 1 枚ずつ添付の計画にする（添付名は内容の hash つき = 同じ内容なら同じ名前） */
@@ -329,18 +355,29 @@ async function runCreateOrUpdate(
   warn: (l: string) => void,
   record: (e: EventType, f: Record<string, unknown>) => void
 ): Promise<PrOutcome> {
-  const taskDir = resolveTaskDir(opts);
-  if (!taskDir) {
-    warn(
-      opts.taskDir
-        ? `--task ${opts.taskDir} にタスクの記録（current-task.md）がありません。`
-        : "archive にタスクの記録がありません（reflection の承認後に実行してください）。"
-    );
-    return { exitCode: 1, kind: "failed" };
+  const local = localBranch(opts, deps);
+  if (!local.branch) {
+    warn(`PR を作れません: ${local.reason}`);
+    record("pr.skipped", { reason: "branch", detail: local.reason });
+    return { exitCode: 1, kind: "skipped" };
   }
+  // 対象ブランチの上で打った（今の運用で一番ありうる）なら、記録を探す前にそう言う（git の読み取りだけで分かる範囲）
+  const localTarget = dryRunTarget(opts, deps, settings);
+  if (localTarget && local.branch === localTarget) {
+    warn(`現在のブランチ（${local.branch}）が対象ブランチと同じです。feature のブランチを作って push してから実行してください。`);
+    record("pr.skipped", { reason: "on-target-branch", sourceBranch: local.branch });
+    return { exitCode: 1, kind: "skipped" };
+  }
+  const picked = resolveTaskDir(opts, local.branch);
+  if (!picked.dir) {
+    warn(picked.error ?? "タスクの記録を決められません。");
+    record("pr.skipped", { reason: "no-task-record-for-branch", sourceBranch: local.branch });
+    return { exitCode: 1, kind: "skipped" };
+  }
+  if (picked.warning) warn(`⚠ ${picked.warning}`);
+  const taskDir = picked.dir;
   const src = readPrSource(opts.root, taskDir);
   const planned = planImages(opts.root, src);
-  const local = localBranch(opts, deps);
   const relTask = path.relative(path.dirname(path.resolve(opts.root)), taskDir).replace(/\\/g, "/");
 
   if (opts.dryRun) {
@@ -358,11 +395,6 @@ async function runCreateOrUpdate(
   if (!pat) {
     patGuidance(warn);
     return { exitCode: 1, kind: "failed" };
-  }
-  if (!local.branch) {
-    warn(`PR を作れません: ${local.reason}`);
-    record("pr.skipped", { reason: "branch", detail: local.reason, taskDir: relTask });
-    return { exitCode: 1, kind: "skipped" };
   }
 
   const target = resolved.target;

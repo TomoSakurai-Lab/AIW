@@ -345,6 +345,19 @@ spec を書くことは禁止（Reviewer が Builder になる経路を塞ぐ・
 
 (i) でも (ii) でも v1 のコードは同じ（冪等キーがブランチなので）。違うのは**人間のブランチの切り方**だけ。
 
+### E-5. 説明文の元にするタスクの記録はブランチで選ぶ（2026-10-23 改訂・人間の判断）
+
+v1 は「archive の一番新しいタスク」を使っていたので、別の feature のブランチで打つと別の feature の記録で PR を作った
+（実例: `feature/review-feedback-1023` で 1022 の記録）。`--task` が無いときは次で選ぶ:
+
+- ブランチ名から `feature/`（`feat/` `task/` も）を除いた名前を、archive の feature フォルダの feature ID（日付時刻と `FEAT-` を除く。
+  日付なしの旧形式も同じ）と照らし、一致した feature の一番新しいタスク。単一タスク（`archive/single/`）は Task ID（`TASK-` を除く）と照らす
+- 一致しなければ **PR を作らずに止まる**（`--dry-run` も同じ・API は呼ばない・`pr.skipped` の reason は `no-task-record-for-branch`）。
+  黙って別の記録を使わない
+- 対象ブランチの上で打ったときは、記録を探す前に「対象ブランチと同じ」で止まる（git の読み取りで分かる範囲: `settings.pr.targetBranch` → `origin/HEAD`）
+- `--task` が明示されていればそれを使い、ブランチと名前が合わなければ警告だけ出す
+- 前提: **ブランチ名は feature ID から付ける**（`FEAT-x` → `feature/x`）
+
 ### E-4. 「タスク開始時のブランチ作成を postAction にする」案（実装は要承認・v1 では作らない）
 
 - task-planning の承認（ゲート①）後の postAction `createTaskBranch`: feature の最初のフェーズなら `aiw/<featureId>` を
