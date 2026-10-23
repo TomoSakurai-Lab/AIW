@@ -1040,7 +1040,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   2026-10-20 時点で env を受ける spec は 4 本（`grid-surface-unify` / `grid-cell-validation` / `budget-row-hierarchy` の 2 箇所）で、
   `after-` で書くのは `grid-surface-unify`（`GRID_SURFACE_SHOTS`）の 1 本だけ。さらに env を前置したコマンドが review の許可（`./tools/nrun.cmd:*`）に当たるかは未実測。
   枚数が少なければ設計 §C の案 (b)（製品側の playwright に after スクショの reporter を入れる製品タスク）を起票する。案 (c)（review に cp を許す）は採らない
-- Status: open
+- 対処（2026-10-23・人間の判断）: 撮影を review から implementation（変更前・変更後）と fix（変更後の撮り直し）へ移した（設計 §A-6）。
+  implementation は spec / スクリプトを書けるので env 対応の spec に依存しない。review Skill v10 は「撮らない」。観測は baseline の世代注記
+- Status: resolved (2026-10-23・撮影の担当替えで解消。撮れた枚数は実タスクで観測)
 
 ## BL-374
 
@@ -1050,4 +1052,6 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
 - Summary: v1 で見送った 4 件の判定。(1) 説明文の自由記述を人がどれだけ直したか（`--dry-run` の「内部用語の残り」の語数と、公開時の差分）→ 多ければ reflection に客先向けの要約欄を足す
   (2) 起動を reflection の postAction か aiw auto の終端へつなぐか（失敗は report・pendingTransition の冪等チェックポイントに乗せる）
   (3) feature の全フェーズを集約した説明文（今は最新フェーズの 1 タスク分）(4) タスク開始時のブランチ作成の postAction（aiw が初めて git に書く経路。diff-scope の baseline との順序を別に設計する）
-- Status: open
+- 経過（2026-10-23）: 初回の `--dry-run` を見た人間の判断で、説明文を「対応した内容（依頼文のチェックボックス）」と「画面（変更前 → 変更後）」の 2 節にした（設計 §A-6）。
+  (1) は自由記述をほぼ説明文から外したことで小さくなった（依頼文は客先の言葉）。(3) は依頼文が feature 全体の依頼で、スクショも feature の全タスクから集めるので、実質的に満たした。(2)(4) は open のまま
+- Status: open（(2) と (4)）

@@ -152,7 +152,10 @@ npm run aiw -- pr              # draft PR を作成 / 同じブランチの draf
 - 準備: PAT（Code: Read & Write のみ）を**ユーザー環境変数 `AZURE_DEVOPS_PAT`** に GUI で設定（値をチャット・ファイル・コマンドラインに書かない）。
   runtime の `config/workflow.yaml` に `settings.pr`（organizationUrl / project / repository）。`--check` の表示を確かめて貼る
 - ブランチ: feature のブランチを作って push してから（aiw は push もブランチ作成もしない）。対象ブランチ上・未 push なら作らない
-- 入力は archive の最新タスク（`--task` で指定可）と `runs/<Task ID>/screenshots/after-*.png`。欠けた記録は「記録なし」と書く
+- 説明文は 2 節だけ: **対応した内容**（依頼文 `user-task.md` のチェックボックスの項目を画面 / タブごとに）と
+  **画面（変更前 → 変更後）**（`runs/<Task ID>/screenshots/` の `before-<名前>.png` / `after-<名前>.png` を名前で対にした表。
+  feature の全タスクから集める）。スクショは implementation が撮り、fix が画面を変えたら撮り直す
+- 入力は archive の最新タスク（`--task` で指定可）。確認結果・レビュー・変更ファイル・宣言との突き合わせは `--dry-run` の「内部の確認結果」に出る（説明文には出ない）
 - 公開済みの PR・人が説明文を直した PR（末尾の生成キーが合わない）は触らない。直した後に新しい内容を見たいときは `--dry-run`
 - 公開前に人間が見る: 画面に実データ・実名が映っていないか / 説明文に内部の用語が残っていないか（`--dry-run` が残りの語数を出す）
 
