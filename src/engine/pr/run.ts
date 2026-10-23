@@ -55,8 +55,13 @@ export type PrOutcome = {
   prId?: number;
 };
 
-/** 添付の上限（§B-2）。超えた分は縮退（保存先を書く） */
-const MAX_IMAGES = 10;
+/**
+ * 添付の上限（§B-2）。超えた分は縮退（保存先を書く）。
+ * 2026-10-23: 10 → 60。10 は画像を説明文（4000 字）に載せていた頃の上限で、コメントへ移した（§A-6c）後は意味が無かった
+ * （実例: タブごとに 10 対 20 枚撮り、11 枚目以降の 10 枚が添付されなかった）。60 は「タブ 15 × 全体と右側 × 変更前後」程度の余裕で、
+ * 誤って大量の画像を置いたときに止める歯止めとして残す
+ */
+const MAX_IMAGES = 60;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** settings.pr に書かれていたら止めるキー（PAT は env のみ）。**値は表示しない** */
 const SECRET_KEY = /pat|token|secret|password|credential/i;
@@ -669,6 +674,11 @@ function dryRun(
   say("  2a. 無ければ draft PR を作成（タイトル・説明文）");
   say("  2b. 1 件・draft・生成キー一致なら説明文だけ更新（タイトルは触らない）/ 公開済み・人が直した・複数なら触らない");
   const comment = buildScreensComment(src, screensOf(src, planned, refs));
+  // 添付しない画像は一覧の中に埋もれて見落とされた（2026-10-23: 20 枚中 10 枚）。件数と理由を ⚠ で出す
+  const skipped = planned.filter((p) => p.skipReason);
+  if (skipped.length > 0) {
+    say(`⚠ 添付しない画像が ${skipped.length} 枚あります（コメントには保存先のパスを書きます）: ${[...new Set(skipped.map((p) => p.skipReason))].join("、")}`);
+  }
   if (planned.length > 0) {
     say(`  3. 画像の添付（${planned.length} 枚・同名の添付があれば再利用）:`);
     for (const p of planned) say(`     - ${p.uploadName}${p.skipReason ? `（添付しない: ${p.skipReason}）` : ""}`);

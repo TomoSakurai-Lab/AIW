@@ -893,3 +893,26 @@ test("286: the screens comment is created once, left alone when unchanged or edi
   assert.match(h2.all(), /画面のコメントを作れませんでした（PR はそのままです）/);
   assert.match(eventLog(r2), /"stage":"comment"/);
 });
+
+test("287: twenty images (ten tabs' pairs) are all attached; only an absurd count is held back, and the dry-run says so", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  for (let i = 0; i < 10; i++) {
+    seedScreenshot(root, `before-tab${i}.png`);
+    seedScreenshot(root, `after-tab${i}.png`);
+  }
+  const azdo = fakeAzdo();
+  assert.equal((await runPr({ root, config: withPr(config) }, deps(azdo.fetch).d)).kind, "created");
+  assert.equal(azdo.calls.filter((c) => c.method === "POST" && c.path.includes("/attachments/")).length, 20, "all 20 attached");
+  assert.doesNotMatch(azdo.threads.get(500)![0].comments[0].content, /保存先:/);
+  assert.doesNotMatch(eventLog(root), /"pr\.attachment-failed"/);
+
+  // 60 枚を超えた分は添付しない（歯止め）。--dry-run の ⚠ で見える
+  for (let i = 10; i < 31; i++) {
+    seedScreenshot(root, `before-tab${i}.png`);
+    seedScreenshot(root, `after-tab${i}.png`);
+  }
+  const h = deps(fakeAzdo().fetch);
+  await runPr({ root, config: withPr(config), dryRun: true }, h.d);
+  assert.match(h.all(), /⚠ 添付しない画像が 2 枚あります（コメントには保存先のパスを書きます）: 60 枚を超えた/);
+});
