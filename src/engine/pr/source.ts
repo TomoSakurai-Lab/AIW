@@ -57,10 +57,20 @@ export type ProcessRecord =
       improveCheckPassed: boolean | null;
     };
 
+/** 依頼文（user-task.md）のチェックボックスの項目を、見出し（画面 / タブ）ごとに。§A-6 */
+export type RequestGroup = { heading: string; items: Array<{ text: string; sub: string[] }> };
+
+/** 名前で対にした変更前 / 変更後のスクショ（絶対パス）。§A-6 */
+export type ShotPair = { name: string; before: string | null; after: string | null };
+
 export type PrSource = {
   taskDir: string;
   stamp: string;
   taskId: string | null;
+  /** null = user-task.md が無い。[] = チェックボックスの項目が無い */
+  requested: RequestGroup[] | null;
+  /** feature の全タスク（このタスクまで）の runs/<Task ID>/screenshots/ の before-* / after-* */
+  shots: ShotPair[];
   metadata: { summary: string | null; featureName: string | null; taskName: string | null; featureId: string | null } | null;
   declared:
     | { source: "context-package"; files: string[] }
@@ -70,7 +80,6 @@ export type PrSource = {
   manualVerification: string[] | null;
   review: ReviewRecord;
   process: ProcessRecord;
-  screenshots: string[];
 };
 
 function readText(file: string): string | null {
@@ -206,34 +215,104 @@ function readTaskId(taskDir: string): string | null {
   return m ? m[1] : null;
 }
 
-function listScreenshots(root: string, taskId: string | null): string[] {
-  if (!taskId || !/^[\w.-]+$/.test(taskId)) {
-    return [];
+/**
+ * 依頼文のチェックボックス（`- [ ]` / `- [x]`）を「何を変えるか」として読む（2026-10-23・§A-6）。
+ * 進め方・完了条件はチェックボックスでない箇条書きで書かれる（実物で確認）ので拾わない。
+ * 見出しは `###` 以下を「 / 」でつなぎ、先頭の番号（`1. `）を除く。チェックボックスより深い字下げの箇条書きは子項目。
+ */
+export function parseRequested(markdown: string): RequestGroup[] {
+  const groups: RequestGroup[] = [];
+  const stack: Array<{ level: number; text: string }> = [];
+  let current: RequestGroup["items"][number] | null = null;
+  let currentIndent = -1;
+  for (const line of stripHtmlComments(markdown).split(/\r?\n/)) {
+    const h = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (h) {
+      const level = h[1].length;
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) stack.pop();
+      stack.push({ level, text: h[2].replace(/^\d+[.)．]\s*/, "").trim() });
+      current = null;
+      continue;
+    }
+    const box = line.match(/^(\s*)[-*+]\s+\[[ xX]\]\s+(.+?)\s*$/);
+    if (box) {
+      const path3 = stack.filter((s) => s.level >= 3).map((s) => s.text);
+      const heading = (path3.length > 0 ? path3 : stack.slice(-1).map((s) => s.text)).join(" / ");
+      let group = groups.find((g) => g.heading === heading);
+      if (!group) {
+        group = { heading, items: [] };
+        groups.push(group);
+      }
+      current = { text: box[2], sub: [] };
+      currentIndent = box[1].length;
+      group.items.push(current);
+      continue;
+    }
+    // 子項目は箇条書きか番号付き（実物: 帳票の 3 種類が `  1. …`）。印はそのまま残す
+    const sub = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.+?)\s*$/);
+    if (sub && current && sub[1].length > currentIndent) {
+      current.sub.push(`${/^\d/.test(sub[2]) ? sub[2] : "-"} ${sub[3]}`);
+      continue;
+    }
+    if (line.trim() !== "" && !/^\s/.test(line)) current = null; // 字下げの無い地の文で項目は終わる
   }
+  return groups;
+}
+
+function shotsOf(root: string, taskId: string | null): string[] {
+  if (!taskId || !/^[\w.-]+$/.test(taskId)) return [];
   const dir = path.join(rootPaths(root).runsDir, taskId, "screenshots");
-  if (!existsSync(dir)) {
-    return [];
-  }
+  if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((f) => /^after-.*\.png$/i.test(f) && statSync(path.join(dir, f)).isFile())
+    .filter((f) => /^(?:before|after)-.+\.png$/i.test(f) && statSync(path.join(dir, f)).isFile())
     .sort()
     .map((f) => path.join(dir, f));
+}
+
+/**
+ * feature の全タスク（このタスクまで・古い順）のスクショを名前で対にする。変更前は**最初に撮ったもの**、
+ * 変更後は**最後に撮ったもの**（feature = ブランチ = PR なので、PR 全体の変更前 → 変更後）。単一タスクはそのタスクだけ。
+ */
+function collectShots(root: string, taskDir: string, taskId: string | null): ShotPair[] {
+  const group = path.dirname(taskDir);
+  const isSingle = path.basename(group) === "single";
+  const mine = path.basename(taskDir);
+  const taskIds = isSingle
+    ? [taskId]
+    : readdirSync(group)
+        .filter((n) => TASK_DIR.test(n) && n <= mine && existsSync(path.join(group, n, "current-task.md")))
+        .sort()
+        .map((n) => readTaskId(path.join(group, n)));
+  const pairs = new Map<string, ShotPair>();
+  for (const id of taskIds) {
+    for (const file of shotsOf(root, id)) {
+      const m = path.basename(file).match(/^(before|after)-(.+)\.png$/i)!;
+      const name = m[2];
+      const pair = pairs.get(name) ?? { name, before: null, after: null };
+      if (m[1].toLowerCase() === "before") pair.before ??= file;
+      else pair.after = file;
+      pairs.set(name, pair);
+    }
+  }
+  return [...pairs.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 export function readPrSource(root: string, taskDir: string): PrSource {
   const stamp = path.basename(taskDir).match(TASK_DIR)?.[1] ?? "";
   const taskId = readTaskId(taskDir);
   const result = readText(path.join(taskDir, "current-result.md"));
+  const userTask = readText(path.join(taskDir, "user-task.md"));
   return {
     taskDir,
     stamp,
     taskId,
+    requested: userTask === null ? null : parseRequested(userTask),
+    shots: collectShots(root, taskDir, taskId),
     metadata: readMetadata(taskDir),
     declared: readDeclared(taskDir),
     acceptance: result === null ? null : countTriStatusAny(result, "## Acceptance Criteria Verification"),
     manualVerification: result === null ? null : sectionItems(result, "## Manual Verification Required"),
     review: readReview(root, taskDir),
-    process: readProcess(root, stamp),
-    screenshots: listScreenshots(root, taskId)
+    process: readProcess(root, stamp)
   };
 }

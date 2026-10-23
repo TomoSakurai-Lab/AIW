@@ -9,9 +9,9 @@ import path from "node:path";
 import { completedTaskWindow } from "../src/engine/observed.js";
 import { countTriStatusAny } from "../src/engine/sections.js";
 import { deriveFromRemote, type FetchImpl } from "../src/engine/pr/azdo.js";
-import { buildDescription, DESCRIPTION_LIMIT, isUntouchedByHuman, scrub } from "../src/engine/pr/describe.js";
+import { buildDescription, DESCRIPTION_LIMIT, internalReport, isUntouchedByHuman, scrub } from "../src/engine/pr/describe.js";
 import { runPr, type PrDeps } from "../src/engine/pr/run.js";
-import { readPrSource } from "../src/engine/pr/source.js";
+import { parseRequested, readPrSource } from "../src/engine/pr/source.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
 import { archivedTaskDirs, makeRoot, runReflection, setStep, validTaskMetadata, writeIn, writeStatus } from "./helpers.js";
 
@@ -20,6 +20,25 @@ import { archivedTaskDirs, makeRoot, runReflection, setStep, validTaskMetadata, 
 const TASK_ID = "TASK-2026-10-20-sample";
 
 const FILES: Record<string, string> = {
+  "user-task.md": [
+    "# User Task",
+    "",
+    "## 次タスク：表の見た目をそろえる",
+    "",
+    "### 1. 実行予算作成画面",
+    "",
+    "#### 予算編集タブ",
+    "",
+    "- [ ] 「予算キー」は不要。列表示メニューからも再表示できないようにする。",
+    "- [x] 帳票出力のリストを、以下の2種類のみにする。",
+    "  1. 実行予算書",
+    "  2. 元積内訳書",
+    "",
+    "### 2. 検証・完了条件",
+    "",
+    "- 関連テストで検証する。",
+    ""
+  ].join("\n"),
   "current-task.md": `# Task\n\n- Task ID: ${TASK_ID}\n- Feature ID: FEAT-sample\n`,
   "task-metadata.json": JSON.stringify({
     featureId: "FEAT-sample",
@@ -74,8 +93,8 @@ function seedArchive(root: string, opts: { stamp?: string; omit?: string[]; over
   return dir;
 }
 
-function seedScreenshot(root: string, name = "after-top.png"): string {
-  const dir = path.join(root, "runs", TASK_ID, "screenshots");
+function seedScreenshot(root: string, name = "after-top.png", taskId = TASK_ID): string {
+  const dir = path.join(root, "runs", taskId, "screenshots");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, name);
   writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]));
@@ -262,7 +281,7 @@ test("262: an existing draft PR written by aiw is updated in place — no second
   const { root, config } = makeRoot();
   const dir = seedArchive(root);
   // 前のフェーズで aiw が書いた説明文（人の手は入っていない）
-  const older = buildDescription({ ...readPrSource(root, dir), metadata: { summary: "前のフェーズ", featureName: "x", taskName: "t", featureId: "F" } }, []);
+  const older = buildDescription({ ...readPrSource(root, dir), requested: [{ heading: "前のフェーズ", items: [{ text: "前の依頼", sub: [] }] }] }, []);
   const azdo = fakeAzdo({
     prs: [{ pullRequestId: 7, isDraft: true, status: "active", title: "人が直したタイトル", description: older.description, sourceRefName: "refs/heads/feature/sample", targetRefName: "refs/heads/master" }]
   });
@@ -291,7 +310,7 @@ test("262b: a published PR, a human-edited description, or two candidates are le
   const base = { status: "active", title: "t", sourceRefName: "refs/heads/feature/sample", targetRefName: "refs/heads/master" };
   const cases: Array<[string, FakePr[]]> = [
     ["published", [{ ...base, pullRequestId: 1, isDraft: false, description: mine }]],
-    ["human-edited", [{ ...base, pullRequestId: 2, isDraft: true, description: mine.replace("## 概要\n", "## 概要\n人が足した一文。\n") }]],
+    ["human-edited", [{ ...base, pullRequestId: 2, isDraft: true, description: mine.replace("## 対応した内容\n", "## 対応した内容\n人が足した一文。\n") }]],
     ["no key", [{ ...base, pullRequestId: 3, isDraft: true, description: "手で書いた説明文" }]],
     ["multiple", [{ ...base, pullRequestId: 4, isDraft: true, description: mine }, { ...base, pullRequestId: 5, isDraft: true, description: mine }]]
   ];
@@ -311,7 +330,8 @@ test("262b: a published PR, a human-edited description, or two candidates are le
 test("263: when the attachment API fails, the draft PR is still created and the description names where the image is", async () => {
   const { root, config } = makeRoot();
   seedArchive(root);
-  seedScreenshot(root);
+  seedScreenshot(root, "before-top.png");
+  seedScreenshot(root, "after-top.png");
   const azdo = fakeAzdo({ failAttach: () => new Response(JSON.stringify({ message: "boom" }), { status: 500, headers: { "content-type": "application/json" } }) });
   const before = stateBytes(root);
   const h = deps(azdo.fetch);
@@ -321,18 +341,25 @@ test("263: when the attachment API fails, the draft PR is still created and the 
   const created = azdo.calls.filter((c) => c.method === "POST" && c.path.endsWith("/pullrequests"));
   assert.equal(created.length, 1);
   assert.equal(created[0].body.isDraft, true, "always draft");
-  assert.match(azdo.prs[0].description, /\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png/);
+  assert.match(
+    azdo.prs[0].description,
+    /\| top \| 保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/before-top\.png` \| 保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png` \|/
+  );
   assert.match(eventLog(root), /"pr\.attachment-failed"/);
   assert.match(h.all(), /公開前に確認/);
   assert.equal(stateBytes(root), before);
 
-  // 添付が成功する場合: 作成 → 添付 → 説明文に画像
+  // 添付が成功する場合: 作成 → 添付 → 説明文に変更前 → 変更後の表
   const { root: root2, config: config2 } = makeRoot();
   seedArchive(root2);
-  seedScreenshot(root2);
+  seedScreenshot(root2, "before-top.png");
+  seedScreenshot(root2, "after-top.png");
   const ok = fakeAzdo();
   assert.equal((await runPr({ root: root2, config: withPr(config2) }, deps(ok.fetch).d)).kind, "created");
-  assert.match(ok.prs[0].description, /!\[top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\)/);
+  assert.match(
+    ok.prs[0].description,
+    /## 画面（変更前 → 変更後）\n\n\| 画面 \| 変更前 \| 変更後 \|\n\| --- \| --- \| --- \|\n\| top \| !\[変更前 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/before-top\.[0-9a-f]{8}\.png\) \| !\[変更後 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\) \|/
+  );
 });
 
 test("264: --dry-run calls no API and writes nothing to the Event Log", async () => {
@@ -349,6 +376,7 @@ test("264: --dry-run calls no API and writes nothing to the Event Log", async ()
     assert.equal(r.exitCode, 0);
     assert.match(h.all(), /----- 説明文 -----/);
     assert.match(h.all(), /after-top\.[0-9a-f]{8}\.png/, "the planned attachment is listed");
+    assert.match(h.all(), /対になっていない画面: top（変更前なし）/);
   }
   assert.equal(azdo.calls.length, 0, "fetch was never called");
   assert.equal(eventLog(root), logBefore);
@@ -357,15 +385,17 @@ test("264: --dry-run calls no API and writes nothing to the Event Log", async ()
 
 test("265: missing artifacts are written as 'no record', never as zero or as verified", async () => {
   const { root, config } = makeRoot();
-  seedArchive(root, { omit: ["current-review.md", "context-package.md", "current-result.md", "task-metadata.json"] });
+  seedArchive(root, { omit: ["user-task.md", "current-review.md", "context-package.md", "current-result.md", "task-metadata.json"] });
   const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: null });
   await runPr({ root, config, dryRun: true }, h.d);
   const text = h.all();
-  for (const phrase of ["タスクの要約の記録なし", "このブランチの変更ファイルを取得できなかった", "検査の記録なし", "受け入れ条件: 記録なし", "手動での確認が必要な項目: 記録なし", "レビュー記録なし"]) {
+  const description = text.split("----- 説明文 -----")[1];
+  assert.match(description, /## 対応した内容\n依頼の記録なし/);
+  for (const phrase of ["概要（task-metadata）: 記録なし", "変更ファイル（ブランチの差分）: 取れない", "突き合わせ: 検査の記録なし", "受け入れ条件: 記録なし", "手動確認: 記録なし", "レビュー: 記録なし"]) {
     assert.ok(text.includes(phrase), `missing: ${phrase}\n${text}`);
   }
-  assert.doesNotMatch(text, /確認済み \d/);
-  assert.doesNotMatch(text, /重大な指摘 0 件/);
+  assert.doesNotMatch(text, /PASS \d/);
+  assert.doesNotMatch(text, /Critical 0/);
 
   // review がテンプレートのまま
   const { root: r2, config: c2 } = makeRoot();
@@ -373,39 +403,35 @@ test("265: missing artifacts are written as 'no record', never as zero or as ver
   copyFileSync(path.join(r2, "templates", "current-review.md"), path.join(dir2, "current-review.md"));
   const h2 = deps(fakeAzdo().fetch);
   await runPr({ root: r2, config: c2, dryRun: true }, h2.d);
-  assert.match(h2.all(), /レビュー記録なし（記録が空のまま）/);
+  assert.match(h2.all(), /レビュー: 記録なし（テンプレートのまま）/);
 
-  // 変更宣言の記録が無いタスクは、突き合わせを省いたことを stdout に出す（説明文の変更ファイルはブランチの差分のまま）
+  // 依頼文にチェックボックスが無い → 作業記録の要約で代え、見出しと stdout で区別する
   const { root: r3, config: c3 } = makeRoot();
-  seedArchive(r3, { omit: ["context-package.md", "current-result.md"] });
+  seedArchive(r3, { omit: ["context-package.md", "current-result.md"], override: { "user-task.md": "# User Task\n\n地の文だけの依頼。\n" } });
   const h3 = deps(fakeAzdo().fetch);
   await runPr({ root: r3, config: c3, dryRun: true }, h3.d);
+  assert.match(h3.all(), /## 対応した内容（作業記録の要約）\n元積の表に共通の罫線を入れた。/);
+  assert.match(h3.all(), /チェックボックスの項目が無いため/);
   assert.match(h3.all(), /突き合わせ: このタスクの変更宣言の記録が無いため省きました/);
-  assert.match(h3.all(), /## 変更したファイル（このブランチの変更・2 件）\n- `src\/a\.tsx`\n- `src\/x\.cs`/);
 });
 
 test("266: an oversized record is trimmed in stages with an explicit note; if it still does not fit, no PR is made", async () => {
   const { root, config } = makeRoot();
-  const many = Array.from({ length: 20 }, (_, i) => `- 手動確認 ${i} ${"あ".repeat(150)}`).join("\n");
-  const backlog = Array.from({ length: 20 }, (_, i) => `### BL-${900 + i}\n- Summary: ${"い".repeat(200)}。\n`).join("\n");
-  const dir = seedArchive(root, {
-    override: {
-      "task-metadata.json": JSON.stringify({ featureName: "f", summary: "う".repeat(3000) }),
-      "current-result.md": FILES["current-result.md"].replace("- 画面で罫線の色を目視する。理由は自動化できないため。", many),
-      "current-review.md": FILES["current-review.md"].replace(/### BL-900[\s\S]*?- Status: open\n/, backlog)
-    }
-  });
+  const items = Array.from({ length: 60 }, (_, i) => `- [ ] 項目 ${i} ${"あ".repeat(150)}。続きの注文。\n  1. 子の項目`).join("\n");
+  const dir = seedArchive(root, { override: { "user-task.md": `# U\n\n### 画面\n\n${items}\n` } });
   const d = buildDescription(readPrSource(root, dir), []);
   assert.equal(d.overLimit, false);
   assert.ok(d.chars <= DESCRIPTION_LIMIT, `${d.chars}`);
-  assert.ok(d.truncations.length > 0);
+  assert.deepEqual(d.truncations, ["対応した内容"]);
   assert.match(d.description, /以下省略。全文はタスクの記録を参照/);
+  assert.match(d.description, /ほか \d+ 件/);
   assert.ok(isUntouchedByHuman(d.description), "trimmed text still carries its key");
 
-  // パスが極端に長いと、全段を締めても収まらない → 作らない
-  const longFiles = Array.from({ length: 40 }, (_, i) => `src/${"d".repeat(300)}/${i}.tsx`);
+  // 見出しが極端に長く、全段を締めても収まらない → 作らない
+  const groups = Array.from({ length: 30 }, (_, i) => `### ${"見".repeat(300)}${i}\n\n- [ ] 項目`).join("\n\n");
+  seedArchive(root, { stamp: "20261021T000000", override: { "user-task.md": `# U\n\n${groups}\n` } });
   const azdo = fakeAzdo();
-  const r = await runPr({ root, config: withPr(config) }, deps(azdo.fetch, undefined, undefined, { changed: longFiles }).d);
+  const r = await runPr({ root, config: withPr(config) }, deps(azdo.fetch).d);
   assert.equal(r.exitCode, 1);
   assert.deepEqual(writes(azdo.calls), [], "no PR when the description cannot fit");
 });
@@ -513,31 +539,32 @@ test("275: end to end — a real reflection's archive and Event Log feed the dry
   writeIn(root, "task-metadata.json", validTaskMetadata);
   writeIn(root, "context-package.md", "# Files\n\n## Modify\n\n- `src/first.tsx`\n");
   writeIn(root, "current-task.md", `# Task\n\n- Task ID: ${TASK_ID}\n`);
+  writeIn(root, "user-task.md", "# U\n\n### 一覧画面\n\n- [ ] 列を削除する。\n");
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
   assert.equal(runReflection(root, config).kind, "transitioned");
   const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: ["src/first.tsx", "src/other.cs"] });
   const r = await runPr({ root, config, dryRun: true }, h.d);
   assert.equal(r.kind, "dry-run");
   assert.match(h.all(), new RegExp(`（${TASK_ID}）`));
-  assert.match(h.all(), /## 変更したファイル（このブランチの変更・2 件）\n- `src\/first\.tsx`\n- `src\/other\.cs`/);
+  assert.match(h.all(), /## 対応した内容\n\n### 一覧画面\n- 列を削除する。/, "user-task.md is archived and read");
+  assert.match(h.all(), /変更ファイル（ブランチの差分）: 2 件/);
   assert.doesNotMatch(h.all(), /変更宣言にあってブランチの差分に無い/, "the archived declaration is all in the branch");
   // implementation / fix が走っていないタスクなので、検査の記録は無いと書く（済みと書かない）
   assert.match(h.all(), /突き合わせ: 検査の記録なし/);
 });
 
-// ---- 2026-10-23 改訂（初回の --dry-run から・docs/design-pr.md §A-2b / §A-3 追記）-------------------
+// ---- 2026-10-23 改訂（初回の --dry-run から・docs/design-pr.md §A-2b / §A-3 追記 / §A-6）---------------
 
-test("276: changed files come from the branch diff; declared files missing from it (e.g. ignored e2e) go to stdout only", async () => {
+test("276: the branch diff is compared with the declaration on stdout; neither file list goes into the description", async () => {
   const { root, config } = makeRoot();
   seedArchive(root, {
     override: { "context-package.md": "# Files\n\n## Modify\n\n- `src/a.tsx`\n- `tests/e2e/ignored.spec.ts`\n- `src/uncommitted.tsx`\n" }
   });
   const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: ["src/a.tsx", "src/x.cs"], ignored: ["tests/e2e/ignored.spec.ts"] });
   await runPr({ root, config, dryRun: true }, h.d);
-  const description = h.all().split("----- 説明文 -----")[1];
-  assert.match(description, /## 変更したファイル（このブランチの変更・2 件）\n- `src\/a\.tsx`\n- `src\/x\.cs`/);
-  assert.doesNotMatch(description, /ignored\.spec|uncommitted/, "declared-only files are not in the customer text");
-  const head = h.all().split("----- 説明文 -----")[0];
+  const [head, description] = h.all().split("----- 説明文 -----");
+  assert.doesNotMatch(description, /src\/|ignored\.spec|変更したファイル/, "no file list in the customer text");
+  assert.match(head, /変更ファイル（ブランチの差分）: 2 件/);
   assert.match(head, /変更宣言にあってブランチの差分に無いファイル（2 件・説明文には出していません）/);
   assert.match(head, /tests\/e2e\/ignored\.spec\.ts（ignore 対象）/);
   assert.match(head, /src\/uncommitted\.tsx（差分に無い/);
@@ -550,15 +577,15 @@ test("276: changed files come from the branch diff; declared files missing from 
   assert.match(h2.all(), /origin\/feature\/sample が無いため、ローカルの HEAD と比べました/);
   assert.ok(h2.gitCalls.some((a) => a.join(" ") === "merge-base origin/master HEAD"));
 
-  // 本実行でも同じ差分が説明文に入る（対象ブランチは API の既定ブランチ）
+  // 本実行でも突き合わせは stderr に出る
   const azdo = fakeAzdo();
   const h3 = deps(azdo.fetch, undefined, undefined, { changed: ["src/a.tsx"], ignored: ["tests/e2e/ignored.spec.ts"] });
   assert.equal((await runPr({ root, config: withPr(config) }, h3.d)).kind, "created");
-  assert.match(azdo.prs[0].description, /## 変更したファイル（このブランチの変更・1 件）\n- `src\/a\.tsx`\n事前に/);
+  assert.doesNotMatch(azdo.prs[0].description, /src\//);
   assert.match(h3.err.join("\n"), /ignore 対象/);
 });
 
-test("277: a multi-line Backlog Summary is read through its continuation lines", () => {
+test("277: a multi-line Backlog Summary is read through its continuation lines (internal report)", () => {
   const { root } = makeRoot();
   const dir = seedArchive(root, {
     override: {
@@ -571,7 +598,7 @@ test("277: a multi-line Backlog Summary is read through its continuation lines",
   const src = readPrSource(root, dir);
   assert.ok(src.review.state === "present");
   assert.deepEqual(src.review.backlog, ["契約が 2 行に与えられており、 親行の下に別の子が並ぶ。続きの文。"]);
-  assert.match(buildDescription(src, []).description, /- 契約が 2 行に与えられており、親行の下に別の子が並ぶ。\n/);
+  assert.ok(internalReport(src, null).some((l) => l.includes("親行の下に別の子が並ぶ")));
 });
 
 test("278: 'ID ×N' becomes a known-issue count, and file names containing e2e are left as they are", () => {
@@ -584,18 +611,73 @@ test("279: real-data-looking words are listed for the human, not removed from th
   const { root, config } = makeRoot();
   seedArchive(root, {
     override: {
-      "current-review.md": FILES["current-review.md"].replace(
-        "- Summary: R5 の記録に穴がある。詳細は後述。",
-        "- Summary: 契約 `19080010` が `K0221100 城南設備` と `B0900002 東都電工` の 2 行にある。"
-      )
+      "user-task.md": "# U\n\n### 取極タブ\n\n- [ ] 契約 `19080010` の `K0221100 城南設備` と `B0900002 東都電工` を親子で表示する。\n- [ ] CSV を「実行予算_建設クラウドWeb版連携用CSV」にする。\n"
     }
   });
   const h = deps(fakeAzdo().fetch);
   await runPr({ root, config, dryRun: true }, h.d);
   const [head, body] = h.all().split("----- 説明文 -----");
   assert.match(head, /実データらしい語があります/);
-  for (const w of ["19080010", "K0221100", "B0900002", "城南設備", "東都電工"]) assert.ok(head.includes(w), w);
-  assert.ok(body.includes("19080010"), "not removed: rewording is the human's call");
   const listed = head.split("実データらしい語があります")[1].split("\n")[1];
-  assert.doesNotMatch(listed, /2026|\b335\b/, "dates and small counts are not flagged");
+  for (const w of ["19080010", "K0221100", "B0900002", "城南設備", "東都電工"]) assert.ok(listed.includes(w), w);
+  assert.doesNotMatch(listed, /実行予算_建設|2026/, "a product name ending in 建設+katakana and dates are not flagged");
+  assert.ok(body.includes("19080010"), "not removed: rewording is the human's call");
 });
+
+test("280: the request checklist is read by screen / tab, with checkbox items only and their numbered children", () => {
+  const groups = parseRequested(FILES["user-task.md"]);
+  assert.deepEqual(groups, [
+    {
+      heading: "実行予算作成画面 / 予算編集タブ",
+      items: [
+        { text: "「予算キー」は不要。列表示メニューからも再表示できないようにする。", sub: [] },
+        { text: "帳票出力のリストを、以下の2種類のみにする。", sub: ["1. 実行予算書", "2. 元積内訳書"] }
+      ]
+    }
+  ]);
+  // 進め方・完了条件（チェックボックスでない箇条書き）は拾わない
+  assert.ok(!JSON.stringify(groups).includes("関連テスト"));
+  // 見出しが ### より浅いだけなら、その見出しでまとめる
+  assert.deepEqual(parseRequested("## 依頼\n\n- [ ] 一つ目\n"), [{ heading: "依頼", items: [{ text: "一つ目", sub: [] }] }]);
+});
+
+test("281: screenshots pair by name across the feature's tasks — the first 'before' and the last 'after'", () => {
+  const { root } = makeRoot();
+  const first = seedArchive(root, { stamp: "20261020T010000", override: { "current-task.md": "# Task\n\n- Task ID: TASK-a\n" } });
+  const second = seedArchive(root, { stamp: "20261020T020000", override: { "current-task.md": "# Task\n\n- Task ID: TASK-b\n" } });
+  seedArchive(root, { stamp: "20261020T030000", override: { "current-task.md": "# Task\n\n- Task ID: TASK-c\n" } });
+  seedScreenshot(root, "before-grid.png", "TASK-a");
+  seedScreenshot(root, "after-grid.png", "TASK-a");
+  seedScreenshot(root, "before-grid.png", "TASK-b"); // 2 回目の変更前は使わない（PR 全体の変更前は最初のもの）
+  seedScreenshot(root, "after-grid.png", "TASK-b");
+  seedScreenshot(root, "after-dialog.png", "TASK-b");
+  seedScreenshot(root, "after-later.png", "TASK-c"); // このタスクより後のタスクは含めない
+  const rel = (f: string | null): string | null => (f ? path.relative(root, f).replace(/\\/g, "/") : null);
+  const shots = readPrSource(root, second).shots.map((s) => ({ name: s.name, before: rel(s.before), after: rel(s.after) }));
+  assert.deepEqual(shots, [
+    { name: "dialog", before: null, after: "runs/TASK-b/screenshots/after-dialog.png" },
+    { name: "grid", before: "runs/TASK-a/screenshots/before-grid.png", after: "runs/TASK-b/screenshots/after-grid.png" }
+  ]);
+  assert.equal(readPrSource(root, first).shots.length, 1);
+  const d = buildDescription(readPrSource(root, second), [
+    { name: "dialog", before: null, after: { url: "u1", displayPath: "p1" } },
+    { name: "grid", before: { url: null, displayPath: "runs/x/before-grid.png" }, after: { url: "u2", displayPath: "p2" } }
+  ]);
+  assert.match(d.description, /\| dialog \| （なし） \| !\[変更後 dialog\]\(u1\) \|/);
+  assert.match(d.description, /\| grid \| 保存先: `runs\/x\/before-grid\.png` \| !\[変更後 grid\]\(u2\) \|/);
+});
+
+test("282: the description has only the two sections; the internal record stays on stdout", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  const h = deps(fakeAzdo().fetch);
+  await runPr({ root, config, dryRun: true }, h.d);
+  const [head, body] = h.all().split("----- 説明文 -----");
+  const headings = [...body.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(headings, ["対応した内容"], "no 概要 / 確認結果 / レビュー / 変更したファイル (and no 画面 without screenshots)");
+  assert.match(body, /### 実行予算作成画面 \/ 予算編集タブ\n- 「予算キー」は不要。列表示メニューからも再表示できないようにする。\n- 帳票出力のリストを、以下の2種類のみにする。\n  1\. 実行予算書\n  2\. 元積内訳書/);
+  assert.match(head, /--- 内部の確認結果（説明文には出しません）---/);
+  assert.match(head, /受け入れ条件: PASS 1 \/ FAIL 1 \/ NOT VERIFIED 1（全 3）/);
+  assert.match(head, /レビュー: Critical 0 \/ Major 1/);
+});
+

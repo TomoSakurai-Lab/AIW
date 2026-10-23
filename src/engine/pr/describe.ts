@@ -1,8 +1,9 @@
 // aiw pr の説明文（docs/design-pr.md §A）。**純関数**: 入力 = source.ts の結果と画像の添付結果、出力 = 文字列。
 //
-// 客先レビュアー向けの日本語。内部用語（aiw / ステップ名 / validator 名 / BL-ID 等）は出さない（§A-3）。
-// ⚠️ 自由記述（summary・手動確認・別途対応）は **ID の除去と定型語の置換だけ**で、言い換えはしない
-// （機械が意味を変えないため）。客先向けの文に直すのは draft の段階の人間（公開ボタン = 署名）。
+// 2026-10-23 改訂（§A-6・人間の判断）: 説明文は **「対応した内容」と「画面（変更前 → 変更後）」の 2 節だけ**。
+// 「対応した内容」は依頼文（user-task.md）のチェックボックスの項目 = 客先の言葉。
+// 概要・確認結果・レビュー・変更ファイルは客先向けには分かりにくかったので、`internalReport` として stdout にだけ出す。
+// 内部用語（aiw / ステップ名 / validator 名 / BL-ID 等）は出さない（§A-3）。言い換えはしない（機械が意味を変えないため）。
 // 欠けた成果物は「記録なし」と書く。**0 件・確認済みへ丸めない。**
 import { createHash } from "node:crypto";
 import type { PrSource } from "./source.js";
@@ -13,14 +14,11 @@ export const DESCRIPTION_LIMIT = 4000;
 const SEPARATOR = "\n\n---\n";
 const OMITTED = "（以下省略。全文はタスクの記録を参照）";
 
-export type PrImage = {
-  /** 説明文での画面名（`after-` と拡張子を除いた名前） */
-  label: string;
-  /** 添付後の URL。null = 添付できなかった（縮退して保存先を書く） */
-  url: string | null;
-  /** 縮退したときに書く保存先（runtimeRoot の親からの相対） */
-  displayPath: string;
-};
+/** 1 枚の画像の置き場所。url が null = 添付できなかった（縮退して保存先を書く） */
+export type ImageRef = { url: string | null; displayPath: string };
+
+/** 説明文の 1 行分の画面（名前で対にした変更前 / 変更後）。片方が無ければ null */
+export type ScreenPair = { name: string; before: ImageRef | null; after: ImageRef | null };
 
 /** ブランチの差分（§A-2b）。run.ts が git の読み取りで作る。null = 取れなかった */
 export type BranchChanges = { files: string[] };
@@ -90,8 +88,9 @@ export function sensitiveCandidates(description: string): string[] {
   const patterns = [
     /\b[A-Za-z]{1,3}\d{6,}\b/g, // 英字 + 6 桁以上（取引先・品目コード）
     /(?<![\w.-])\d{6,}(?![\w.-])/g, // 6 桁以上の数字（契約番号など。ファイル名・バージョンの一部は除く）
-    /[^\s`'"「」（）()、。・/]{1,12}(?:株式会社|有限会社|㈱|（株）|建設|工業|電工|設備|商事|工務店|電機|興業)/g,
-    /(?:株式会社|有限会社|㈱|（株）)[^\s`'"「」（）()、。・/]{1,12}/g
+    // 語尾の後に漢字・カタカナが続くものは社名ではない（実例: `実行予算_建設クラウド` を誤検出した）。`_` も区切りとして扱う
+    /[^\s`'"「」（）()、。・/_]{1,12}(?:株式会社|有限会社|㈱|（株）|建設|工業|電工|設備|商事|工務店|電機|興業)(?![\p{Script=Han}\p{Script=Katakana}])/gu,
+    /(?:株式会社|有限会社|㈱|（株）)[^\s`'"「」（）()、。・/_]{1,12}/g
   ];
   for (const re of patterns) {
     for (const m of description.matchAll(re)) found.add(m[0]);
@@ -144,115 +143,141 @@ export function isUntouchedByHuman(description: string): boolean {
   return key !== undefined && keyOf(text.slice(0, at)) === key;
 }
 
-// ---- 組み立て ---------------------------------------------------------------------------------
+// ---- 組み立て（§A-6: 「対応した内容」と「画面」の 2 節）------------------------------------------
 
-type Budget = { backlogChars: number | null; manualChars: number | null; fileCount: number; summaryChars: number | null; listCount: number | null };
+/** 4000 字に収めるための段（§A-4）。上から順に締める */
+type Budget = { itemChars: number | null; subs: boolean; maxItems: number | null };
 
 const BUDGETS: Budget[] = [
-  { backlogChars: null, manualChars: null, fileCount: 30, summaryChars: null, listCount: null },
-  { backlogChars: 60, manualChars: null, fileCount: 30, summaryChars: null, listCount: null },
-  { backlogChars: 60, manualChars: 80, fileCount: 30, summaryChars: null, listCount: null },
-  { backlogChars: 60, manualChars: 80, fileCount: 15, summaryChars: null, listCount: null },
-  { backlogChars: 60, manualChars: 80, fileCount: 15, summaryChars: 600, listCount: null },
-  { backlogChars: 60, manualChars: 80, fileCount: 15, summaryChars: 600, listCount: 5 }
+  { itemChars: null, subs: true, maxItems: null },
+  { itemChars: 120, subs: true, maxItems: null },
+  { itemChars: 120, subs: false, maxItems: null },
+  { itemChars: 80, subs: false, maxItems: null },
+  { itemChars: 60, subs: false, maxItems: 25 }
 ];
 
-function list(items: string[], maxChars: number | null, maxCount: number | null, cuts: Set<string>, name: string): string[] {
-  const shown = maxCount !== null && items.length > maxCount ? items.slice(0, maxCount) : items;
-  const lines = shown.map((i) => {
-    const s = maxChars !== null ? cut(i, maxChars) : i;
-    if (s !== i) cuts.add(name);
-    return `- ${s}`;
-  });
-  if (shown.length < items.length) {
-    cuts.add(name);
-    lines.push(`- ほか ${items.length - shown.length} 件`);
+/**
+ * 依頼の 1 項目の本文: **全文**を ID 除去と定型語の置換だけして使う。
+ * 1 文目だけにすると意味が落ちる（実例: 「「予算キー」は不要。」だけでは何を変えたか分からない）。長ければ予算の段で切る
+ */
+function itemText(raw: string, b: Budget, cuts: Set<string>): string {
+  const s = scrub(raw);
+  if (b.itemChars !== null && s.length > b.itemChars) {
+    cuts.add("対応した内容");
+    return cut(s, b.itemChars);
   }
-  if (cuts.has(name)) lines.push(OMITTED);
-  return lines;
+  return s;
 }
 
-function buildBody(src: PrSource, images: PrImage[], changes: BranchChanges | null, b: Budget, cuts: Set<string>): string {
-  const out: string[] = [];
+function cell(ref: ImageRef | null, label: string): string {
+  if (ref === null) return "（なし）";
+  if (ref.url !== null) return `![${label}](${ref.url})`;
+  return `保存先: \`${ref.displayPath}\``;
+}
 
-  // 概要
-  out.push("## 概要");
-  const summary = src.metadata?.summary ? scrub(src.metadata.summary) : null;
-  if (summary === null) {
-    out.push("タスクの要約の記録なし");
-  } else if (b.summaryChars !== null && summary.length > b.summaryChars) {
-    cuts.add("概要");
-    out.push(cut(summary, b.summaryChars), OMITTED);
+function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<string>): string {
+  const out: string[] = ["## 対応した内容"];
+  const groups = src.requested;
+  if (groups === null) {
+    out.push("依頼の記録なし");
+  } else if (groups.length === 0) {
+    // 依頼文にチェックボックスの項目が無い → 作業記録の要約で代える（見出しで区別する）
+    out.splice(0, 1, "## 対応した内容（作業記録の要約）");
+    out.push(src.metadata?.summary ? scrub(src.metadata.summary) : "要約の記録なし");
   } else {
-    out.push(summary);
-  }
-
-  // 変更したファイル（2026-10-23 改訂・§A-2b）: ブランチの差分。archive の宣言は突き合わせ用で、ここには出さない
-  // （宣言には親リポで ignore されて PR に入らないファイルが含まれる）
-  out.push("");
-  if (changes === null) {
-    out.push("## 変更したファイル", "このブランチの変更ファイルを取得できなかった");
-  } else if (changes.files.length === 0) {
-    out.push("## 変更したファイル（このブランチの変更）", "変更なし");
-  } else {
-    out.push(`## 変更したファイル（このブランチの変更・${changes.files.length} 件）`);
-    out.push(...list(changes.files.map((f) => `\`${f}\``), null, b.fileCount, cuts, "変更したファイル"));
-  }
-  out.push(`事前に宣言した変更範囲と実際の差分の突き合わせ: ${diffScopeLine(src)}`);
-
-  // 確認結果
-  out.push("", "## 確認結果");
-  const ac = src.acceptance;
-  if (ac === null) {
-    out.push("受け入れ条件: 記録なし");
-  } else {
-    const total = ac.pass + ac.fail + ac.notVerified + ac.unrecognized;
-    out.push(
-      total === 0
-        ? "受け入れ条件: 記録なし（集計できる行がない）"
-        : `受け入れ条件: 確認済み ${ac.pass} / 不合格 ${ac.fail} / 未確認 ${ac.notVerified}${ac.unrecognized > 0 ? ` / 判定不明 ${ac.unrecognized}` : ""}（全 ${total} 件）`
-    );
-  }
-  const mv = src.manualVerification;
-  if (mv === null) {
-    out.push("手動での確認が必要な項目: 記録なし");
-  } else if (mv.length === 0) {
-    out.push("手動での確認が必要な項目: なし");
-  } else {
-    out.push(`手動での確認が必要な項目（${mv.length} 件）:`);
-    out.push(...list(mv.map((m) => scrub(firstSentence(m))), b.manualChars, b.listCount, cuts, "手動での確認"));
-  }
-
-  // レビュー
-  out.push("", "## レビュー");
-  const r = src.review;
-  if (r.state === "absent") {
-    out.push("レビュー記録なし");
-  } else if (r.state === "template") {
-    out.push("レビュー記録なし（記録が空のまま）");
-  } else {
-    out.push(`重大な指摘 ${r.critical} 件 / 主要な指摘 ${r.major} 件（レビュー時点）`);
-    out.push(`- 修正: ${fixLine(src, r.critical + r.major)}`);
-    if (r.backlog === null) {
-      out.push("- 今回は対応せず別途対応とした事項: 記録なし");
-    } else if (r.backlog.length > 0) {
-      out.push(`- 今回は対応せず別途対応とした事項（${r.backlog.length} 件）:`);
-      out.push(...list(r.backlog.map((s) => scrub(firstSentence(s))), b.backlogChars, b.listCount, cuts, "別途対応").map((l) => `  ${l}`));
+    let shown = 0;
+    const total = groups.reduce((n, g) => n + g.items.length, 0);
+    for (const g of groups) {
+      if (b.maxItems !== null && shown >= b.maxItems) break;
+      out.push("", `### ${g.heading}`);
+      for (const item of g.items) {
+        if (b.maxItems !== null && shown >= b.maxItems) break;
+        out.push(`- ${itemText(item.text, b, cuts)}`);
+        if (b.subs) for (const s of item.sub) out.push(`  ${scrub(s)}`);
+        else if (item.sub.length > 0) cuts.add("対応した内容");
+        shown++;
+      }
     }
+    if (shown < total) {
+      cuts.add("対応した内容");
+      out.push("", `ほか ${total - shown} 件`);
+    }
+    if (cuts.has("対応した内容")) out.push("", OMITTED);
   }
 
-  // 画面
-  if (images.length > 0) {
-    out.push("", "## 画面");
-    const attached = images.filter((i) => i.url !== null);
-    const degraded = images.filter((i) => i.url === null);
-    for (const img of attached) out.push(`![${img.label}](${img.url})`);
-    if (degraded.length > 0) {
-      out.push("画面の記録はタスクの作業フォルダに保存しています:");
-      for (const img of degraded) out.push(`- \`${img.displayPath}\``);
-    }
+  if (screens.length > 0) {
+    out.push("", "## 画面（変更前 → 変更後）", "", "| 画面 | 変更前 | 変更後 |", "| --- | --- | --- |");
+    for (const s of screens) out.push(`| ${s.name} | ${cell(s.before, `変更前 ${s.name}`)} | ${cell(s.after, `変更後 ${s.name}`)} |`);
   }
   return out.join("\n");
+}
+
+export function buildTitle(src: PrSource): string {
+  return src.metadata?.featureName ?? src.metadata?.taskName ?? src.taskId ?? "変更の提出";
+}
+
+/** 予算を段階的に締め、4000 字に収まった最初の版を返す。最後の段でも超えたら overLimit。 */
+export function buildDescription(src: PrSource, screens: ScreenPair[]): Description {
+  let last: { body: string; cuts: Set<string> } | null = null;
+  for (const b of BUDGETS) {
+    const cuts = new Set<string>();
+    const body = buildBody(src, screens, b, cuts);
+    last = { body, cuts };
+    const key = keyOf(body);
+    const description = `${normalize(body)}${SEPARATOR}${footer(key)}`;
+    if (description.length <= DESCRIPTION_LIMIT) {
+      return finish(src, description, key, cuts, false);
+    }
+  }
+  const key = keyOf(last!.body);
+  return finish(src, `${normalize(last!.body)}${SEPARATOR}${footer(key)}`, key, last!.cuts, true);
+}
+
+function finish(src: PrSource, description: string, key: string, cuts: Set<string>, overLimit: boolean): Description {
+  const free =
+    src.requested && src.requested.length > 0
+      ? src.requested.flatMap((g) => g.items.map((i) => scrub(i.text)))
+      : [src.metadata?.summary ? scrub(src.metadata.summary) : ""];
+  return {
+    title: buildTitle(src),
+    description,
+    generationKey: key,
+    chars: description.length,
+    truncations: [...cuts],
+    leftoverJargon: countLeftoverJargon(free),
+    overLimit
+  };
+}
+
+// ---- 内部の確認結果（stdout だけ・説明文には出さない）---------------------------------------------
+
+/**
+ * 以前は説明文に載せていた記録（概要・変更ファイル・突き合わせ・確認結果・レビュー）。客先向けには分かりにくいので
+ * 説明文から外したが、**人間には見えたまま**にする（黙って捨てない）。生の記録をそのまま短く出す（scrub しない）。
+ */
+export function internalReport(src: PrSource, changes: BranchChanges | null): string[] {
+  const out: string[] = [];
+  const summary = src.metadata?.summary;
+  out.push(`概要（task-metadata）: ${summary ? cut(summary, 200) : "記録なし"}`);
+  out.push(`変更ファイル（ブランチの差分）: ${changes === null ? "取れない" : `${changes.files.length} 件`}`);
+  out.push(`宣言との突き合わせ: ${diffScopeLine(src)}`);
+  const ac = src.acceptance;
+  const total = ac ? ac.pass + ac.fail + ac.notVerified + ac.unrecognized : 0;
+  out.push(
+    `受け入れ条件: ${ac === null ? "記録なし" : total === 0 ? "記録なし（集計できる行がない）" : `PASS ${ac.pass} / FAIL ${ac.fail} / NOT VERIFIED ${ac.notVerified}${ac.unrecognized > 0 ? ` / 判定不明 ${ac.unrecognized}` : ""}（全 ${total}）`}`
+  );
+  const mv = src.manualVerification;
+  out.push(`手動確認: ${mv === null ? "記録なし" : mv.length === 0 ? "なし" : `${mv.length} 件`}`);
+  for (const m of mv ?? []) out.push(`  - ${cut(m, 120)}`);
+  const r = src.review;
+  if (r.state !== "present") {
+    out.push(`レビュー: ${r.state === "absent" ? "記録なし" : "記録なし（テンプレートのまま）"}`);
+  } else {
+    out.push(`レビュー: Critical ${r.critical} / Major ${r.major}・修正: ${fixLine(src, r.critical + r.major)}`);
+    out.push(`別途対応（Backlog）: ${r.backlog === null ? "記録なし" : `${r.backlog.length} 件`}`);
+    for (const s of r.backlog ?? []) out.push(`  - ${cut(s, 120)}`);
+  }
+  return out;
 }
 
 function diffScopeLine(src: PrSource): string {
@@ -272,40 +297,3 @@ function fixLine(src: PrSource, findings: number): string {
   return p.improveCheckPassed === true ? `修正を ${p.fixRuns} 回行い、修正後の確認を通過` : `修正を ${p.fixRuns} 回行った（修正後の確認の結果は記録なし）`;
 }
 
-export function buildTitle(src: PrSource): string {
-  return src.metadata?.featureName ?? src.metadata?.taskName ?? src.taskId ?? "変更の提出";
-}
-
-/** 予算を段階的に締め、4000 字に収まった最初の版を返す。最後の段でも超えたら overLimit。 */
-export function buildDescription(src: PrSource, images: PrImage[], changes: BranchChanges | null = null): Description {
-  let last: { body: string; cuts: Set<string> } | null = null;
-  for (const b of BUDGETS) {
-    const cuts = new Set<string>();
-    const body = buildBody(src, images, changes, b, cuts);
-    last = { body, cuts };
-    const key = keyOf(body);
-    const description = `${normalize(body)}${SEPARATOR}${footer(key)}`;
-    if (description.length <= DESCRIPTION_LIMIT) {
-      return finish(src, description, key, cuts, false);
-    }
-  }
-  const key = keyOf(last!.body);
-  return finish(src, `${normalize(last!.body)}${SEPARATOR}${footer(key)}`, key, last!.cuts, true);
-}
-
-function finish(src: PrSource, description: string, key: string, cuts: Set<string>, overLimit: boolean): Description {
-  const free = [
-    src.metadata?.summary ? scrub(src.metadata.summary) : "",
-    ...(src.manualVerification ?? []).map((m) => scrub(firstSentence(m))),
-    ...(src.review.state === "present" ? (src.review.backlog ?? []).map((s) => scrub(firstSentence(s))) : [])
-  ];
-  return {
-    title: buildTitle(src),
-    description,
-    generationKey: key,
-    chars: description.length,
-    truncations: [...cuts],
-    leftoverJargon: countLeftoverJargon(free),
-    overLimit
-  };
-}

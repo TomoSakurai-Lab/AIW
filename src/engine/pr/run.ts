@@ -13,7 +13,17 @@ import { appendEvent, type EventType } from "../eventLog.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
 import type { PrSettings, WorkflowConfig } from "../types.js";
 import { AzdoClient, AzdoError, deriveFromRemote, resolveTarget, type AzdoPullRequest, type FetchImpl } from "./azdo.js";
-import { buildDescription, DESCRIPTION_LIMIT, isUntouchedByHuman, sensitiveCandidates, type BranchChanges, type Description, type PrImage } from "./describe.js";
+import {
+  buildDescription,
+  DESCRIPTION_LIMIT,
+  internalReport,
+  isUntouchedByHuman,
+  sensitiveCandidates,
+  type BranchChanges,
+  type Description,
+  type ImageRef,
+  type ScreenPair
+} from "./describe.js";
 import { PAT_ENV, patFromEnv, redactPat, type PatSecret } from "./secret.js";
 import { listArchivedTaskDirs, readPrSource, type PrSource } from "./source.js";
 
@@ -47,7 +57,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** settings.pr に書かれていたら止めるキー（PAT は env のみ）。**値は表示しない** */
 const SECRET_KEY = /pat|token|secret|password|credential/i;
 
-type PlannedImage = { file: string; uploadName: string; label: string; displayPath: string; bytes: Buffer | null; skipReason: string | null };
+type PlannedImage = { file: string; uploadName: string; displayPath: string; bytes: Buffer | null; skipReason: string | null };
 
 export async function runPr(opts: PrOptions, deps: PrDeps): Promise<PrOutcome> {
   const pat = patFromEnv(deps.env);
@@ -174,10 +184,11 @@ function resolveTaskDir(opts: PrOptions): string | null {
   return listArchivedTaskDirs(opts.root)[0] ?? null;
 }
 
+/** 変更前 → 変更後の順に、対の画像を 1 枚ずつ添付の計画にする（添付名は内容の hash つき = 同じ内容なら同じ名前） */
 function planImages(root: string, src: PrSource): PlannedImage[] {
   const base = path.dirname(path.resolve(root));
-  return src.screenshots.map((file, i) => {
-    const name = path.basename(file).replace(/\.png$/i, "").replace(/^after-/i, "");
+  const files = src.shots.flatMap((s) => [s.before, s.after].filter((f): f is string => f !== null));
+  return files.map((file, i) => {
     const displayPath = path.relative(base, file).replace(/\\/g, "/");
     let bytes: Buffer | null = null;
     let skipReason: string | null = null;
@@ -189,8 +200,18 @@ function planImages(root: string, src: PrSource): PlannedImage[] {
       bytes = readFileSync(file);
     }
     const hash = createHash("sha1").update(bytes ?? Buffer.from(file)).digest("hex").slice(0, 8);
-    return { file, uploadName: `after-${name}.${hash}.png`, label: name, displayPath, bytes, skipReason };
+    return { file, uploadName: `${path.basename(file).replace(/\.png$/i, "")}.${hash}.png`, displayPath, bytes, skipReason };
   });
+}
+
+/** 添付の結果（ファイル → 置き場所）から、説明文の画面の対を作る。結果に無いファイルは保存先へ縮退 */
+function screensOf(src: PrSource, planned: PlannedImage[], refs: Map<string, ImageRef>): ScreenPair[] {
+  const ref = (file: string | null): ImageRef | null => {
+    if (file === null) return null;
+    const p = planned.find((x) => x.file === file);
+    return refs.get(file) ?? { url: null, displayPath: p?.displayPath ?? file };
+  };
+  return src.shots.map((s) => ({ name: s.name, before: ref(s.before), after: ref(s.after) }));
 }
 
 type LocalBranch = { branch: string | null; reason: string | null; unpushed: number | null };
@@ -368,13 +389,13 @@ async function runCreateOrUpdate(
     warn(`⚠ ${local.branch} にまだ push していないコミットが ${local.unpushed} 件あります（PR の差分には入りません）。`);
   }
 
-  // 説明文はブランチの差分が決まってから組む（§A-2b）。API の書き込みより前に、字数超過で止める
+  // ブランチの差分は説明文には出さず（§A-6）、宣言との突き合わせを stdout に出すためだけに取る（§A-2b）
   const diff = branchChanges(opts, deps, local.branch, targetBranch);
   if (diff.note) warn(`⚠ ${diff.note}`);
   reportDeclaredGaps(opts, deps, src, diff.changes, warn);
-  const describe = (images: PrImage[]): Description => buildDescription(src, images, diff.changes);
-  // 添付前の版（画像は全部「保存先」）。作成直後に PATCH が失敗しても、この版が正直な説明文として残る
-  const initial = describe(planned.map((p) => ({ label: p.label, url: null, displayPath: p.displayPath })));
+  const describe = (refs: Map<string, ImageRef>): Description => buildDescription(src, screensOf(src, planned, refs));
+  // 添付前の版（画像は全部「保存先」）。作成直後に PATCH が失敗しても、この版が正直な説明文として残る。API の書き込みより前に字数超過で止める
+  const initial = describe(new Map());
   if (initial.overLimit) {
     warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${initial.chars} 字）。PR を作りません。--dry-run で内容を確認してください。`);
     record("pr.failed", { stage: "describe", chars: initial.chars, taskDir: relTask });
@@ -410,33 +431,34 @@ async function attach(
   prId: number,
   planned: PlannedImage[],
   existing: Map<string, string>
-): Promise<{ images: PrImage[]; failures: string[]; uploaded: number; reused: number }> {
-  const images: PrImage[] = [];
+): Promise<{ refs: Map<string, ImageRef>; failures: string[]; uploaded: number; reused: number }> {
+  const refs = new Map<string, ImageRef>();
   const failures: string[] = [];
   let uploaded = 0;
   let reused = 0;
   for (const p of planned) {
+    const label = path.basename(p.file);
     if (p.skipReason || !p.bytes) {
-      failures.push(`${p.label}: ${p.skipReason ?? "読めない"}`);
-      images.push({ label: p.label, url: null, displayPath: p.displayPath });
+      failures.push(`${label}: ${p.skipReason ?? "読めない"}`);
+      refs.set(p.file, { url: null, displayPath: p.displayPath });
       continue;
     }
     const known = existing.get(p.uploadName);
     if (known) {
       reused++;
-      images.push({ label: p.label, url: known, displayPath: p.displayPath });
+      refs.set(p.file, { url: known, displayPath: p.displayPath });
       continue;
     }
     try {
       const a = await client.uploadAttachment(prId, p.uploadName, p.bytes);
       uploaded++;
-      images.push({ label: p.label, url: a.url, displayPath: p.displayPath });
+      refs.set(p.file, { url: a.url, displayPath: p.displayPath });
     } catch (error) {
-      failures.push(`${p.label}: ${(error as Error).message}`);
-      images.push({ label: p.label, url: null, displayPath: p.displayPath });
+      failures.push(`${label}: ${(error as Error).message}`);
+      refs.set(p.file, { url: null, displayPath: p.displayPath });
     }
   }
-  return { images, failures, uploaded, reused };
+  return { refs, failures, uploaded, reused };
 }
 
 function reportAttachFailures(failures: string[], prId: number, warn: (l: string) => void, record: (e: EventType, f: Record<string, unknown>) => void): void {
@@ -448,7 +470,7 @@ function reportAttachFailures(failures: string[], prId: number, warn: (l: string
 
 async function create(
   client: AzdoClient,
-  describe: (images: PrImage[]) => Description,
+  describe: (refs: Map<string, ImageRef>) => Description,
   planned: PlannedImage[],
   initial: Description,
   base: Record<string, unknown>,
@@ -470,7 +492,7 @@ async function create(
   let final = initial;
   if (planned.length > 0) {
     const a = await attach(client, id, planned, new Map());
-    const withImages = describe(a.images);
+    const withImages = describe(a.refs);
     if (a.uploaded > 0 && !withImages.overLimit) {
       try {
         await client.updateDescription(id, withImages.description);
@@ -488,7 +510,7 @@ async function create(
 
 async function update(
   client: AzdoClient,
-  describe: (images: PrImage[]) => Description,
+  describe: (refs: Map<string, ImageRef>) => Description,
   planned: PlannedImage[],
   listed: AzdoPullRequest,
   base: Record<string, unknown>,
@@ -519,7 +541,7 @@ async function update(
     }
   }
   const a = await attach(client, id, planned, existing);
-  const desc = describe(a.images);
+  const desc = describe(a.refs);
   if (desc.overLimit) {
     warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${desc.chars} 字）。更新しません。`);
     record("pr.failed", { ...base, prId: id, stage: "describe", chars: desc.chars });
@@ -552,18 +574,27 @@ function dryRun(
   relTask: string,
   say: (l: string) => void
 ): PrOutcome {
-  const images: PrImage[] = planned.map((p) => ({ label: p.label, url: p.skipReason ? null : `<${p.uploadName} の添付後の URL>`, displayPath: p.displayPath }));
-  const desc = buildDescription(src, images, diff.changes);
+  const refs = new Map<string, ImageRef>(
+    planned.map((p) => [p.file, { url: p.skipReason ? null : `<${p.uploadName} の添付後の URL>`, displayPath: p.displayPath }])
+  );
+  const desc = buildDescription(src, screensOf(src, planned, refs));
   const resolved = resolveTarget(settings);
   say("=== aiw pr --dry-run（API は呼びません。Event Log にも書きません）===");
   say(`入力（タスクの記録）: ${relTask}${src.taskId ? `（${src.taskId}）` : ""}`);
   say(`接続先: ${resolved.ok ? `${resolved.target.baseUrl} / ${resolved.target.project} / ${resolved.target.repository}（api-version ${resolved.target.apiVersion}）` : `未設定（${resolved.missing.join(", ")}）`}`);
   say(`ソースブランチ: ${local.branch ?? `決められない（${local.reason}）`}`);
   say(`対象ブランチ: ${target ? `${target}${settings?.targetBranch?.trim() ? "" : "（origin/HEAD から。本実行ではリポジトリの既定ブランチを照会）"}` : "決められない（本実行でリポジトリの既定ブランチを照会）"}`);
-  say(`変更ファイル: ${diff.changes ? `${diff.changes.files.length} 件（ブランチの差分）` : "取れない"}`);
   if (diff.note) say(`⚠ ${diff.note}`);
   reportDeclaredGaps(opts, deps, src, diff.changes, say);
   reportSensitive(desc, say);
+  say("--- 内部の確認結果（説明文には出しません）---");
+  for (const l of internalReport(src, diff.changes)) say(l);
+  if (src.requested !== null && src.requested.length === 0) {
+    say("⚠ 依頼文（user-task.md）にチェックボックスの項目が無いため、「対応した内容」は作業記録の要約で代えています");
+  }
+  const unpaired = src.shots.filter((s) => s.before === null || s.after === null).map((s) => `${s.name}（${s.before === null ? "変更前" : "変更後"}なし）`);
+  if (unpaired.length > 0) say(`⚠ 対になっていない画面: ${unpaired.join(" / ")}`);
+  say("---");
   say("実行予定の操作:");
   say("  1. 同じソース・対象ブランチの active な PR を照会");
   say("  2a. 無ければ draft PR を作成（タイトル・説明文）");
@@ -572,7 +603,7 @@ function dryRun(
     say(`  3. 画像の添付（${planned.length} 枚・同名の添付があれば再利用）:`);
     for (const p of planned) say(`     - ${p.uploadName}${p.skipReason ? `（添付しない: ${p.skipReason}）` : ""}`);
   } else {
-    say("  3. 画像の添付: なし（runs/<Task ID>/screenshots/after-*.png が無い）");
+    say("  3. 画像の添付: なし（feature の各タスクの runs/<Task ID>/screenshots/ に before-* / after-* が無い）");
   }
   say(`タイトル（作成時のみ）: ${desc.title}`);
   say(`説明文: ${desc.chars} / ${DESCRIPTION_LIMIT} 字${desc.overLimit ? "（⚠ 上限超過。本実行では作りません）" : ""}${desc.truncations.length > 0 ? `・削った節: ${desc.truncations.join(", ")}` : ""}`);
