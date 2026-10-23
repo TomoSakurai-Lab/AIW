@@ -868,7 +868,7 @@ async function runImportFeedback(
   const draft = buildFeedbackDraft(threads, current, today, prUrl);
 
   say(`PR: ${prUrl}`);
-  say(`未解決の指摘: ${draft.imported.length + draft.alreadyPresent.length} 件（新しく取り込む ${draft.imported.length} 件・取り込み済み ${draft.alreadyPresent.length} 件）／対象外 ${draft.excluded} 件（解決済み・system・aiw のコメント）`);
+  say(`未解決の指摘: ${draft.imported.length + draft.alreadyPresent.length} 件（新しく取り込む ${draft.imported.length} 件・取り込み済み ${draft.alreadyPresent.length} 件）／指摘の無いスレッド ${draft.excluded} 件（解決済み・system・返信の無い aiw のコメント）`);
   if (draft.imported.length === 0) {
     say("新しく取り込む指摘はありません。user-task.md は変えていません。");
     return { exitCode: 0, kind: "unchanged", prId };

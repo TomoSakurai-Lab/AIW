@@ -1034,8 +1034,17 @@ const PR_THREADS = [
   { id: 13, status: "fixed", comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "直っています。" }] },
   // system → 除く
   { id: 14, comments: [{ id: 1, parentCommentId: 0, commentType: "system", content: "The reference was updated." }] },
-  // aiw の画面のコメント → 除く
-  { id: 15, status: "active", comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "## 画面（変更前 → 変更後）\n\nx\n\n---\nこの画面の比較はタスクの記録から自動生成しました（生成キー: 0123456789ab）。" }] },
+  // aiw の画面のコメント: 本文は取り込まず、そこへの返信を 1 件ずつ取り込む（2026-10-23 実例: 画像を見ながら返信で指摘された）
+  {
+    id: 15,
+    status: "active",
+    comments: [
+      { id: 1, parentCommentId: 0, commentType: "text", content: "## 画面（変更前 → 変更後）\n\nx\n\n---\nこの画面の比較はタスクの記録から自動生成しました（生成キー: 0123456789ab）。" },
+      { id: 3, parentCommentId: 1, commentType: "text", content: "細い列を消してほしい。\n単位列の左にある列。" }
+    ]
+  },
+  // 返信の無い aiw のコメント → 指摘なし
+  { id: 17, status: "active", comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "## 指摘への対応（第 1 回）\n\nx\n\n---\nこの回の対応はタスクの記録から自動生成しました（対応の記録: TASK-x・生成キー: 0123456789ab）。" }] },
   // 削除されたスレッド → 除く
   { id: 16, status: "active", isDeleted: true, comments: [{ id: 1, parentCommentId: 0, commentType: "text", content: "消した指摘" }] }
 ];
@@ -1059,8 +1068,9 @@ test("290: --import-feedback writes the open, human PR comments into user-task.m
   assert.equal((await runPr({ root, config: withPr(config), importFeedback: true, dryRun: true }, h.d)).kind, "dry-run");
   assert.equal(readFileSync(userTask, "utf8"), readFileSync(path.join(root, "templates", "user-task.md"), "utf8"), "dry-run does not write");
   assert.deepEqual(writes(azdo.calls), [], "only read APIs");
-  // 対象外 3 件 = 解決済み・system・aiw のコメント（削除されたスレッドは一覧の段階で除くので数えない）
-  assert.match(h.all(), /未解決の指摘: 2 件（新しく取り込む 2 件・取り込み済み 0 件）／対象外 3 件/);
+  // 指摘 3 件 = 人のスレッド 2 件 + 画面のコメントへの返信 1 件。指摘の無いスレッド 3 件 = 解決済み・system・返信の無い aiw のコメント
+  // （削除されたスレッドは一覧の段階で除くので数えない）
+  assert.match(h.all(), /未解決の指摘: 3 件（新しく取り込む 3 件・取り込み済み 0 件）／指摘の無いスレッド 3 件/);
 
   // 本実行: 雛形なので全体を書く
   h = deps(azdo.fetch);
@@ -1071,14 +1081,23 @@ test("290: --import-feedback writes the open, human PR comments into user-task.m
     text,
     /### PR 全体への指摘\n\n- \[ \] 取極外タブの列の順番が違います。（PR コメント #11）\n  - 現在見込損益はコメントの前\n  - 合計行は太字\n  - 返信: 承知しました。確認します。\n/
   );
+  // aiw の画面のコメントへの返信は 1 件ずつ（aiw の本文は取り込まない）。PR 全体の後・ファイルの前
+  assert.match(
+    text,
+    /  - 返信: 承知しました。確認します。\n\n### 画面のコメントへの返信\n\n- \[ \] 細い列を消してほしい。（PR コメント #15-3）\n  - 単位列の左にある列。\n\n### src\/Grid\.tsx\n/
+  );
   assert.match(text, /### src\/Grid\.tsx\n\n- \[ \] ここは右寄せに。（42 行目）（PR コメント #12）\n/);
-  for (const excluded of ["直っています", "The reference", "画面（変更前", "消した"]) assert.ok(!text.includes(excluded), excluded);
+  for (const excluded of ["直っています", "The reference", "画面（変更前", "指摘への対応（第 1 回）", "消した"]) assert.ok(!text.includes(excluded), excluded);
   assert.deepEqual(writes(azdo.calls), [], "still only read APIs");
-  assert.match(eventLog(root), /"pr\.feedback-imported"[^\n]*"imported":\[11,12\]/);
+  assert.match(eventLog(root), /"pr\.feedback-imported"[^\n]*"imported":\["11","12","15-3"\]/);
   assert.equal(stateBytes(root), before, "state.json is not touched");
 
   // 取り込んだ下書きは依頼のチェックリストとして読める（--reply の項目の出所）
-  assert.deepEqual(parseRequested(text).map((g) => [g.heading, g.items.length]), [["PR 全体への指摘", 1], ["src/Grid.tsx", 1]]);
+  assert.deepEqual(parseRequested(text).map((g) => [g.heading, g.items.length]), [
+    ["PR 全体への指摘", 1],
+    ["画面のコメントへの返信", 1],
+    ["src/Grid.tsx", 1]
+  ]);
 
   // 打ち直し: 同じ指摘は二重に入れない
   h = deps(azdo.fetch);
@@ -1108,7 +1127,9 @@ test("291: a hand-written user-task.md gets an appended section; nothing is writ
   assert.match(h2.all(), /active な PR がありません/);
   assert.equal(readFileSync(userTask, "utf8"), text);
 
-  // 未解決の人のコメントが無い → 書かない
+  assert.match(text, /（PR コメント #15-3）/, "a reply to the aiw comment is imported too");
+
+  // 新しい指摘が無い（解決済み・system と、取り込み済みの返信だけ）→ 書かない
   const h3 = deps(feedbackPr(PR_THREADS.filter((t) => t.id >= 13)).fetch);
   assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h3.d)).kind, "unchanged");
   assert.match(h3.all(), /新しく取り込む指摘はありません/);
