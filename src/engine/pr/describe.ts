@@ -22,6 +22,9 @@ export type PrImage = {
   displayPath: string;
 };
 
+/** ブランチの差分（§A-2b）。run.ts が git の読み取りで作る。null = 取れなかった */
+export type BranchChanges = { files: string[] };
+
 export type Description = {
   title: string;
   description: string;
@@ -47,13 +50,19 @@ const VOCABULARY: Array<[RegExp, string]> = [
   [/\bNOT[ _]VERIFIED\b/g, "未確認"],
   [/\bPASS\b/g, "確認済み"],
   [/\bFAIL\b/g, "不合格"],
-  [/フル\s*e2e/gi, "画面の自動テスト一式"],
-  [/\be2e\b/gi, "画面の自動テスト"]
+  [/フル\s*e2e(?![\w.-])/gi, "画面の自動テスト一式"],
+  // ファイル名の一部（`e2e-hierarchy-final.log`・`tests/e2e/`）は置き換えない（2026-10-23 実例）
+  [/(?<![\w./-])e2e(?![\w./-])/gi, "画面の自動テスト"]
 ];
+
+/** 和文（CJK 記号・かな・漢字・全角形）の間の半角空白。範囲はコードポイントで書く（生の全角空白をソースに置かない） */
+const CJK = "[\\u{3000}-\\u{9FFF}\\u{FF00}-\\u{FFEF}]";
+const CJK_GAP = new RegExp(`(${CJK})[ \\t]+(?=${CJK})`, "gu");
 
 /** ID を除き、定型語を置き換える。言い換えはしない。 */
 export function scrub(text: string): string {
-  let out = text;
+  // 「ID と件数」は ID だけ除くと `×2` が浮く（2026-10-23 実例: `BL-344 ×2 と BL-236 ×1 に帰属`）
+  let out = text.replace(/`?\bBL-\d+[a-z]?\b`?\s*[×xX]\s*(\d+)/g, "既知の課題（$1 件）");
   for (const re of ID_PATTERNS) out = out.replace(re, "");
   // 文頭・句点の後の ID を除くと助詞だけが残る（`R5 の「…」` → ` の「…」`、`。AC-01 は …` → `。 は …`）。空白を詰める前に落とす
   out = out.replace(/(^|[。、])\s*[のはがを](?:\s+|(?=「))/g, "$1");
@@ -66,10 +75,28 @@ export function scrub(text: string): string {
     .replace(/[（(]\s*[)）]/g, "")
     .replace(/[ \t]{2,}/g, " ")
     // 英字の語を和語へ置き換えると、和文の間に半角空白が残る（`フル e2e が` → `画面の自動テスト一式 が`）
-    .replace(/([　-鿿＀-￯])[ \t]+(?=[　-鿿＀-￯])/g, "$1")
+    .replace(CJK_GAP, "$1")
     .replace(/\s+([、。])/g, "$1")
     .replace(/、{2,}/g, "、")
     .trim();
+}
+
+/**
+ * 実データらしい語（契約番号・取引先コード・会社名）。**消さない**（消すと意味が変わる）。stdout に並べて公開前の人の判断に回す。
+ * 2026-10-23 実例: 別途対応の本文に `19080010` / `K0221100 城南設備` / `東都電工` が出た（seed でも客先向けには出さないほうが安全）。
+ */
+export function sensitiveCandidates(description: string): string[] {
+  const found = new Set<string>();
+  const patterns = [
+    /\b[A-Za-z]{1,3}\d{6,}\b/g, // 英字 + 6 桁以上（取引先・品目コード）
+    /(?<![\w.-])\d{6,}(?![\w.-])/g, // 6 桁以上の数字（契約番号など。ファイル名・バージョンの一部は除く）
+    /[^\s`'"「」（）()、。・/]{1,12}(?:株式会社|有限会社|㈱|（株）|建設|工業|電工|設備|商事|工務店|電機|興業)/g,
+    /(?:株式会社|有限会社|㈱|（株）)[^\s`'"「」（）()、。・/]{1,12}/g
+  ];
+  for (const re of patterns) {
+    for (const m of description.matchAll(re)) found.add(m[0]);
+  }
+  return [...found].slice(0, 20);
 }
 
 /** 自由記述に残った英字の語（3 文字以上・重複なし）の数。 */
@@ -145,7 +172,7 @@ function list(items: string[], maxChars: number | null, maxCount: number | null,
   return lines;
 }
 
-function buildBody(src: PrSource, images: PrImage[], b: Budget, cuts: Set<string>): string {
+function buildBody(src: PrSource, images: PrImage[], changes: BranchChanges | null, b: Budget, cuts: Set<string>): string {
   const out: string[] = [];
 
   // 概要
@@ -160,18 +187,16 @@ function buildBody(src: PrSource, images: PrImage[], b: Budget, cuts: Set<string
     out.push(summary);
   }
 
-  // 変更したファイル
+  // 変更したファイル（2026-10-23 改訂・§A-2b）: ブランチの差分。archive の宣言は突き合わせ用で、ここには出さない
+  // （宣言には親リポで ignore されて PR に入らないファイルが含まれる）
   out.push("");
-  if (src.declared === null) {
-    out.push("## 変更したファイル", "変更ファイルの記録なし");
+  if (changes === null) {
+    out.push("## 変更したファイル", "このブランチの変更ファイルを取得できなかった");
+  } else if (changes.files.length === 0) {
+    out.push("## 変更したファイル（このブランチの変更）", "変更なし");
   } else {
-    out.push(src.declared.source === "context-package" ? "## 変更したファイル" : "## 変更したファイル（実装報告による・事前宣言の記録なし）");
-    const files = src.declared.files.map((f) => `\`${f}\``);
-    if (files.length === 0) {
-      out.push("（宣言なし）");
-    } else {
-      out.push(...list(files, null, b.fileCount, cuts, "変更したファイル"));
-    }
+    out.push(`## 変更したファイル（このブランチの変更・${changes.files.length} 件）`);
+    out.push(...list(changes.files.map((f) => `\`${f}\``), null, b.fileCount, cuts, "変更したファイル"));
   }
   out.push(`事前に宣言した変更範囲と実際の差分の突き合わせ: ${diffScopeLine(src)}`);
 
@@ -252,11 +277,11 @@ export function buildTitle(src: PrSource): string {
 }
 
 /** 予算を段階的に締め、4000 字に収まった最初の版を返す。最後の段でも超えたら overLimit。 */
-export function buildDescription(src: PrSource, images: PrImage[]): Description {
+export function buildDescription(src: PrSource, images: PrImage[], changes: BranchChanges | null = null): Description {
   let last: { body: string; cuts: Set<string> } | null = null;
   for (const b of BUDGETS) {
     const cuts = new Set<string>();
-    const body = buildBody(src, images, b, cuts);
+    const body = buildBody(src, images, changes, b, cuts);
     last = { body, cuts };
     const key = keyOf(body);
     const description = `${normalize(body)}${SEPARATOR}${footer(key)}`;

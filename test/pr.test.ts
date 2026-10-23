@@ -155,22 +155,49 @@ function fakeAzdo(opts: {
   return { fetch, calls, prs, attachments };
 }
 
-function deps(fetch: FetchImpl, env: NodeJS.ProcessEnv = { AZURE_DEVOPS_PAT: "test-pat-value" }, branch = "feature/sample") {
+/** 偽の git が返すブランチの差分。null なら差分の取得が失敗する */
+const BRANCH_FILES = ["src/a.tsx", "src/x.cs"];
+
+type GitOpts = { changed?: string[] | null; ignored?: string[]; tracking?: boolean };
+
+function deps(
+  fetch: FetchImpl,
+  env: NodeJS.ProcessEnv = { AZURE_DEVOPS_PAT: "test-pat-value" },
+  branch = "feature/sample",
+  git: GitOpts = {}
+) {
   const out: string[] = [];
   const err: string[] = [];
+  const changed = git.changed === undefined ? BRANCH_FILES : git.changed;
+  const gitCalls: string[][] = [];
   const d: PrDeps = {
     fetch,
     env,
     git: (_repoRoot, args) => {
-      if (args[0] === "rev-parse") return `${branch}\n`;
+      gitCalls.push(args);
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return `${branch}\n`;
+      if (args[0] === "rev-parse" && args[1] === "--verify") {
+        if (git.tracking === false) throw new Error("no such ref");
+        return "abc\n";
+      }
       if (args[0] === "rev-list") return "0\n";
+      if (args[0] === "symbolic-ref") return "origin/master\n";
+      if (args[0] === "merge-base") {
+        if (changed === null) throw new Error("fatal: Not a valid object name origin/master");
+        return "base\n";
+      }
+      if (args[0] === "diff") return `${(changed ?? []).join("\n")}\n`;
+      if (args[0] === "check-ignore") {
+        if ((git.ignored ?? []).includes(args[2])) return "";
+        throw new Error("not ignored");
+      }
       if (args[0] === "remote") return "https://primalinc@dev.azure.com/primalinc/BizForecast%20for%20%E6%9D%B1%E6%80%A5%E5%BB%BA%E8%A8%AD/_git/Template.toukyu\n";
       throw new Error(`unexpected git ${args.join(" ")}`);
     },
     out: (l) => out.push(l),
     err: (l) => err.push(l)
   };
-  return { d, out, err, all: (): string => [...out, ...err].join("\n") };
+  return { d, out, err, gitCalls, all: (): string => [...out, ...err].join("\n") };
 }
 
 const eventLog = (root: string): string => {
@@ -331,10 +358,10 @@ test("264: --dry-run calls no API and writes nothing to the Event Log", async ()
 test("265: missing artifacts are written as 'no record', never as zero or as verified", async () => {
   const { root, config } = makeRoot();
   seedArchive(root, { omit: ["current-review.md", "context-package.md", "current-result.md", "task-metadata.json"] });
-  const h = deps(fakeAzdo().fetch);
+  const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: null });
   await runPr({ root, config, dryRun: true }, h.d);
   const text = h.all();
-  for (const phrase of ["タスクの要約の記録なし", "変更ファイルの記録なし", "検査の記録なし", "受け入れ条件: 記録なし", "手動での確認が必要な項目: 記録なし", "レビュー記録なし"]) {
+  for (const phrase of ["タスクの要約の記録なし", "このブランチの変更ファイルを取得できなかった", "検査の記録なし", "受け入れ条件: 記録なし", "手動での確認が必要な項目: 記録なし", "レビュー記録なし"]) {
     assert.ok(text.includes(phrase), `missing: ${phrase}\n${text}`);
   }
   assert.doesNotMatch(text, /確認済み \d/);
@@ -348,12 +375,13 @@ test("265: missing artifacts are written as 'no record', never as zero or as ver
   await runPr({ root: r2, config: c2, dryRun: true }, h2.d);
   assert.match(h2.all(), /レビュー記録なし（記録が空のまま）/);
 
-  // context-package の無い古い archive は実装報告へ落ち、見出しで区別する
+  // 変更宣言の記録が無いタスクは、突き合わせを省いたことを stdout に出す（説明文の変更ファイルはブランチの差分のまま）
   const { root: r3, config: c3 } = makeRoot();
-  seedArchive(r3, { omit: ["context-package.md"] });
+  seedArchive(r3, { omit: ["context-package.md", "current-result.md"] });
   const h3 = deps(fakeAzdo().fetch);
   await runPr({ root: r3, config: c3, dryRun: true }, h3.d);
-  assert.match(h3.all(), /## 変更したファイル（実装報告による・事前宣言の記録なし）\n- `src\/a\.tsx`/);
+  assert.match(h3.all(), /突き合わせ: このタスクの変更宣言の記録が無いため省きました/);
+  assert.match(h3.all(), /## 変更したファイル（このブランチの変更・2 件）\n- `src\/a\.tsx`\n- `src\/x\.cs`/);
 });
 
 test("266: an oversized record is trimmed in stages with an explicit note; if it still does not fit, no PR is made", async () => {
@@ -375,10 +403,9 @@ test("266: an oversized record is trimmed in stages with an explicit note; if it
   assert.ok(isUntouchedByHuman(d.description), "trimmed text still carries its key");
 
   // パスが極端に長いと、全段を締めても収まらない → 作らない
-  const longFiles = Array.from({ length: 40 }, (_, i) => `- \`src/${"d".repeat(300)}/${i}.tsx\``).join("\n");
-  seedArchive(root, { stamp: "20261021T000000", override: { "context-package.md": `# Files\n\n## Modify\n\n${longFiles}\n` } });
+  const longFiles = Array.from({ length: 40 }, (_, i) => `src/${"d".repeat(300)}/${i}.tsx`);
   const azdo = fakeAzdo();
-  const r = await runPr({ root, config: withPr(config) }, deps(azdo.fetch).d);
+  const r = await runPr({ root, config: withPr(config) }, deps(azdo.fetch, undefined, undefined, { changed: longFiles }).d);
   assert.equal(r.exitCode, 1);
   assert.deepEqual(writes(azdo.calls), [], "no PR when the description cannot fit");
 });
@@ -488,11 +515,87 @@ test("275: end to end — a real reflection's archive and Event Log feed the dry
   writeIn(root, "current-task.md", `# Task\n\n- Task ID: ${TASK_ID}\n`);
   writeStatus(root, { step: "reflection", result: "feature-complete", reason: "done" });
   assert.equal(runReflection(root, config).kind, "transitioned");
-  const h = deps(fakeAzdo().fetch);
+  const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: ["src/first.tsx", "src/other.cs"] });
   const r = await runPr({ root, config, dryRun: true }, h.d);
   assert.equal(r.kind, "dry-run");
   assert.match(h.all(), new RegExp(`（${TASK_ID}）`));
-  assert.match(h.all(), /## 変更したファイル\n- `src\/first\.tsx`/);
+  assert.match(h.all(), /## 変更したファイル（このブランチの変更・2 件）\n- `src\/first\.tsx`\n- `src\/other\.cs`/);
+  assert.doesNotMatch(h.all(), /変更宣言にあってブランチの差分に無い/, "the archived declaration is all in the branch");
   // implementation / fix が走っていないタスクなので、検査の記録は無いと書く（済みと書かない）
   assert.match(h.all(), /突き合わせ: 検査の記録なし/);
+});
+
+// ---- 2026-10-23 改訂（初回の --dry-run から・docs/design-pr.md §A-2b / §A-3 追記）-------------------
+
+test("276: changed files come from the branch diff; declared files missing from it (e.g. ignored e2e) go to stdout only", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root, {
+    override: { "context-package.md": "# Files\n\n## Modify\n\n- `src/a.tsx`\n- `tests/e2e/ignored.spec.ts`\n- `src/uncommitted.tsx`\n" }
+  });
+  const h = deps(fakeAzdo().fetch, undefined, undefined, { changed: ["src/a.tsx", "src/x.cs"], ignored: ["tests/e2e/ignored.spec.ts"] });
+  await runPr({ root, config, dryRun: true }, h.d);
+  const description = h.all().split("----- 説明文 -----")[1];
+  assert.match(description, /## 変更したファイル（このブランチの変更・2 件）\n- `src\/a\.tsx`\n- `src\/x\.cs`/);
+  assert.doesNotMatch(description, /ignored\.spec|uncommitted/, "declared-only files are not in the customer text");
+  const head = h.all().split("----- 説明文 -----")[0];
+  assert.match(head, /変更宣言にあってブランチの差分に無いファイル（2 件・説明文には出していません）/);
+  assert.match(head, /tests\/e2e\/ignored\.spec\.ts（ignore 対象）/);
+  assert.match(head, /src\/uncommitted\.tsx（差分に無い/);
+  // 差分は push 済みの追跡ブランチ（origin/<ブランチ>）を origin/<対象> の merge-base から
+  assert.ok(h.gitCalls.some((a) => a.join(" ") === "merge-base origin/master origin/feature/sample"), JSON.stringify(h.gitCalls));
+
+  // 追跡ブランチが無ければ HEAD と比べ、そう言う
+  const h2 = deps(fakeAzdo().fetch, undefined, undefined, { tracking: false });
+  await runPr({ root, config, dryRun: true }, h2.d);
+  assert.match(h2.all(), /origin\/feature\/sample が無いため、ローカルの HEAD と比べました/);
+  assert.ok(h2.gitCalls.some((a) => a.join(" ") === "merge-base origin/master HEAD"));
+
+  // 本実行でも同じ差分が説明文に入る（対象ブランチは API の既定ブランチ）
+  const azdo = fakeAzdo();
+  const h3 = deps(azdo.fetch, undefined, undefined, { changed: ["src/a.tsx"], ignored: ["tests/e2e/ignored.spec.ts"] });
+  assert.equal((await runPr({ root, config: withPr(config) }, h3.d)).kind, "created");
+  assert.match(azdo.prs[0].description, /## 変更したファイル（このブランチの変更・1 件）\n- `src\/a\.tsx`\n事前に/);
+  assert.match(h3.err.join("\n"), /ignore 対象/);
+});
+
+test("277: a multi-line Backlog Summary is read through its continuation lines", () => {
+  const { root } = makeRoot();
+  const dir = seedArchive(root, {
+    override: {
+      "current-review.md": FILES["current-review.md"].replace(
+        "- Summary: R5 の記録に穴がある。詳細は後述。",
+        "- Summary: 契約が 2 行に与えられており、\n  親行の下に別の子が並ぶ。続きの文。\n- Status: open"
+      )
+    }
+  });
+  const src = readPrSource(root, dir);
+  assert.ok(src.review.state === "present");
+  assert.deepEqual(src.review.backlog, ["契約が 2 行に与えられており、 親行の下に別の子が並ぶ。続きの文。"]);
+  assert.match(buildDescription(src, []).description, /- 契約が 2 行に与えられており、親行の下に別の子が並ぶ。\n/);
+});
+
+test("278: 'ID ×N' becomes a known-issue count, and file names containing e2e are left as they are", () => {
+  assert.equal(scrub("失敗 3 件は BL-344 ×2 と `BL-236` ×1 に帰属"), "失敗 3 件は既知の課題（2 件）と既知の課題（1 件）に帰属");
+  assert.equal(scrub("実測 `e2e-hierarchy-final.log:16` と tests/e2e/a.spec.ts"), "実測 `e2e-hierarchy-final.log:16` と tests/e2e/a.spec.ts");
+  assert.equal(scrub("e2e を 1 回"), "画面の自動テストを 1 回");
+});
+
+test("279: real-data-looking words are listed for the human, not removed from the description", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root, {
+    override: {
+      "current-review.md": FILES["current-review.md"].replace(
+        "- Summary: R5 の記録に穴がある。詳細は後述。",
+        "- Summary: 契約 `19080010` が `K0221100 城南設備` と `B0900002 東都電工` の 2 行にある。"
+      )
+    }
+  });
+  const h = deps(fakeAzdo().fetch);
+  await runPr({ root, config, dryRun: true }, h.d);
+  const [head, body] = h.all().split("----- 説明文 -----");
+  assert.match(head, /実データらしい語があります/);
+  for (const w of ["19080010", "K0221100", "B0900002", "城南設備", "東都電工"]) assert.ok(head.includes(w), w);
+  assert.ok(body.includes("19080010"), "not removed: rewording is the human's call");
+  const listed = head.split("実データらしい語があります")[1].split("\n")[1];
+  assert.doesNotMatch(listed, /2026|\b335\b/, "dates and small counts are not flagged");
 });

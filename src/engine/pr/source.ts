@@ -117,8 +117,16 @@ function readReview(root: string, taskDir: string): ReviewRecord {
   if (backlogBody !== null) {
     backlog = [];
     for (const block of stripHtmlComments(backlogBody).split(/^###\s+/m).slice(1)) {
-      const summary = block.match(/^\s*[-*]\s+Summary\s*[:：]\s*(.+)$/m);
-      if (summary) backlog.push(summary[1].trim());
+      // Summary は複数行にわたる（字下げした続きの行）。次の `- 項目:`・字下げの無い行・空行の手前まで（2026-10-23 実例: 1 行目だけ読んで文の途中で切れた）
+      const lines = block.split(/\r?\n/);
+      const at = lines.findIndex((l) => /^\s*[-*]\s+Summary\s*[:：]/.test(l));
+      if (at < 0) continue;
+      const parts = [lines[at].replace(/^\s*[-*]\s+Summary\s*[:：]\s*/, "")];
+      for (const l of lines.slice(at + 1)) {
+        if (l.trim() === "" || /^\S/.test(l) || /^\s*[-*]\s+\S/.test(l)) break;
+        parts.push(l.trim());
+      }
+      backlog.push(parts.join(" ").trim());
     }
   }
   return { state: "present", critical: countHeadings(text, "## Critical"), major: countHeadings(text, "## Major"), backlog };

@@ -13,7 +13,7 @@ import { appendEvent, type EventType } from "../eventLog.js";
 import { resolveCheckRepoRoot } from "../gitScope.js";
 import type { PrSettings, WorkflowConfig } from "../types.js";
 import { AzdoClient, AzdoError, deriveFromRemote, resolveTarget, type AzdoPullRequest, type FetchImpl } from "./azdo.js";
-import { buildDescription, DESCRIPTION_LIMIT, isUntouchedByHuman, type Description, type PrImage } from "./describe.js";
+import { buildDescription, DESCRIPTION_LIMIT, isUntouchedByHuman, sensitiveCandidates, type BranchChanges, type Description, type PrImage } from "./describe.js";
 import { PAT_ENV, patFromEnv, redactPat, type PatSecret } from "./secret.js";
 import { listArchivedTaskDirs, readPrSource, type PrSource } from "./source.js";
 
@@ -217,6 +217,86 @@ function localBranch(opts: PrOptions, deps: PrDeps): LocalBranch {
 const heads = (b: string): string => (b.startsWith("refs/heads/") ? b : `refs/heads/${b}`);
 const shortName = (b: string): string => b.replace(/^refs\/heads\//, "");
 
+// ---- ブランチの差分（2026-10-23 改訂・§A-2b）。**git の読み取りだけ** ---------------------------------
+
+type ChangesResult = { changes: BranchChanges | null; note: string | null };
+
+/** `--dry-run` の対象ブランチ: settings.pr.targetBranch → origin/HEAD。決められなければ null */
+function dryRunTarget(opts: PrOptions, deps: PrDeps, settings: PrSettings | undefined): string | null {
+  if (settings?.targetBranch?.trim()) return shortName(settings.targetBranch.trim());
+  const repo = resolveCheckRepoRoot(opts.root, opts.config);
+  if (!repo.ok) return null;
+  try {
+    return deps.git(repo.repoRoot, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).trim().replace(/^origin\//, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PR の画面に出る差分と同じ集合: merge-base(origin/<対象>, origin/<ブランチ>) から origin/<ブランチ> まで。
+ * 追跡ブランチが無ければローカルの HEAD と比べ、その旨を note に残す（push 前の可能性）。
+ */
+function branchChanges(opts: PrOptions, deps: PrDeps, branch: string, target: string | null): ChangesResult {
+  if (!target) return { changes: null, note: "対象ブランチを決められないため、ブランチの差分を取れませんでした" };
+  const repo = resolveCheckRepoRoot(opts.root, opts.config);
+  if (!repo.ok) return { changes: null, note: `検査対象リポジトリを解決できません（${repo.reason}）` };
+  const g = (args: string[]): string => deps.git(repo.repoRoot, args).trim();
+  let ref = `origin/${branch}`;
+  let note: string | null = null;
+  try {
+    g(["rev-parse", "--verify", "--quiet", `refs/remotes/${ref}`]);
+  } catch {
+    ref = "HEAD";
+    note = `origin/${branch} が無いため、ローカルの HEAD と比べました（push 前なら PR の差分とずれます）`;
+  }
+  try {
+    const mergeBase = g(["merge-base", `origin/${target}`, ref]);
+    const files = g(["diff", "--name-only", mergeBase, ref])
+      .split(/\r?\n/)
+      .map((f) => f.trim())
+      .filter(Boolean);
+    return { changes: { files }, note };
+  } catch (error) {
+    return { changes: null, note: `ブランチの差分を取れませんでした（origin/${target} との比較: ${(error as Error).message.split(/\r?\n/)[0]}）` };
+  }
+}
+
+/**
+ * archive の宣言にあってブランチの差分に無いファイル。**説明文には書かず stdout にだけ**（黙って落とさない）。
+ * 理由は ignore 対象（git check-ignore）か、差分に無い（未コミット・未 push・変更なし）か。
+ */
+function reportDeclaredGaps(opts: PrOptions, deps: PrDeps, src: PrSource, changes: BranchChanges | null, out: (l: string) => void): void {
+  if (changes === null) return;
+  if (src.declared === null) {
+    out("（突き合わせ: このタスクの変更宣言の記録が無いため省きました）");
+    return;
+  }
+  const inBranch = (f: string): boolean => (f.endsWith("/") ? changes.files.some((c) => c.startsWith(f)) : changes.files.includes(f));
+  const missing = src.declared.files.filter((f) => !inBranch(f));
+  if (missing.length === 0) return;
+  const repo = resolveCheckRepoRoot(opts.root, opts.config);
+  const ignored = (f: string): boolean => {
+    if (!repo.ok) return false;
+    try {
+      deps.git(repo.repoRoot, ["check-ignore", "-q", f]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  out(`このタスクの変更宣言にあってブランチの差分に無いファイル（${missing.length} 件・説明文には出していません）:`);
+  for (const f of missing) out(`  - ${f}（${ignored(f) ? "ignore 対象" : "差分に無い: 未コミット・未 push・変更なしのどれか"}）`);
+}
+
+/** 実データらしい語の候補（§A-3 の 2026-10-23 追記）。消さずに並べる */
+function reportSensitive(desc: Description, out: (l: string) => void): void {
+  const hits = sensitiveCandidates(desc.description);
+  if (hits.length === 0) return;
+  out(`⚠ 説明文に実データらしい語があります（契約番号・取引先コード・会社名の候補 ${hits.length} 件）。公開前に残すか判断してください:`);
+  out(`  ${hits.join(" / ")}`);
+}
+
 // ---- 作成 / 更新 -----------------------------------------------------------------------------
 
 async function runCreateOrUpdate(
@@ -243,7 +323,9 @@ async function runCreateOrUpdate(
   const relTask = path.relative(path.dirname(path.resolve(opts.root)), taskDir).replace(/\\/g, "/");
 
   if (opts.dryRun) {
-    return dryRun(src, planned, local, settings, relTask, say);
+    const target = dryRunTarget(opts, deps, settings);
+    const diff = local.branch ? branchChanges(opts, deps, local.branch, target) : { changes: null, note: null };
+    return dryRun(opts, deps, src, planned, local, settings, target, diff, relTask, say);
   }
 
   const resolved = resolveTarget(settings);
@@ -260,15 +342,6 @@ async function runCreateOrUpdate(
     warn(`PR を作れません: ${local.reason}`);
     record("pr.skipped", { reason: "branch", detail: local.reason, taskDir: relTask });
     return { exitCode: 1, kind: "skipped" };
-  }
-
-  // 添付前の版（画像は全部「保存先」）。作成直後に PATCH が失敗しても、この版が正直な説明文として残る
-  const degradedAll: PrImage[] = planned.map((p) => ({ label: p.label, url: null, displayPath: p.displayPath }));
-  const initial = buildDescription(src, degradedAll);
-  if (initial.overLimit) {
-    warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${initial.chars} 字）。PR を作りません。--dry-run で内容を確認してください。`);
-    record("pr.failed", { stage: "describe", chars: initial.chars, taskDir: relTask });
-    return { exitCode: 1, kind: "failed" };
   }
 
   const target = resolved.target;
@@ -295,6 +368,19 @@ async function runCreateOrUpdate(
     warn(`⚠ ${local.branch} にまだ push していないコミットが ${local.unpushed} 件あります（PR の差分には入りません）。`);
   }
 
+  // 説明文はブランチの差分が決まってから組む（§A-2b）。API の書き込みより前に、字数超過で止める
+  const diff = branchChanges(opts, deps, local.branch, targetBranch);
+  if (diff.note) warn(`⚠ ${diff.note}`);
+  reportDeclaredGaps(opts, deps, src, diff.changes, warn);
+  const describe = (images: PrImage[]): Description => buildDescription(src, images, diff.changes);
+  // 添付前の版（画像は全部「保存先」）。作成直後に PATCH が失敗しても、この版が正直な説明文として残る
+  const initial = describe(planned.map((p) => ({ label: p.label, url: null, displayPath: p.displayPath })));
+  if (initial.overLimit) {
+    warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${initial.chars} 字）。PR を作りません。--dry-run で内容を確認してください。`);
+    record("pr.failed", { stage: "describe", chars: initial.chars, taskDir: relTask });
+    return { exitCode: 1, kind: "failed" };
+  }
+
   const base = { sourceBranch: local.branch, targetBranch, taskDir: relTask };
   const prs = await client.listActivePullRequests({ source: heads(local.branch), target: heads(targetBranch) });
   if (prs.length > 1) {
@@ -306,11 +392,12 @@ async function runCreateOrUpdate(
   const prUrl = (id: number): string => (repo.webUrl ? `${repo.webUrl}/pullrequest/${id}` : `#${id}`);
   let outcome: PrOutcome;
   if (prs.length === 0) {
-    outcome = await create(client, src, planned, initial, base, prUrl, say, warn, record);
+    outcome = await create(client, describe, planned, initial, base, prUrl, say, warn, record);
   } else {
-    outcome = await update(client, src, planned, prs[0], base, prUrl, say, warn, record);
+    outcome = await update(client, describe, planned, prs[0], base, prUrl, say, warn, record);
   }
   if (outcome.kind === "created" || outcome.kind === "updated") {
+    reportSensitive(initial, warn);
     say("");
     say("公開（draft の解除）は人間の操作です。公開前に確認してください:");
     say("  (1) 画面に実データ・実名が映っていないか  (2) 説明文に内部の用語が残っていないか");
@@ -361,7 +448,7 @@ function reportAttachFailures(failures: string[], prId: number, warn: (l: string
 
 async function create(
   client: AzdoClient,
-  src: PrSource,
+  describe: (images: PrImage[]) => Description,
   planned: PlannedImage[],
   initial: Description,
   base: Record<string, unknown>,
@@ -383,7 +470,7 @@ async function create(
   let final = initial;
   if (planned.length > 0) {
     const a = await attach(client, id, planned, new Map());
-    const withImages = buildDescription(src, a.images);
+    const withImages = describe(a.images);
     if (a.uploaded > 0 && !withImages.overLimit) {
       try {
         await client.updateDescription(id, withImages.description);
@@ -401,7 +488,7 @@ async function create(
 
 async function update(
   client: AzdoClient,
-  src: PrSource,
+  describe: (images: PrImage[]) => Description,
   planned: PlannedImage[],
   listed: AzdoPullRequest,
   base: Record<string, unknown>,
@@ -432,7 +519,7 @@ async function update(
     }
   }
   const a = await attach(client, id, planned, existing);
-  const desc = buildDescription(src, a.images);
+  const desc = describe(a.images);
   if (desc.overLimit) {
     warn(`説明文が ${DESCRIPTION_LIMIT} 字に収まりません（${desc.chars} 字）。更新しません。`);
     record("pr.failed", { ...base, prId: id, stage: "describe", chars: desc.chars });
@@ -454,21 +541,29 @@ async function update(
 // ---- --dry-run ------------------------------------------------------------------------------
 
 function dryRun(
+  opts: PrOptions,
+  deps: PrDeps,
   src: PrSource,
   planned: PlannedImage[],
   local: LocalBranch,
   settings: PrSettings | undefined,
+  target: string | null,
+  diff: ChangesResult,
   relTask: string,
   say: (l: string) => void
 ): PrOutcome {
   const images: PrImage[] = planned.map((p) => ({ label: p.label, url: p.skipReason ? null : `<${p.uploadName} の添付後の URL>`, displayPath: p.displayPath }));
-  const desc = buildDescription(src, images);
+  const desc = buildDescription(src, images, diff.changes);
   const resolved = resolveTarget(settings);
   say("=== aiw pr --dry-run（API は呼びません。Event Log にも書きません）===");
   say(`入力（タスクの記録）: ${relTask}${src.taskId ? `（${src.taskId}）` : ""}`);
   say(`接続先: ${resolved.ok ? `${resolved.target.baseUrl} / ${resolved.target.project} / ${resolved.target.repository}（api-version ${resolved.target.apiVersion}）` : `未設定（${resolved.missing.join(", ")}）`}`);
   say(`ソースブランチ: ${local.branch ?? `決められない（${local.reason}）`}`);
-  say(`対象ブランチ: ${settings?.targetBranch?.trim() || "リポジトリの既定ブランチ（本実行で照会）"}`);
+  say(`対象ブランチ: ${target ? `${target}${settings?.targetBranch?.trim() ? "" : "（origin/HEAD から。本実行ではリポジトリの既定ブランチを照会）"}` : "決められない（本実行でリポジトリの既定ブランチを照会）"}`);
+  say(`変更ファイル: ${diff.changes ? `${diff.changes.files.length} 件（ブランチの差分）` : "取れない"}`);
+  if (diff.note) say(`⚠ ${diff.note}`);
+  reportDeclaredGaps(opts, deps, src, diff.changes, say);
+  reportSensitive(desc, say);
   say("実行予定の操作:");
   say("  1. 同じソース・対象ブランチの active な PR を照会");
   say("  2a. 無ければ draft PR を作成（タイトル・説明文）");

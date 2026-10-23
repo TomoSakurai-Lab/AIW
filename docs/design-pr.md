@@ -126,9 +126,9 @@ settings:
 ## 概要
 <概要文（§A-3）>
 
-## 変更したファイル
+## 変更したファイル（このブランチの変更・n 件）
 - `Primal.Template.Web.Front/.../EditableGridCore.tsx`
-- ...（最大 30 件。超えたら「ほか n 件」）
+- ...（最大 30 件。超えたら「ほか n 件」。出所は §A-2b）
 事前に宣言した変更範囲と実際の差分の突き合わせ: <検査済み・宣言外の変更なし | 検査済み・宣言外の変更あり（n 回の検査で検出） | 検査は実行されていない | 検査の記録なし>
 
 ## 確認結果
@@ -155,7 +155,8 @@ settings:
 | 節 | 出所（タスクディレクトリ内） | 欠けたとき（**偽装しない**） |
 | --- | --- | --- |
 | 概要 | `task-metadata.json` の `summary`（§A-3 の処理） | 「タスクの要約の記録なし」 |
-| 変更ファイル | `context-package.md` の `## Modify`（`declaredFiles.ts` の既存パーサを再利用）。**Q3 の判断次第**で、無い archive では `current-result.md` の `## Files Changed` へ落とし、見出しを「実装報告による変更ファイル（事前宣言の記録なし）」に変える | 両方無ければ「変更ファイルの記録なし」 |
+| 変更ファイル | **ブランチの差分**（2026-10-23 改訂・下記 A-2b）。git の読み取りだけで取る | 取れなければ「このブランチの変更ファイルを取得できなかった」 |
+| （突き合わせ用・説明文には出さない） | `context-package.md` の `## Modify`（無い古い archive は `current-result.md` の `## Files Changed`） | 無ければ突き合わせを省き、その旨を stdout に出す |
 | 突き合わせの 1 行 | Event Log の、このタスクの窓（下記）にある `validation.completed` の `diff-scope` の status | 「検査の記録なし」。**passed が 1 件も無いのに「済み」と書かない** |
 | 受け入れ条件 | `current-result.md` の `## Acceptance Criteria Verification` を `countTriStatus`（既存）で集計。`unrecognized` が 1 以上なら「判定不明 n」を足す | 「確認結果の記録なし」 |
 | 手動確認 | `current-result.md` の `## Manual Verification Required` の箇条書き（`countListItems` と同じ規則） | 節が無い = 「記録なし」、0 件 = 「なし」（**null と 0 を区別**・summary.ts と同じ） |
@@ -163,6 +164,19 @@ settings:
 | 修正の回数と通過 | Event Log の窓の `step.completed`（`step: fix` の件数）と、窓の最後の `transition`（`from: improve-check` → `to: reflection`） | 「修正の記録なし」 |
 | 別途対応 | `current-review.md` の `## Backlog` の `### BL-*` ごとの `Summary:` 行の 1 文目（ID は出さない・§A-3） | 0 件なら行ごと省く。節が無ければ「記録なし」 |
 | 画面 | `runs/<Task ID>/screenshots/after-*.png`（Task ID は `current-task.md` の `- Task ID:` 行） | 0 枚なら節ごと省く（撮っていないことは判定に使わない・§C） |
+
+### A-2b. 変更ファイルはブランチの差分から（2026-10-23 改訂・人間の判断）
+
+初回の `--dry-run`（FEAT-review-feedback-1022）で、宣言（`## Modify`）の 4 件のうち 3 件が**親リポで ignore されている e2e**だった
+（PR に入らないファイルが客先向けの説明文に並ぶ）。また feature = ブランチなので、ブランチの差分（17 件）は最新タスクの宣言と範囲が違う。
+
+- 説明文の「変更したファイル」= `git diff --name-only $(git merge-base origin/<対象> origin/<ブランチ>) origin/<ブランチ>`
+  （push 済みの追跡ブランチ = PR の画面に出る差分と同じ集合。API を呼ばないので `--dry-run` でも出る）。
+  見出しは「このブランチの変更」とし、他の節（最新タスクの記録）と範囲が違うことを示す
+- 追跡ブランチが無ければローカルの `HEAD` と比べ、その旨を stdout に出す。対象ブランチは本実行では API の値、
+  `--dry-run` では `settings.pr.targetBranch` → `origin/HEAD` の順
+- archive の宣言は**突き合わせだけ**に使う。宣言にあってブランチの差分に無いファイルは、理由（ignore 対象 / 差分に無い）つきで
+  **stdout にだけ**出す（説明文には書かない・黙って落とさない）
 
 **タスクの窓（Event Log）**: archive ディレクトリ名の日付時刻 T（`archiveArtifacts` が付けた UTC）に対し、
 「T 以降で最初の `transition`（`from: reflection`）」を終端、「それより前で直近の同種 transition」を始端とする。
@@ -179,6 +193,12 @@ Event Log が無い・読めない場合は三値（missing / unreadable）を�
 | Critical / Major / Backlog | 重大な指摘 / 主要な指摘 / 今回は対応せず別途対応とした事項 |
 | ID（`BL-\d+` / `AC-\d+` / `OD-\d+` / `R\d+` / `TASK-...` / `FEAT-...`） | 機械的に除去（括弧ごと: `（BL-346）` → 空）。**定型語の置換表は `describe.ts` の 1 箇所**に持つ |
 | 自由記述（summary・手動確認・Backlog の Summary） | **ID の除去と置換表だけ**。言い換えはしない（機械が意味を変えないため） |
+
+2026-10-23 追記（初回の `--dry-run` から）:
+- `BL-344 ×2` のような「ID と件数」は ID だけ除くと `×2` が浮くので、**`既知の課題（2 件）`** へ置き換える
+- Backlog の `Summary:` は複数行にわたるので、続く行（次の `- 項目:` まで）を含めて 1 文目を取る
+- 契約番号・取引先名などの**実データらしい語**（6 桁以上の数字・英字 + 6 桁以上の数字・会社名の語尾）は消さない
+  （消すと意味が変わる）。`--dry-run` と本実行の stdout に候補を並べて警告し、公開前に人が判断する
 
 ⚠️ **自由記述は機械処理では客先向けの文にならない**（Z5）。v1 では次の 2 つで受ける:
 
