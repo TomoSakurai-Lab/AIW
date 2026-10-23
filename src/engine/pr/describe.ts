@@ -205,9 +205,12 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
     if (cuts.has("対応した内容")) out.push("", OMITTED);
   }
 
+  // 表に入れると画像が列の幅まで縮むので、画面ごとに変更前 → 変更後を縦に並べる（2026-10-23・人間の注文「画像をもう少し大きく」）
   if (screens.length > 0) {
-    out.push("", "## 画面（変更前 → 変更後）", "", "| 画面 | 変更前 | 変更後 |", "| --- | --- | --- |");
-    for (const s of screens) out.push(`| ${s.name} | ${cell(s.before, `変更前 ${s.name}`)} | ${cell(s.after, `変更後 ${s.name}`)} |`);
+    out.push("", "## 画面（変更前 → 変更後）");
+    for (const s of screens) {
+      out.push("", `### ${s.name}`, "", "**変更前**", "", cell(s.before, `変更前 ${s.name}`), "", "**変更後**", "", cell(s.after, `変更後 ${s.name}`));
+    }
   }
   return out.join("\n");
 }

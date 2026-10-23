@@ -343,7 +343,7 @@ test("263: when the attachment API fails, the draft PR is still created and the 
   assert.equal(created[0].body.isDraft, true, "always draft");
   assert.match(
     azdo.prs[0].description,
-    /\| top \| 保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/before-top\.png` \| 保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png` \|/
+    /### top\n\n\*\*変更前\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/before-top\.png`\n\n\*\*変更後\*\*\n\n保存先: `\.ai-workflow\/runs\/TASK-2026-10-20-sample\/screenshots\/after-top\.png`/
   );
   assert.match(eventLog(root), /"pr\.attachment-failed"/);
   assert.match(h.all(), /公開前に確認/);
@@ -358,7 +358,7 @@ test("263: when the attachment API fails, the draft PR is still created and the 
   assert.equal((await runPr({ root: root2, config: withPr(config2) }, deps(ok.fetch).d)).kind, "created");
   assert.match(
     ok.prs[0].description,
-    /## 画面（変更前 → 変更後）\n\n\| 画面 \| 変更前 \| 変更後 \|\n\| --- \| --- \| --- \|\n\| top \| !\[変更前 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/before-top\.[0-9a-f]{8}\.png\) \| !\[変更後 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\) \|/
+    /## 画面（変更前 → 変更後）\n\n### top\n\n\*\*変更前\*\*\n\n!\[変更前 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/before-top\.[0-9a-f]{8}\.png\)\n\n\*\*変更後\*\*\n\n!\[変更後 top\]\(https:\/\/dev\.azure\.com\/org\/_apis\/attachments\/after-top\.[0-9a-f]{8}\.png\)/
   );
 });
 
@@ -664,8 +664,9 @@ test("281: screenshots pair by name across the feature's tasks — the first 'be
     { name: "dialog", before: null, after: { url: "u1", displayPath: "p1" } },
     { name: "grid", before: { url: null, displayPath: "runs/x/before-grid.png" }, after: { url: "u2", displayPath: "p2" } }
   ]);
-  assert.match(d.description, /\| dialog \| （なし） \| !\[変更後 dialog\]\(u1\) \|/);
-  assert.match(d.description, /\| grid \| 保存先: `runs\/x\/before-grid\.png` \| !\[変更後 grid\]\(u2\) \|/);
+  assert.match(d.description, /### dialog\n\n\*\*変更前\*\*\n\n（なし）\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(u1\)/);
+  assert.match(d.description, /### grid\n\n\*\*変更前\*\*\n\n保存先: `runs\/x\/before-grid\.png`\n\n\*\*変更後\*\*\n\n!\[変更後 grid\]\(u2\)/);
+  assert.doesNotMatch(d.description, /\| --- \|/, "no table: images are not squeezed into columns");
 });
 
 test("282: the description has only the two sections; the internal record stays on stdout", async () => {
