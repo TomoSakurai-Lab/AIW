@@ -53,6 +53,9 @@ function fake(lines: unknown[], onStdin?: () => void, opts: { code?: number; han
   const launch = () => {
     state.launches += 1;
     const stdin = new PassThrough();
+    // 本物の claude と同じく stdin を読み流す。読まないと、プロンプトが PassThrough のバッファを超えたところで finish が来ない
+    // （2026-10-23: codex-integration の fake が implementation Skill v10 のプロンプトで実際に止まった。同じ形なので先に塞ぐ）
+    stdin.resume();
     const stdout = new PassThrough();
     const stderr = new PassThrough();
     const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};

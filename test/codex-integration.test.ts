@@ -44,6 +44,9 @@ function fake(lines: unknown[], onStdin?: () => void, code = 0) {
   const launch = () => {
     state.launches += 1;
     const stdin = new PassThrough();
+    // 本物の codex と同じく stdin を読み流す。読まないと、プロンプトが PassThrough のバッファ（16KB 前後）を超えたところで
+    // finish が来ず、無進行の見張り（15 分）まで止まる（2026-10-23: implementation Skill v10 でプロンプトが閾値を超えて実際に止まった）
+    stdin.resume();
     const stdout = new PassThrough();
     const stderr = new PassThrough();
     const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};
@@ -171,6 +174,7 @@ test("104: a killed run can be redone from the artifact files alone", async () =
   const killed = createCodexExecutor({
     launch: () => {
       const stdin = new PassThrough();
+      stdin.resume(); // 本物と同じく読み流す（上の fake と同じ理由）
       const stdout = new PassThrough();
       const handlers: { close?: (c: number | null, s: NodeJS.Signals | null) => void } = {};
       stdin.on("finish", () => {
