@@ -82,7 +82,13 @@ export type ProcessRecord =
 export type RequestGroup = { heading: string; items: Array<{ text: string; sub: string[] }> };
 
 /** 名前で対にした変更前 / 変更後のスクショ（絶対パス）。§A-6 */
-export type ShotPair = { name: string; before: string | null; after: string | null };
+export type ShotPair = {
+  name: string;
+  before: string | null;
+  after: string | null;
+  /** `screenshots/labels.json` の日本語のラベル（依頼の見出しと同じ書き方。例: `工種別予算管理表 / 取極（実績）タブ`）。無ければ null */
+  label: string | null;
+};
 
 export type PrSource = {
   taskDir: string;
@@ -280,6 +286,28 @@ export function parseRequested(markdown: string): RequestGroup[] {
   return groups;
 }
 
+/**
+ * `runs/<Task ID>/screenshots/labels.json`（2026-10-23・§A-6b）: `{ "<名前>": "<日本語のラベル>" }`。
+ * 名前は `before-<名前>.png` / `after-<名前>.png` の <名前>。無い・壊れている・文字列でない値は無視（ラベル無しとして扱う）
+ */
+function readLabels(root: string, taskId: string | null): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!taskId || !/^[\w.-]+$/.test(taskId)) return out;
+  const text = readText(path.join(rootPaths(root).runsDir, taskId, "screenshots", "labels.json"));
+  if (text === null) return out;
+  try {
+    const v = parseJsonText(text).value;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [k, label] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof label === "string" && label.trim() !== "") out.set(k, label.trim());
+      }
+    }
+  } catch {
+    // 壊れた labels.json はラベル無しとして扱う（--dry-run で「ラベルの無い画像」として見える）
+  }
+  return out;
+}
+
 function shotsOf(root: string, taskId: string | null): string[] {
   if (!taskId || !/^[\w.-]+$/.test(taskId)) return [];
   const dir = path.join(rootPaths(root).runsDir, taskId, "screenshots");
@@ -306,12 +334,14 @@ function collectShots(root: string, taskDir: string, taskId: string | null): Sho
         .map((n) => readTaskId(path.join(group, n)));
   const pairs = new Map<string, ShotPair>();
   for (const id of taskIds) {
+    const labels = readLabels(root, id);
     for (const file of shotsOf(root, id)) {
       const m = path.basename(file).match(/^(before|after)-(.+)\.png$/i)!;
       const name = m[2];
-      const pair = pairs.get(name) ?? { name, before: null, after: null };
+      const pair = pairs.get(name) ?? { name, before: null, after: null, label: null };
       if (m[1].toLowerCase() === "before") pair.before ??= file;
       else pair.after = file;
+      pair.label = labels.get(name) ?? pair.label; // 後のタスクのラベルを優先
       pairs.set(name, pair);
     }
   }

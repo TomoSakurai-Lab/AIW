@@ -16,7 +16,9 @@ import { AzdoClient, AzdoError, deriveFromRemote, resolveTarget, type AzdoPullRe
 import {
   buildDescription,
   DESCRIPTION_LIMIT,
+  headingsWithoutScreens,
   internalReport,
+  placeScreens,
   isUntouchedByHuman,
   sensitiveCandidates,
   type BranchChanges,
@@ -237,7 +239,18 @@ function screensOf(src: PrSource, planned: PlannedImage[], refs: Map<string, Ima
     const p = planned.find((x) => x.file === file);
     return refs.get(file) ?? { url: null, displayPath: p?.displayPath ?? file };
   };
-  return src.shots.map((s) => ({ name: s.name, before: ref(s.before), after: ref(s.after) }));
+  return src.shots.map((s) => ({ name: s.name, before: ref(s.before), after: ref(s.after), label: s.label }));
+}
+
+/** スクショの足りなさ（§A-6b）: 比較の画像が無い依頼の見出しと、ラベルの無い / 見出しに当たらない画像。**PR を作る前に気づくため** */
+function reportShotCoverage(src: PrSource, out: (l: string) => void): void {
+  const screens: ScreenPair[] = src.shots.map((s) => ({ name: s.name, before: null, after: null, label: s.label }));
+  const missing = headingsWithoutScreens(src, screens);
+  if (missing.length > 0) out(`⚠ 比較のスクショが無い見出し（${missing.length} 件）: ${missing.join("、")}`);
+  const headings = (src.requested ?? []).map((g) => g.heading);
+  const { rest } = placeScreens(headings, screens);
+  const stray = rest.map((s) => (s.label ? `${s.name}（ラベル「${s.label}」が見出しに当たらない）` : `${s.name}（labels.json にラベルが無い）`));
+  if (headings.length > 0 && stray.length > 0) out(`⚠ 見出しの下に置けない画像（「画面」節にまとめます）: ${stray.join("、")}`);
 }
 
 type LocalBranch = { branch: string | null; reason: string | null; unpushed: number | null };
@@ -451,6 +464,7 @@ async function runCreateOrUpdate(
   }
   if (outcome.kind === "created" || outcome.kind === "updated") {
     reportSensitive(initial, warn);
+    reportShotCoverage(src, warn);
     say("");
     say("公開（draft の解除）は人間の操作です。公開前に確認してください:");
     say("  (1) 画面に実データ・実名が映っていないか  (2) 説明文に内部の用語が残っていないか");
@@ -624,6 +638,7 @@ function dryRun(
   if (src.requested !== null && src.requested.length === 0) {
     say("⚠ 依頼文（user-task.md）にチェックボックスの項目が無いため、「対応した内容」は作業記録の要約で代えています");
   }
+  reportShotCoverage(src, say);
   const unpaired = src.shots.filter((s) => s.before === null || s.after === null).map((s) => `${s.name}（${s.before === null ? "変更前" : "変更後"}なし）`);
   if (unpaired.length > 0) say(`⚠ 対になっていない画面: ${unpaired.join(" / ")}`);
   say("---");

@@ -727,3 +727,71 @@ test("283: the task record is chosen by the branch, not by recency; with no matc
   assert.equal(title(h), "ベータ（一番新しい）");
   assert.match(h.all(), /--task の記録（beta）は今のブランチ（feature\/alpha）と名前が合いません/);
 });
+
+test("284: per-tab screenshots labelled in labels.json sit right under that tab's items; gaps are reported before the PR is made", async () => {
+  const { root, config } = makeRoot();
+  seedArchive(root, {
+    override: {
+      "user-task.md": [
+        "# U",
+        "",
+        "### 1. 工種別予算管理表",
+        "",
+        "#### 取極（実績）タブ",
+        "",
+        "- [ ] ボタンを常に活性にする。",
+        "",
+        "#### 取極外タブ",
+        "",
+        "- [ ] 列を移動する。",
+        "",
+        "#### 共通",
+        "",
+        "- [ ] 枠線をグレーにする。",
+        "",
+        "### 2. 当該予算費消管理表",
+        "",
+        "#### 共通",
+        "",
+        "- [ ] 縦幅を固定する。",
+        ""
+      ].join("\n")
+    }
+  });
+  for (const n of ["jisseki", "jisseki-editing", "torikimegai", "common", "loose", "unknown"]) {
+    seedScreenshot(root, `before-${n}.png`);
+    seedScreenshot(root, `after-${n}.png`);
+  }
+  writeFileSync(
+    path.join(root, "runs", TASK_ID, "screenshots", "labels.json"),
+    JSON.stringify({
+      jisseki: "工種別予算管理表 / 取極（実績）タブ", // 完全一致
+      "jisseki-editing": "工種別予算管理表 / 取極（実績）タブ", // 同じタブにもう 1 対（状態違い）
+      torikimegai: "取極外タブ", // 末尾一致（一意）
+      common: "共通", // 末尾一致だが 2 つの見出しに当たる → 置けない
+      unknown: "存在しない画面"
+    }),
+    "utf8"
+  );
+  const h = deps(fakeAzdo().fetch);
+  await runPr({ root, config, dryRun: true }, h.d);
+  const [head, body] = h.all().split("----- 説明文 -----");
+
+  // 取極（実績）タブ: 項目の直下に 2 対（複数なのでラベルの小見出し）
+  assert.match(
+    body,
+    /### 工種別予算管理表 \/ 取極（実績）タブ\n- ボタンを常に活性にする。\n\n#### 工種別予算管理表 \/ 取極（実績）タブ\n\n\*\*変更前\*\*\n\n!\[変更前 工種別予算管理表 \/ 取極（実績）タブ\]/
+  );
+  // 取極外タブ: 末尾一致で項目の直下に 1 対（小見出しなし）
+  assert.match(body, /### 工種別予算管理表 \/ 取極外タブ\n- 列を移動する。\n\n\*\*変更前\*\*\n\n!\[変更前 取極外タブ\]/);
+  // 置けない画像は「画面」節へ（ラベルがあればラベルを見出しに）
+  const tail = body.split("## 画面（変更前 → 変更後）")[1];
+  assert.ok(tail, "the leftover section exists");
+  for (const s of ["### 共通", "### loose", "### 存在しない画面"]) assert.ok(tail.includes(s), s);
+  assert.ok(!tail.includes("取極（実績）タブ"), "placed screens are not repeated");
+
+  // PR を作る前に気づけるように
+  assert.match(head, /⚠ 比較のスクショが無い見出し（2 件）: 工種別予算管理表 \/ 共通、当該予算費消管理表 \/ 共通/);
+  assert.match(head, /common（ラベル「共通」が見出しに当たらない）/);
+  assert.match(head, /loose（labels\.json にラベルが無い）/);
+});

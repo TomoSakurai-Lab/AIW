@@ -17,8 +17,49 @@ const OMITTED = "（以下省略。全文はタスクの記録を参照）";
 /** 1 枚の画像の置き場所。url が null = 添付できなかった（縮退して保存先を書く） */
 export type ImageRef = { url: string | null; displayPath: string };
 
-/** 説明文の 1 行分の画面（名前で対にした変更前 / 変更後）。片方が無ければ null */
-export type ScreenPair = { name: string; before: ImageRef | null; after: ImageRef | null };
+/** 説明文の 1 つの画面（名前で対にした変更前 / 変更後）。片方が無ければ null。label は labels.json の日本語のラベル */
+export type ScreenPair = { name: string; before: ImageRef | null; after: ImageRef | null; label?: string | null };
+
+function segments(s: string): string[] {
+  return s
+    .normalize("NFKC")
+    .split("/")
+    .map((x) => x.replace(/\s+/g, "").toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * 画面を依頼の見出しへ割り当てる（2026-10-23・§A-6b）。ラベルが見出しと一致するか、ラベルの区切りが見出しの区切りの**末尾**と一致し、
+ * その見出しが一意なとき（例: ラベル `取極（実績）タブ` ↔ 見出し `工種別予算管理表 / 取極（実績）タブ`）。全角・半角と空白は区別しない。
+ * 当たらない画面（ラベル無し・どの見出しにも当たらない・候補が複数）は rest。
+ */
+export function placeScreens(headings: string[], screens: ScreenPair[]): { byHeading: Map<number, ScreenPair[]>; rest: ScreenPair[] } {
+  const hs = headings.map(segments);
+  const byHeading = new Map<number, ScreenPair[]>();
+  const rest: ScreenPair[] = [];
+  for (const s of screens) {
+    let at = -1;
+    if (s.label) {
+      const ls = segments(s.label);
+      const exact = hs.findIndex((h) => h.join("/") === ls.join("/"));
+      if (exact >= 0) {
+        at = exact;
+      } else {
+        const tail = hs.map((h, i) => (ls.length > 0 && ls.length < h.length && h.slice(-ls.length).join("/") === ls.join("/") ? i : -1)).filter((i) => i >= 0);
+        if (tail.length === 1) at = tail[0];
+      }
+    }
+    if (at >= 0) byHeading.set(at, [...(byHeading.get(at) ?? []), s]);
+    else rest.push(s);
+  }
+  return { byHeading, rest };
+}
+
+/** 変更前 → 変更後の画像の行（見出しは呼び出し側） */
+function pairLines(s: ScreenPair): string[] {
+  const label = s.label ?? s.name;
+  return ["**変更前**", "", cell(s.before, `変更前 ${label}`), "", "**変更後**", "", cell(s.after, `変更後 ${label}`)];
+}
 
 /** ブランチの差分（§A-2b）。run.ts が git の読み取りで作る。null = 取れなかった */
 export type BranchChanges = { files: string[] };
@@ -184,11 +225,19 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
     // 依頼文にチェックボックスの項目が無い → 作業記録の要約で代える（見出しで区別する）
     out.splice(0, 1, "## 対応した内容（作業記録の要約）");
     out.push(src.metadata?.summary ? scrub(src.metadata.summary) : "要約の記録なし");
-  } else {
+  }
+  // タブごとに改修するので、比較の画像はそのタブの項目の直下に置く（2026-10-23・§A-6b・人間の注文）
+  const placed = groups && groups.length > 0 ? placeScreens(groups.map((g) => g.heading), screens) : { byHeading: new Map<number, ScreenPair[]>(), rest: screens };
+  const rest = [...placed.rest];
+  if (groups && groups.length > 0) {
     let shown = 0;
     const total = groups.reduce((n, g) => n + g.items.length, 0);
-    for (const g of groups) {
-      if (b.maxItems !== null && shown >= b.maxItems) break;
+    groups.forEach((g, gi) => {
+      const mine = placed.byHeading.get(gi) ?? [];
+      if (b.maxItems !== null && shown >= b.maxItems) {
+        rest.push(...mine); // 出さなかった見出しの画像は「画面」節へ（黙って落とさない）
+        return;
+      }
       out.push("", `### ${g.heading}`);
       for (const item of g.items) {
         if (b.maxItems !== null && shown >= b.maxItems) break;
@@ -197,7 +246,12 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
         else if (item.sub.length > 0) cuts.add("対応した内容");
         shown++;
       }
-    }
+      for (const s of mine) {
+        out.push("");
+        if (mine.length > 1) out.push(`#### ${s.label ?? s.name}`, "");
+        out.push(...pairLines(s));
+      }
+    });
     if (shown < total) {
       cuts.add("対応した内容");
       out.push("", `ほか ${total - shown} 件`);
@@ -205,14 +259,20 @@ function buildBody(src: PrSource, screens: ScreenPair[], b: Budget, cuts: Set<st
     if (cuts.has("対応した内容")) out.push("", OMITTED);
   }
 
-  // 表に入れると画像が列の幅まで縮むので、画面ごとに変更前 → 変更後を縦に並べる（2026-10-23・人間の注文「画像をもう少し大きく」）
-  if (screens.length > 0) {
+  // 見出しに当たらない画面は最後にまとめる。表に入れると画像が列の幅まで縮むので縦に並べる（2026-10-23・人間の注文「画像をもう少し大きく」）
+  if (rest.length > 0) {
     out.push("", "## 画面（変更前 → 変更後）");
-    for (const s of screens) {
-      out.push("", `### ${s.name}`, "", "**変更前**", "", cell(s.before, `変更前 ${s.name}`), "", "**変更後**", "", cell(s.after, `変更後 ${s.name}`));
-    }
+    for (const s of rest) out.push("", `### ${s.label ?? s.name}`, "", ...pairLines(s));
   }
   return out.join("\n");
+}
+
+/** 比較の画像が 1 対も当たらない依頼の見出し（--dry-run の警告用）。依頼の項目が無ければ空 */
+export function headingsWithoutScreens(src: PrSource, screens: ScreenPair[]): string[] {
+  const groups = src.requested ?? [];
+  if (groups.length === 0) return [];
+  const { byHeading } = placeScreens(groups.map((g) => g.heading), screens);
+  return groups.filter((_, i) => !byHeading.has(i)).map((g) => g.heading);
 }
 
 export function buildTitle(src: PrSource): string {
