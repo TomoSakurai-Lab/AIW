@@ -737,7 +737,7 @@ async function runReply(
     say(`その回のタスク: ${relTask}${src.taskId ? `（${src.taskId}）` : ""}`);
     say(`回の番号: 第 ${round} 回（本実行では PR の既存のコメントから決める）`);
     say(`画像: ${planned.length} 枚（このタスクの runs/<Task ID>/screenshots/ だけ）`);
-    reportShotCoverage(src, say);
+    if ((src.requested?.length ?? 0) !== 1) reportShotCoverage(src, say); // 見出しが 1 つなら画像は全部その下に置く（buildReplyComment）
     const hits = sensitiveCandidates(comment.content);
     if (hits.length > 0) say(`⚠ 実データらしい語: ${hits.join(" / ")}`);
     say("投稿先: このブランチの active な PR（draft でも公開済みでも）。説明文と画面のコメントには触りません");
@@ -814,7 +814,7 @@ async function runReply(
       kind = "updated";
     }
   }
-  reportShotCoverage(src, warn);
+  if ((src.requested?.length ?? 0) !== 1) reportShotCoverage(src, warn);
   if (!prs[0].isDraft) say("⚠ この PR は公開済みです。投稿したコメントは客先から見えます（画面に実データ・実名が映っていないか確認してください）。");
   return { exitCode: 0, kind, prId };
 }

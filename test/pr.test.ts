@@ -11,6 +11,7 @@ import { countTriStatusAny } from "../src/engine/sections.js";
 import { deriveFromRemote, type FetchImpl } from "../src/engine/pr/azdo.js";
 import {
   buildDescription,
+  buildReplyComment,
   buildScreensComment,
   DESCRIPTION_LIMIT,
   internalReport,
@@ -1134,4 +1135,25 @@ test("291: a hand-written user-task.md gets an appended section; nothing is writ
   assert.equal((await runPr({ root, config: withPr(config), importFeedback: true }, h3.d)).kind, "unchanged");
   assert.match(h3.all(), /新しく取り込む指摘はありません/);
   assert.equal(readFileSync(userTask, "utf8"), text);
+});
+
+test("292: the import marker never reaches the customer, and a single-heading round keeps its images under that heading", async () => {
+  // 取り込みの印は内部の目印（説明文・回のコメントには出さない）
+  assert.equal(scrub("細い列を消してほしい。（PR コメント #59936-3）"), "細い列を消してほしい。");
+  assert.equal(scrub("右寄せに。（42 行目）（PR コメント #12）"), "右寄せに。（42 行目）");
+
+  // 2026-10-23 実例: 取り込んだままの見出しで、画像のラベルが照合できなくても、見出しが 1 つならその下に置く
+  const { root } = makeRoot();
+  const dir = seedFeedbackTask(root, "20261023T121225", "TASK-2026-10-23-thin", [], ["before-tougai-main.png", "after-tougai-main.png"]);
+  writeFileSync(
+    path.join(dir, "user-task.md"),
+    "# User Task\n\n## PR の指摘への対応（2026-10-23 取り込み）\n\n### 画面のコメントへの返信\n\n- [ ] 細い列を消してほしい。（PR コメント #59936-3）\n",
+    "utf8"
+  );
+  writeFileSync(path.join(root, "runs", "TASK-2026-10-23-thin", "screenshots", "labels.json"), "﻿" + JSON.stringify({ "tougai-main": "当該予算費消管理表 / メイン一覧" }), "utf8");
+  const src = readPrSource(root, dir, { ownShotsOnly: true });
+  const c = buildReplyComment(src, [{ name: "tougai-main", label: src.shots[0].label, before: { url: "b", displayPath: "p" }, after: { url: "a", displayPath: "q" } }], 1);
+  assert.match(c.content, /^## 指摘への対応（第 1 回）\n\n### 画面のコメントへの返信\n- 細い列を消してほしい。\n\n\*\*変更前\*\*\n\n!\[変更前 当該予算費消管理表 \/ メイン一覧\]\(b\)/);
+  assert.doesNotMatch(c.content, /その他の画面|PR コメント #/);
+  assert.equal(src.shots[0].label, "当該予算費消管理表 / メイン一覧", "labels.json with a BOM is read");
 });

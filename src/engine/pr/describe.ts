@@ -99,7 +99,9 @@ const ID_PATTERNS: RegExp[] = [
   /`?\b(?:BL|AC|OD|FAC|KI)-\d+[a-z]?\b`?/g,
   /`?\bTASK-\d{4}-\d{2}-\d{2}-[\w-]+`?/g,
   /`?\bFEAT-[\w-]+`?/g,
-  /`?\b[ROG]\d{1,2}\b`?/g
+  /`?\b[ROG]\d{1,2}\b`?/g,
+  // --import-feedback の取り込みの印（重複除けの内部の目印）。客先向けの文には出さない（2026-10-23 実例: 回のコメントに残っていた）
+  /（PR コメント #\d+(?:-\d+)?）/g
 ];
 
 const VOCABULARY: Array<[RegExp, string]> = [
@@ -327,6 +329,12 @@ export function buildReplyComment(src: PrSource, screens: ScreenPair[], round: n
   const out: string[] = [`## 指摘への対応（第 ${round} 回）`];
   const groups = src.requested ?? [];
   const placed = placeScreens(groups.map((g) => g.heading), screens);
+  // 依頼の見出しが 1 つだけなら、当たらなかった画像もその見出しの下へ（その回の画像は全部その指摘のもの）。
+  // 2026-10-23 実例: 取り込んだままの見出し「画面のコメントへの返信」とラベル「当該予算費消管理表 / メイン一覧」が照合できず、「その他の画面」に回った
+  if (groups.length === 1 && placed.rest.length > 0) {
+    placed.byHeading.set(0, [...(placed.byHeading.get(0) ?? []), ...placed.rest]);
+    placed.rest = [];
+  }
   const pairs = (list: ScreenPair[], heading: string): void => {
     for (const s of list) {
       out.push("");
