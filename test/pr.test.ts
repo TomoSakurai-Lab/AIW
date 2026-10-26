@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { appendEvent } from "../src/engine/eventLog.js";
 import { completedTaskWindow } from "../src/engine/observed.js";
 import { countTriStatusAny } from "../src/engine/sections.js";
 import { deriveFromRemote, type FetchImpl } from "../src/engine/pr/azdo.js";
@@ -955,6 +956,13 @@ test("288: the round's task is the one archived after the branch's last report; 
   assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).kind, "dry-run");
   assert.match(h.all(), /その回のタスク: \.ai-workflow\/archive\/single\/20261021T000000-task（TASK-2026-10-21-fb1）/);
   assert.match(h.all(), /## 指摘への対応（第 1 回）\n\n### 実行予算作成画面 \/ 予算編集タブ\n- 予算キーの列を消す。/);
+
+  // 別のブランチの PR で報告済みのタスクは候補にしない（2026-10-26 実例: 別ブランチの 2 本が混ざって選べなかった）
+  const other = seedFeedbackTask(root, "20261021T005000", "TASK-2026-10-21-other", ["別ブランチの指摘。"]);
+  appendEvent(root, "pr.reply", { sourceBranch: "feature/other", taskDir: path.relative(path.dirname(root), other).replace(/\\/g, "/"), action: "created" });
+  h = deps(azdo.fetch);
+  assert.equal((await runPr({ root, config, reply: true, dryRun: true }, h.d)).kind, "dry-run", h.all());
+  assert.match(h.all(), /（TASK-2026-10-21-fb1）/);
 
   // 2 本ある → 黙って選ばない
   seedFeedbackTask(root, "20261021T010000", "TASK-2026-10-21-fb2", ["別の指摘。"]);

@@ -675,8 +675,22 @@ function reportedTasks(root: string, branch: string): { dirs: string[]; replies:
   return { dirs: [...dirs], replies: replyTasks.size, replyDirs: [...replyDirs] };
 }
 
+/** 別のブランチの PR で報告したタスク（pr.created / pr.updated / pr.reply の taskDir）。Event Log から */
+function reportedOnOtherBranches(root: string, branch: string): string[] {
+  const log = readEventLog(root);
+  if (log === "missing" || log === "unreadable") return [];
+  const dirs = new Set<string>();
+  for (const r of log) {
+    if (!["pr.created", "pr.updated", "pr.reply"].includes(String(r.event))) continue;
+    if (typeof r.sourceBranch !== "string" || r.sourceBranch === branch || typeof r.taskDir !== "string") continue;
+    if (r.event === "pr.reply" && r.action === "skipped") continue;
+    dirs.add(r.taskDir);
+  }
+  return [...dirs];
+}
+
 /**
- * その回のタスク: --task が無ければ、このブランチで最後に報告したタスクより後に archive されたタスク。
+ * その回のタスク: --task が無ければ、このブランチで最後に報告したタスクより後に archive されたタスク（別のブランチで報告済みのものは除く）。
  * 1 本ならそれ。0 本・複数なら止まる（黙って選ばない）。単一タスクも feature のタスクも候補にする
  */
 function pickReplyTask(opts: PrOptions, branch: string): { dir: string | null; error: string | null } {
@@ -691,7 +705,11 @@ function pickReplyTask(opts: PrOptions, branch: string): { dir: string | null; e
   const last = reported.map(stampOf).sort().pop() ?? "";
   const base = path.dirname(path.resolve(opts.root));
   const reportedAbs = new Set(reported.map((d) => path.resolve(base, d)));
-  const candidates = listArchivedTaskDirs(opts.root).filter((d) => stampOf(d) > last && !reportedAbs.has(path.resolve(d)));
+  // 別のブランチの PR で報告済みのタスクは、このブランチの回ではない（2026-10-26 実例: grid-ui-fixes の 2 本が 1022 の候補に混ざった）
+  const elsewhere = new Set(reportedOnOtherBranches(opts.root, branch).map((d) => path.resolve(base, d)));
+  const candidates = listArchivedTaskDirs(opts.root).filter(
+    (d) => stampOf(d) > last && !reportedAbs.has(path.resolve(d)) && !elsewhere.has(path.resolve(d))
+  );
   if (candidates.length === 1) return { dir: candidates[0], error: null };
   const rel = (d: string): string => path.relative(base, d).replace(/\\/g, "/");
   // 新しいタスクが無く、最後の報告が回のコメントなら、打ち直し = その回のコメントの更新（同じタスク）
