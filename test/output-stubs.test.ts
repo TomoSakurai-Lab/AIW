@@ -13,7 +13,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
-import { approve, runStep } from "../src/engine/engine.js";
+import { approve, execStep, runStep } from "../src/engine/engine.js";
+import type { StepExecutor } from "../src/engine/executors/types.js";
 import { rootPaths } from "../src/engine/paths.js";
 import { runValidators } from "../src/engine/validators.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
@@ -141,4 +142,66 @@ test("158: steps that are not run by claude get no stubs, so the file-exists net
   // review は clipboard（assets の既定）なので、その outputs にスタブは作られない
   assert.equal(existsSync(path.join(root, "task-metadata.json")), false, "reflection の網を弱めない");
   assert.equal(lastEvent(root, "stub.created"), undefined, "作っていないので記録も無い");
+});
+
+/** 起動された瞬間に、指定したファイルがあったか・何バイトだったかを記録するだけの executor（claude を名乗る）。 */
+function probeExecutor(root: string, files: string[]): { executor: StepExecutor; seen: Record<string, number | null> } {
+  const seen: Record<string, number | null> = {};
+  const executor: StepExecutor = {
+    name: "claude",
+    async execute() {
+      for (const f of files) {
+        const file = path.join(root, f);
+        seen[f] = existsSync(file) ? statSync(file).size : null;
+      }
+      return { ok: true, outputs: [] };
+    }
+  };
+  return { executor, seen };
+}
+
+function withClaudePlanning(config: WorkflowConfig): WorkflowConfig {
+  return { ...config, steps: { ...config.steps, "task-planning": { ...config.steps["task-planning"], executor: "claude" } } };
+}
+
+// Test 294 — **遷移を経ずに claude のステップへ来ても、起動の前にスタブがある。**
+//
+// 実測 2026-10-27（本番 tokyu への移植）: `aiw init` は assets の設定（task-planning は clipboard）で入場するのでスタブを作らない。
+// その後 runtime の設定（task-planning は claude）へ差し替えて `aiw exec task-planning` したところ、
+// current-status.json が無いまま claude が起動し、Edit で書けずに終わって file-exists で halt した。
+// exec の直前にも同じ関数で作る。既存は上書きしない・clipboard では作らない（Test 155-158 の規律のまま）。
+test("294: exec creates the missing stubs before launching a claude step that was never entered by a transition", async () => {
+  {
+    const { root, config } = makeRoot(); // aiw init 直後 = task-planning・current-status.json なし
+    assert.equal(existsSync(path.join(root, "current-status.json")), false, "前提: init はスタブを作っていない");
+    const claude = withClaudePlanning(config);
+    const { executor, seen } = probeExecutor(root, ["current-status.json", "current-task.md"]);
+
+    await execStep(root, claude, "task-planning", { executor });
+
+    assert.equal(seen["current-status.json"], 0, "起動の時点で 0 バイトのスタブがある（無いと Edit は書けない）");
+    assert.ok((seen["current-task.md"] ?? 0) > 0, "テンプレートから置かれた current-task.md は上書きしない");
+    const ev = lastEvent(root, "stub.created");
+    assert.equal(ev.step, "task-planning");
+    assert.equal(ev.via, "exec");
+    assert.deepEqual(ev.files, ["current-status.json"]);
+    assert.equal(JSON.parse(readFileSync(rootPaths(root).stateFile, "utf8")).currentStep, "task-planning", "exec は state を進めない");
+  }
+  {
+    // 既にある宣言は消さない（書きかけ・前ステップの宣言は run 側の検査が扱う）
+    const { root, config } = makeRoot();
+    writeStatus(root, { step: "task-planning", result: "planned", reason: "書きかけ" });
+    const before = readFileSync(path.join(root, "current-status.json"), "utf8");
+    const { executor } = probeExecutor(root, []);
+    await execStep(root, withClaudePlanning(config), "task-planning", { executor });
+    assert.equal(readFileSync(path.join(root, "current-status.json"), "utf8"), before);
+    assert.equal(lastEvent(root, "stub.created"), undefined, "作っていないので記録も無い");
+  }
+  {
+    // clipboard のステップには作らない（「まだ誰も宣言していない」を保つ）
+    const { root, config } = makeRoot();
+    const { executor } = probeExecutor(root, []);
+    await execStep(root, config, "task-planning", { executor });
+    assert.equal(existsSync(path.join(root, "current-status.json")), false);
+  }
 });

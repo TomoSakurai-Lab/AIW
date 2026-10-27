@@ -281,6 +281,11 @@ export async function execStep(
     numberSetting(step.timeoutMs) ?? numberSetting(config.settings.executorTimeoutMs) ?? DEFAULT_TOTAL_TIMEOUT_MS;
   // ⚠️ 旧キー（codexTimeoutMs / codexIdleTimeoutMs）はここで読まない。読み替えはローダーの migrateSettings だけ。
   const idleTimeoutMs = numberSetting(config.settings.executorIdleTimeoutMs) ?? DEFAULT_IDLE_TIMEOUT_MS;
+  // 遷移・new-task を経ずにこのステップへ来たときも、Edit の存在要求を満たしてから起動する（既存は上書きしない・clipboard では何もしない）。
+  // 実測 2026-10-27: `aiw init`（assets の task-planning は clipboard）の後に runtime の設定（claude）へ差し替えた環境で、
+  // current-status.json が無いまま task-planning を起動し、書けずに終わって file-exists で halt した。
+  // 成果物の側を整えるだけで state.json は触らない（設計不変条件1）。記録は遷移のときと同じ stub.created
+  createOutputStubsFor(root, config, stepId, { ...logBase, via: "exec" });
   const watchdog = createWatchdog({ totalTimeoutMs, idleTimeoutMs, externalSignal: opts.signal });
 
   appendEvent(root, "exec.started", { ...logBase, meta: { totalTimeoutMs, idleTimeoutMs } });
