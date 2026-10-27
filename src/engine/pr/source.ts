@@ -94,8 +94,12 @@ export type PrSource = {
   taskDir: string;
   stamp: string;
   taskId: string | null;
-  /** null = user-task.md が無い。[] = チェックボックスの項目が無い */
+  /** null = user-task.md が無い。[] = チェックボックスの項目が無い。作業の進め方の見出し（processHeadings）は除いた後 */
   requested: RequestGroup[] | null;
+  /** 依頼文から外した、作業の進め方の見出し（確認・進め方・backlog の扱いなど）。stdout に出すため */
+  processHeadings: string[];
+  /** 依頼文の題（`## 次タスク：…` の「…」、無ければ最初の `## `）。PR のタイトルに使う */
+  requestTitle: string | null;
   /** feature の全タスク（このタスクまで）の runs/<Task ID>/screenshots/ の before-* / after-* */
   shots: ShotPair[];
   metadata: { summary: string | null; featureName: string | null; taskName: string | null; featureId: string | null } | null;
@@ -308,6 +312,26 @@ function readLabels(root: string, taskId: string | null): Map<string, string> {
   return out;
 }
 
+/**
+ * 作業の進め方の見出しか（客先向けの「対応した内容」に入れない）。見出しの最後の段で判定する。
+ * 2026-10-27 実例: 「### 5. 確認」のチェックボックス（「spec が通る」「スクショで確かめる」）が PR の説明文に入った
+ */
+export function isProcessHeading(heading: string): boolean {
+  const last = heading.split("/").pop()!.trim();
+  return /^(?:動作)?確認$|^検証|完了条件|進め方|^backlog|^バックログ|^テスト/i.test(last);
+}
+
+/** 依頼文の題: `## 次タスク：…` の「…」。無ければ最初の `## ` の見出し。どちらも無ければ null */
+export function requestTitleOf(markdown: string): string | null {
+  const h2 = stripHtmlComments(markdown)
+    .split(/\r?\n/)
+    .map((l) => l.match(/^##\s+(.+?)\s*$/)?.[1])
+    .filter((x): x is string => Boolean(x));
+  const first = h2[0];
+  if (!first) return null;
+  return first.replace(/^次タスク\s*[:：]\s*/, "").trim() || null;
+}
+
 function shotsOf(root: string, taskId: string | null): string[] {
   if (!taskId || !/^[\w.-]+$/.test(taskId)) return [];
   const dir = path.join(rootPaths(root).runsDir, taskId, "screenshots");
@@ -358,7 +382,9 @@ export function readPrSource(root: string, taskDir: string, opts: { ownShotsOnly
     taskDir,
     stamp,
     taskId,
-    requested: userTask === null ? null : parseRequested(userTask),
+    requested: userTask === null ? null : parseRequested(userTask).filter((g) => !isProcessHeading(g.heading)),
+    processHeadings: userTask === null ? [] : parseRequested(userTask).filter((g) => isProcessHeading(g.heading)).map((g) => g.heading),
+    requestTitle: userTask === null ? null : requestTitleOf(userTask),
     shots: collectShots(root, taskDir, taskId, opts.ownShotsOnly === true),
     metadata: readMetadata(taskDir),
     declared: readDeclared(taskDir),

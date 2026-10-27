@@ -387,8 +387,12 @@ export function headingsWithoutScreens(src: PrSource, screens: ScreenPair[]): st
   return groups.filter((_, i) => !byHeading.has(i)).map((g) => g.heading);
 }
 
+/**
+ * PR のタイトル（作成時のみ）。feature なら feature 名、無ければ依頼文の題（`## 次タスク：…`）。
+ * 2026-10-27 実例: 単一タスクで taskName（`shuukei-minus-inyou`）がそのままタイトルになった
+ */
 export function buildTitle(src: PrSource): string {
-  return src.metadata?.featureName ?? src.metadata?.taskName ?? src.taskId ?? "変更の提出";
+  return src.metadata?.featureName ?? src.requestTitle ?? src.metadata?.taskName ?? src.taskId ?? "変更の提出";
 }
 
 /** 予算を段階的に締め、4000 字に収まった最初の版を返す。最後の段でも超えたら overLimit。 */

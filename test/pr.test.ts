@@ -22,7 +22,7 @@ import {
   scrub
 } from "../src/engine/pr/describe.js";
 import { runPr, type PrDeps } from "../src/engine/pr/run.js";
-import { parseRequested, readPrSource } from "../src/engine/pr/source.js";
+import { isProcessHeading, parseRequested, readPrSource, requestTitleOf } from "../src/engine/pr/source.js";
 import type { WorkflowConfig } from "../src/engine/types.js";
 import { archivedTaskDirs, makeRoot, runReflection, setStep, validTaskMetadata, writeIn, writeStatus } from "./helpers.js";
 
@@ -1164,4 +1164,40 @@ test("292: the import marker never reaches the customer, and a single-heading ro
   assert.match(c.content, /^## 指摘への対応（第 1 回）\n\n### 画面のコメントへの返信\n- 細い列を消してほしい。\n\n\*\*変更前\*\*\n\n!\[変更前 当該予算費消管理表 \/ メイン一覧\]\(b\)/);
   assert.doesNotMatch(c.content, /その他の画面|PR コメント #/);
   assert.equal(src.shots[0].label, "当該予算費消管理表 / メイン一覧", "labels.json with a BOM is read");
+});
+
+test("293: process headings (確認・進め方・backlog) stay out of the description, and the title comes from the request's heading", async () => {
+  for (const h of ["確認", "5. 確認", "動作確認", "検証・完了条件", "目的・進め方", "backlog の扱い", "テスト"]) assert.ok(isProcessHeading(h.replace(/^\d+\.\s*/, "")), h);
+  for (const h of ["工事価格引用検索ダイアログ", "全般", "工種別予算管理表 / 取極（実績）タブ", "確認ダイアログの文言"]) assert.ok(!isProcessHeading(h), h);
+  assert.equal(requestTitleOf("# User Task\n\n## 次タスク：集計区分のレビュー指摘を反映する\n"), "集計区分のレビュー指摘を反映する");
+  assert.equal(requestTitleOf("# User Task\n\n<!-- x -->\n"), null);
+
+  // 2026-10-27 実例: 「### 5. 確認」のチェックボックスが PR の説明文に入り、タイトルが taskName のままだった
+  const { root, config } = makeRoot();
+  seedArchive(root, {
+    override: {
+      "task-metadata.json": JSON.stringify({ taskName: "shuukei-minus-inyou", summary: "s" }),
+      "user-task.md": [
+        "# User Task",
+        "",
+        "## 次タスク：集計区分のレビュー指摘を反映する",
+        "",
+        "### 1. 集計区分登録",
+        "",
+        "- [ ] ボタンを常に活性にする。",
+        "",
+        "### 5. 確認",
+        "",
+        "- [ ] 関係する spec が通る。",
+        ""
+      ].join("\n")
+    }
+  });
+  const h = deps(fakeAzdo().fetch);
+  await runPr({ root, config, dryRun: true }, h.d);
+  const [head, body] = h.all().split("----- 説明文 -----");
+  assert.match(head, /依頼文から外した作業の進め方の見出し（説明文には出しません）: 確認/);
+  assert.match(head, /タイトル（作成時のみ）: 集計区分のレビュー指摘を反映する/);
+  assert.match(body, /### 集計区分登録\n- ボタンを常に活性にする。/);
+  assert.doesNotMatch(body, /確認|spec/);
 });

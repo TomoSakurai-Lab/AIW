@@ -935,6 +935,9 @@ function dryRun(
   reportSensitive(desc, say);
   say("--- 内部の確認結果（説明文には出しません）---");
   for (const l of internalReport(src, diff.changes)) say(l);
+  if (src.processHeadings.length > 0) {
+    say(`依頼文から外した作業の進め方の見出し（説明文には出しません）: ${src.processHeadings.join("、")}`);
+  }
   if (src.requested !== null && src.requested.length === 0) {
     say("⚠ 依頼文（user-task.md）にチェックボックスの項目が無いため、「対応した内容」は作業記録の要約で代えています");
   }
