@@ -149,6 +149,8 @@ npm run aiw -- pr --dry-run    # API を呼ばず、説明文と実行予定の�
 npm run aiw -- pr              # draft PR を作成 / 同じブランチの draft PR の説明文を更新
 ```
 
+- **`--` を省かない**: `npm run aiw pr --dry-run` と打つと npm が `--dry-run` を取り、aiw には `pr` だけが届く（本番の実行になる）。
+  aiw は npm が残す env `npm_config_<名前>` からこれを見つけ、API に触る前に止める（`--check` / `--reply` / `--import-feedback` / `--task` も同じ）
 - 準備: PAT（Code: Read & Write のみ）を**ユーザー環境変数 `AZURE_DEVOPS_PAT`** に GUI で設定（値をチャット・ファイル・コマンドラインに書かない）。
   runtime の `config/workflow.yaml` に `settings.pr`（organizationUrl / project / repository）。`--check` の表示を確かめて貼る
 - ブランチ: feature のブランチを作って push してから（aiw は push もブランチ作成もしない）。対象ブランチ上・未 push なら作らない

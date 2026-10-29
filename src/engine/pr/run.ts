@@ -85,6 +85,14 @@ export async function runPr(opts: PrOptions, deps: PrDeps): Promise<PrOutcome> {
     appendEvent(opts.root, event, JSON.parse(redactPat(JSON.stringify(fields), pat)) as Record<string, unknown>);
   };
 
+  const swallowed = flagsSwallowedByNpm(opts, deps.env);
+  if (swallowed.length > 0) {
+    // API にも Event Log にも触れる前に止める（何も起きていないので記録もしない）
+    warn(`aiw pr: ${swallowed.join(" ")} が npm に取られ、aiw に届いていません。このまま進むと本番の実行になるので止めました。`);
+    warn(`  npm 経由なら -- の後ろに書いてください: npm run aiw -- pr ${swallowed.join(" ")}`);
+    return { exitCode: 1, kind: "failed" };
+  }
+
   try {
     const settings = opts.config.settings.pr as PrSettings | undefined;
     const secretKeys = Object.keys(settings ?? {}).filter((k) => SECRET_KEY.test(k));
@@ -109,6 +117,24 @@ export async function runPr(opts: PrOptions, deps: PrDeps): Promise<PrOutcome> {
     record("pr.failed", { stage: e.stage ?? "unknown", status: e.status ?? null, message: message.slice(0, 300) });
     return { exitCode: 1, kind: "failed" };
   }
+}
+
+/**
+ * `npm run aiw pr --dry-run` のように `--` を付けずに打つと、npm がフラグを自分の設定として取り、aiw には `pr` だけが届く。
+ * npm はそのフラグを env `npm_config_<名前>` に出すので、env にあって opts に無いフラグを返す。
+ * 2026-10-29 実例: `--dry-run` が取られて本番の実行になり、draft PR（tokyu #6106）が作られた。
+ */
+function flagsSwallowedByNpm(opts: PrOptions, env: NodeJS.ProcessEnv): string[] {
+  const flags: Array<[string, string, unknown]> = [
+    ["--dry-run", "npm_config_dry_run", opts.dryRun],
+    ["--check", "npm_config_check", opts.check],
+    ["--reply", "npm_config_reply", opts.reply],
+    ["--import-feedback", "npm_config_import_feedback", opts.importFeedback],
+    ["--task", "npm_config_task", opts.taskDir]
+  ];
+  return flags
+    .filter(([, key, given]) => !given && env[key] !== undefined && env[key] !== "" && env[key] !== "false")
+    .map(([flag]) => flag);
 }
 
 // ---- 接続先・PAT の案内 ------------------------------------------------------------------------

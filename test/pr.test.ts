@@ -1201,3 +1201,39 @@ test("293: process headings (確認・進め方・backlog) stay out of the descr
   assert.match(body, /### 集計区分登録\n- ボタンを常に活性にする。/);
   assert.doesNotMatch(body, /確認|spec/);
 });
+
+test("294: flags swallowed by npm (`npm run aiw pr --dry-run` without --) stop the run before any API call or Event Log write", async () => {
+  // 2026-10-29 実例: npm 6 が --dry-run を自分の設定として取り、aiw には `pr` だけが届いて draft PR が作られた。
+  // npm は取ったフラグを npm_config_<名前>=true で出し、npm_config_dry_run は何も付けなくても空文字で立つ
+  const { root, config } = makeRoot();
+  seedArchive(root);
+  const base = { AZURE_DEVOPS_PAT: "test-pat-value" };
+  for (const [key, flag] of [
+    ["npm_config_dry_run", "--dry-run"],
+    ["npm_config_check", "--check"],
+    ["npm_config_reply", "--reply"],
+    ["npm_config_import_feedback", "--import-feedback"],
+    ["npm_config_task", "--task"]
+  ]) {
+    const azdo = fakeAzdo();
+    const h = deps(azdo.fetch, { ...base, npm_config_dry_run: "", [key]: "true" });
+    const outcome = await runPr({ root, config: withPr(config) }, h.d);
+    assert.equal(outcome.exitCode, 1, flag);
+    assert.equal(azdo.calls.length, 0, `${flag}: no API call`);
+    assert.match(h.all(), new RegExp(`${flag} が npm に取られ`), flag);
+    assert.match(h.all(), new RegExp(`npm run aiw -- pr ${flag}`), flag);
+  }
+  assert.equal(eventLog(root), "");
+
+  // -- を付けて正しく渡したとき（npm_config_dry_run は空文字）と、npm を通さないときは止めない
+  for (const env of [{ ...base, npm_config_dry_run: "" }, base]) {
+    const azdo = fakeAzdo();
+    const h = deps(azdo.fetch, env);
+    const outcome = await runPr({ root, config: withPr(config), dryRun: true }, h.d);
+    assert.equal(outcome.kind, "dry-run");
+    assert.equal(azdo.calls.length, 0);
+  }
+  // フラグが aiw にも届いていれば（npm の設定に dry-run を入れている人が -- 付きで打った等）止めない
+  const h = deps(fakeAzdo().fetch, { ...base, npm_config_dry_run: "true" });
+  assert.equal((await runPr({ root, config: withPr(config), dryRun: true }, h.d)).kind, "dry-run");
+});
