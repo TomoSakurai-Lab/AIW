@@ -408,7 +408,7 @@ test("264: --dry-run calls no API and writes nothing to the Event Log", async ()
     assert.equal(r.exitCode, 0);
     assert.match(h.all(), /----- 説明文 -----/);
     assert.match(h.all(), /after-top\.[0-9a-f]{8}\.png/, "the planned attachment is listed");
-    assert.match(h.all(), /対になっていない画面: top（変更前なし）/);
+    assert.match(h.all(), /変更前の無い画面（1 \/ 1 件・新しく追加した画面・状態として変更後だけ載せます。撮り忘れなら変更前を足す）: top/);
   }
   assert.equal(azdo.calls.length, 0, "fetch was never called");
   assert.equal(eventLog(root), logBefore);
@@ -696,7 +696,11 @@ test("281: screenshots pair by name across the feature's tasks — the first 'be
     { name: "dialog", before: null, after: { url: "u1", displayPath: "p1" } },
     { name: "grid", before: { url: null, displayPath: "runs/x/before-grid.png" }, after: { url: "u2", displayPath: "p2" } }
   ])!;
-  assert.match(c.content, /#### dialog\n\n\*\*変更前\*\*\n\n（なし）\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(u1\)/);
+  // 変更前が無い画面は変更後だけ。断りはコメントの頭に 1 回だけ（2026-11-02: 12 画面すべてに「変更前（なし）」が並んだ）
+  assert.match(c.content, /#### dialog\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(u1\)/);
+  assert.doesNotMatch(c.content, /（なし）/);
+  assert.match(c.content, /^## 画面（変更前 → 変更後）\n\n変更前の画像が無い画面は、この変更で新しく追加した画面・状態です（変更後だけを載せています）。\n/);
+  assert.equal(c.content.match(/新しく追加した画面・状態/g)?.length, 1);
   assert.match(c.content, /#### grid\n\n\*\*変更前\*\*\n\n保存先: `runs\/x\/before-grid\.png`\n\n\*\*変更後\*\*\n\n!\[変更後 grid\]\(u2\)/);
   assert.doesNotMatch(c.content, /\| --- \|/, "no table: images are not squeezed into columns");
   assert.ok(isScreensComment(c.content) && isUntouchedByHuman(c.content), "the comment carries its marker and key");
@@ -1236,4 +1240,26 @@ test("294: flags swallowed by npm (`npm run aiw pr --dry-run` without --) stop t
   // フラグが aiw にも届いていれば（npm の設定に dry-run を入れている人が -- 付きで打った等）止めない
   const h = deps(fakeAzdo().fetch, { ...base, npm_config_dry_run: "true" });
   assert.equal((await runPr({ root, config: withPr(config), dryRun: true }, h.d)).kind, "dry-run");
+});
+
+test("295: a screen without a before shot shows only its after shot; one note per comment; a missing after still says （なし）", async () => {
+  const { root } = makeRoot();
+  const src = readPrSource(root, seedArchive(root));
+  const pair = { name: "grid", before: { url: "b1", displayPath: "p" }, after: { url: "a1", displayPath: "q" } };
+  const added = { name: "dialog", before: null, after: { url: "a2", displayPath: "q2" } };
+  const removed = { name: "old", before: { url: "b3", displayPath: "p3" }, after: null };
+
+  // 全部対になっていれば断りは出さない
+  assert.doesNotMatch(buildScreensComment(src, [pair])!.content, /新しく追加した画面・状態/);
+  // 変更後の無い画面（画面を消した等）は今までどおり「（なし）」で、変更前を残す
+  const c = buildScreensComment(src, [pair, added, removed])!.content;
+  assert.match(c, /#### old\n\n\*\*変更前\*\*\n\n!\[変更前 old\]\(b3\)\n\n\*\*変更後\*\*\n\n（なし）/);
+  assert.match(c, /#### dialog\n\n\*\*変更後\*\*\n\n!\[変更後 dialog\]\(a2\)/);
+  assert.equal(c.match(/新しく追加した画面・状態/g)?.length, 1);
+
+  // 回のコメントも同じ（断りは末尾に 1 回）
+  const r = buildReplyComment(src, [pair, added], 1).content;
+  assert.match(r, /\*\*変更後\*\*\n\n!\[変更後 dialog\]\(a2\)/);
+  assert.doesNotMatch(r, /（なし）/);
+  assert.equal(r.match(/新しく追加した画面・状態/g)?.length, 1);
 });

@@ -72,10 +72,23 @@ function captionOf(s: ScreenPair, heading: string): string {
   return caption && norm(label.replace(/\s*[（(][^（()）]*[)）]\s*$/, "")).endsWith(norm(heading).split("/").pop() ?? "") ? caption : label;
 }
 
-/** 変更前 → 変更後の画像の行（見出しは呼び出し側） */
+/**
+ * 変更前 → 変更後の画像の行（見出しは呼び出し側）。
+ * 変更前が無い画面（このタスクで足した画面・状態）は変更後だけ（2026-11-02・人間の判断）。
+ * 実例: テトラ元積追加の PR で 12 画面すべてに「**変更前** （なし）」が並び、読みにくかった。断りは newScreensNote で 1 回だけ書く
+ */
 function pairLines(s: ScreenPair): string[] {
   const label = s.label ?? s.name;
-  return ["**変更前**", "", cell(s.before, `変更前 ${label}`), "", "**変更後**", "", cell(s.after, `変更後 ${label}`)];
+  const after = ["**変更後**", "", cell(s.after, `変更後 ${label}`)];
+  if (s.before === null && s.after !== null) return after;
+  return ["**変更前**", "", cell(s.before, `変更前 ${label}`), "", ...after];
+}
+
+/** 変更前が無い画面があれば、その断りの 1 行（コメントに 1 回だけ） */
+function newScreensNote(screens: ScreenPair[]): string[] {
+  return screens.some((s) => s.before === null && s.after !== null)
+    ? ["", "変更前の画像が無い画面は、この変更で新しく追加した画面・状態です（変更後だけを載せています）。"]
+    : [];
 }
 
 /** ブランチの差分（§A-2b）。run.ts が git の読み取りで作る。null = 取れなかった */
@@ -291,7 +304,7 @@ export function buildScreensComment(src: PrSource, screens: ScreenPair[]): Scree
   if (screens.length === 0) return null;
   const groups = src.requested ?? [];
   const placed = placeScreens(groups.map((g) => g.heading), screens);
-  const out: string[] = [SCREENS_HEADING];
+  const out: string[] = [SCREENS_HEADING, ...newScreensNote(screens)];
   groups.forEach((g, gi) => {
     const mine = placed.byHeading.get(gi) ?? [];
     if (mine.length === 0) return;
@@ -359,6 +372,7 @@ export function buildReplyComment(src: PrSource, screens: ScreenPair[], round: n
     out.push("", groups.length > 0 ? "### その他の画面" : "### 画面");
     for (const s of placed.rest) out.push("", `#### ${s.label ?? s.name}`, "", ...pairLines(s));
   }
+  out.push(...newScreensNote(screens));
   const body = out.join("\n");
   const key = keyOf(body);
   const content = `${normalize(body)}${SEPARATOR}${replyFooter(src.taskId ?? "不明", key)}`;

@@ -968,8 +968,13 @@ function dryRun(
     say("⚠ 依頼文（user-task.md）にチェックボックスの項目が無いため、「対応した内容」は作業記録の要約で代えています");
   }
   reportShotCoverage(src, say);
-  const unpaired = src.shots.filter((s) => s.before === null || s.after === null).map((s) => `${s.name}（${s.before === null ? "変更前" : "変更後"}なし）`);
-  if (unpaired.length > 0) say(`⚠ 対になっていない画面: ${unpaired.join(" / ")}`);
+  // 変更前が無い画面は「新しく追加した画面・状態」として変更後だけ載せる（2026-11-02）。撮り忘れとは見分けられないので件数を出す
+  const afterOnly = src.shots.filter((s) => s.before === null && s.after !== null).map((s) => s.name);
+  if (afterOnly.length > 0) {
+    say(`⚠ 変更前の無い画面（${afterOnly.length} / ${src.shots.length} 件・新しく追加した画面・状態として変更後だけ載せます。撮り忘れなら変更前を足す）: ${afterOnly.join(" / ")}`);
+  }
+  const beforeOnly = src.shots.filter((s) => s.before !== null && s.after === null).map((s) => s.name);
+  if (beforeOnly.length > 0) say(`⚠ 変更後の無い画面（変更後は「（なし）」と載せます）: ${beforeOnly.join(" / ")}`);
   say("---");
   say("実行予定の操作:");
   say("  1. 同じソース・対象ブランチの active な PR を照会");
