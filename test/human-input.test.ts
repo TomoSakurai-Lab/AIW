@@ -240,6 +240,30 @@ test("298: drive asks after a human-work pause (A27 / A26) instead of relaunchin
     assert.equal(events(root, "auto.stopped").length, 1, "auto は 1 回だけ（空回りしない）");
   }
 
+  // (2b) y で再開し、まだ通らなければまた聞く（tokyu 側の未コミットの Test 295・2026-10-28 実測を移した。答えを待たずに起動し直さない）
+  //      実測: drive へ戻った直後に auto モードのまま同じステップの auto を確認なしに起動し直し、0.4 秒ごとに auto.started が積まれ続けた（1,567 件）
+  {
+    const { root } = makeRoot();
+    patchYaml(root, (doc) => {
+      doc.steps.probe = {
+        role: "codex",
+        executor: "codex",
+        auto: true,
+        preflight: [{ command: [process.execPath, "-e", "process.exit(1)"], onFail: "pause", message: "IIS Express を止めてから再開する" }],
+        inputs: [],
+        outputs: [],
+        transitions: { done: { next: "complete" } }
+      };
+    });
+    setStep(root, "probe");
+    const out = driveCli(root, "a\ny\nn\n");
+    assert.equal(events(root, "auto.started").length, 2, "a で 1 回、y で 1 回だけ起動する");
+    assert.equal(events(root, "auto.preflight").length, 2);
+    assert.equal(out.stdout.split("作業が済んだら y で auto を再開します").length - 1, 2, "止まるたびに聞く");
+    assert.equal(out.status, 0, "n で drive を終える（エラーではない）");
+    assert.equal(existsSync(path.join(root, "runs", "auto.lock")), false, "ロックは残さない");
+  }
+
   // (3) 区間外で手で y → exec が断る → run へ進めるかは聞かない（実測: ここで run へ進んで halt していた）
   {
     const { root } = makeRoot();

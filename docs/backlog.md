@@ -1113,5 +1113,9 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   5. 設定: assets v8（user-task.md に humanInput のみ・executor は clipboard のまま）/ runtime v18（task-planning に `auto: true` と humanInput）。予算の導出値 10 → 11
   6. Test 296（exec の拒否・正規化・不在・clipboard は見ない・テンプレート不在・書き損じ）/ 297（A27・書けば exec・予算 +1）/ 298（drive が A27 / A26 で聞く・手の y で run を聞かない）。
      Test 294 の claude の 2 ケースは依頼を書いた状態へ（見たいのはスタブ）。変異 3 種（exec の判定・auto の判定・drive の聞く分岐）をそれぞれ外すと 296 / 297・298 / 298 が落ちることを確認
+  7. （2026-11-06 追記）tokyu の clone（`tokyu/tools/aiw`）に、A26 の空回りだけを直す未コミットの変更（drive が聞く分岐と Test 295）があった。
+     tokyu では 10-28〜11-02 に実際に空回りし、`auto.preflight` が 1,567 件積まれていた。中身は 4 と同じなので取り込みで置き換え、
+     そのテストにしか無い経路（y で再開し、まだ通らなければまた聞く）を Test 298 の (2b) として移した。元の差分は tokyu の
+     `.ai-workflow/runs/tokyu-aiw-uncommitted-20261106.patch` に保存
 - 観測: A27 の回数・ゲート①の却下率が auto の後に変わらないか・task-planning の halt
 - Status: resolved (2026-11-06・観測待ち)
