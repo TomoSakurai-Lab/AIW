@@ -9,6 +9,8 @@ export type EventType =
   | "exec.started"
   | "exec.completed"
   | "exec.failed"
+  // BL-392: 人が書く入力（inputs の humanInput: true）がテンプレートのままなので、executor を呼ばずに断った。unfilled（path と reason）
+  | "exec.refused"
   // One per validation phase, carrying every validator's status (passed/failed/skipped). This is
   // the only place a *skipped* validator is recorded — `validation.failed` covers violations only,
   // so without this a declared-but-unexecuted safety net leaves no trace anywhere.
@@ -36,6 +38,8 @@ export type EventType =
   | "auto.fallback"
   // BL-286: 起動前チェック（steps.<id>.preflight）が通らず、人の番（A26）で止まった。command / exitCode / reason / message
   | "auto.preflight"
+  // BL-392: 人が書く入力がテンプレートのままで、人の作業待ち（A27）で止まった。unfilled
+  | "auto.awaiting-input"
   | "auto.stopped"
   | "auto.refused"
   // aiw pr（2026-10-20・docs/design-pr.md §F-2）。**PAT と説明文の本文は載せない。** state には触らない（判定の記録ではない）

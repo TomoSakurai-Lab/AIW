@@ -21,6 +21,7 @@ import {
   type Watchdog
 } from "./watchdog.js";
 import { deleteBaseline } from "./gitScope.js";
+import { describeUnfilled, unfilledHumanInputs, type UnfilledInput } from "./humanInput.js";
 import { getStep, loadWorkflow } from "./loader.js";
 import { ASSETS_DIR, rootPaths } from "./paths.js";
 import { readState, updateState, writeState } from "./state.js";
@@ -38,6 +39,22 @@ import { versionInfo } from "./versions.js";
 
 // Plain operational error: exits non-zero, mutates NO workflow state (distinct from a halt).
 export class EngineError extends Error {}
+
+/**
+ * BL-392: 人が書く入力（`humanInput: true`）がまだ書かれていないので、claude / codex のステップを起動しなかった。
+ * 拒否であって失敗ではない（state は触らない・executor も呼ばない）。drive はこれを見て、y / n / a を聞き直す
+ */
+export class UnfilledInputError extends EngineError {
+  constructor(
+    readonly step: string,
+    readonly unfilled: UnfilledInput[]
+  ) {
+    super(
+      `"${step}" を起動しませんでした: 人が書く入力がまだ書かれていません — ${describeUnfilled(unfilled)}。` +
+        `依頼を書いてから、もう一度実行してください（state は変えていません）。`
+    );
+  }
+}
 
 export function initRoot(root: string, force = false): void {
   const p = rootPaths(root);
@@ -275,6 +292,15 @@ export async function execStep(
     executor: executor.name,
     ...versionInfo(root, config, stepId)
   };
+  // BL-392: 人が書く入力がテンプレートのままなら起動しない（スタブも作らない・state も触らない）。
+  // clipboard は人が貼る経路なので見ない（不変条件5: clipboard へ戻せば今までどおり）。判定は宣言の executor で行う（偽の executor を渡すテストでも同じ規則）
+  if (step.executor !== "clipboard") {
+    const unfilled = unfilledHumanInputs(root, step);
+    if (unfilled.length > 0) {
+      appendEvent(root, "exec.refused", { ...logBase, reason: "unfilled-human-input", unfilled });
+      throw new UnfilledInputError(stepId, unfilled);
+    }
+  }
   // 総上限と無進行の二段構え（engine/watchdog.ts）。**executor の外に置く**ので、
   // codex でも claude でも同じ機構が効く。executor 側は signal を見るだけでよい。
   const totalTimeoutMs =

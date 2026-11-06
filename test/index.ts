@@ -40,3 +40,4 @@ import "./tokens-cli.test.js";
 import "./request-mapping.test.js";
 import "./pr.test.js";
 import "./knowledge-snapshot.test.js";
+import "./human-input.test.js";

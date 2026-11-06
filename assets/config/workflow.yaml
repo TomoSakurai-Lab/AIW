@@ -55,7 +55,8 @@ defaults:
 # --------------------------------------------------------
 # 変更対象ごとにバージョンを持ち、Event Log に使用バージョンを記録する。
 versions:
-  workflow: 7                  # 2026-10-19: reflection に承認ゲート・discardSnapshots・task-metadata の json-schema（小枠A）。executor は clipboard のまま
+  workflow: 8                  # 2026-11-06: task-planning の user-task.md に humanInput: true（テンプレートのままなら claude / codex を起動しない・BL-392）。clipboard は不変
+                               # v7 2026-10-19: reflection に承認ゲート・discardSnapshots・task-metadata の json-schema（小枠A）。executor は clipboard のまま
                                # v6 2026-10-19: task-planning に Skill と request-mapping validator・feature.md の stub（小枠B）。executor は clipboard のまま
                                # v5: （注記なし）
   prompts:
@@ -225,13 +226,14 @@ steps:
   # **この雛形では宣言しない**: どのステップも executor 未宣言（clipboard）で、clipboard のステップでは
   # auto は必ず「人の番」として止まるので効かない（書くとローダーが効かないキーとして表示する）。
   # executor を宣言した環境では、implementation / review / fix / improve-check に付ける想定
-  # （research には付けない・段階制）。予算・再試行の上書きは settings.autoMaxSteps / settings.autoRetry。
+  # （research / task-planning は観測してから付ける・段階制）。予算・再試行の上書きは settings.autoMaxSteps / settings.autoRetry。
 
   task-planning:
     role: claude
     skill: task-planning          # 小枠B（2026-10-19）: 整形の手順。書式の正本はテンプレートと artifacts
     inputs:
       - path: user-task.md
+        humanInput: true           # BL-392: 人が書く入力。templates/user-task.md と同じ（未記入）なら claude / codex で起動しない（clipboard は見ない）
       - path: context.md
       - path: feature.md
         optional: true             # マルチフェーズ継続時

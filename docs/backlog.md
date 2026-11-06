@@ -1102,4 +1102,16 @@ runtime 側は親リポジトリで gitignore されており **git に残らな
   （10-23 12:13 / 10-26 03:00。claude は「user-task.md が空なので実行できません」と返して何も書かず、current-status.json の空で halt）。
   今は区間外なので drive が y / n / a を聞き、その間に人が書ける。`auto: true` にすると drive の auto モードが聞かずに走らせるので、毎回この経路に落ちる。
   あわせて、drive の auto モードは A26（人の作業待ち）で戻ったときに聞く分岐を持たず、同じステップで auto をすぐ再起動する（`src/cli.ts` の drive のループを読んだ判断で、未実測。A26 は観測期間に 0 回で、まだ踏んでいない）
-- Status: open（設計の承認待ち）
+- 裁定（2026-11-06 人間）: 論点1（exec にも入れる）・論点2（判定はテンプレートと同じかだけ）とも推奨どおり承認
+- 対処（2026-11-06）:
+  1. `inputs` の `humanInput: true`（`src/engine/humanInput.ts`）。`templates/` の同名ファイルと同じ（BOM・改行コード・行末の空白・末尾の空行を揃えて比べる）か、
+     ファイルが無いなら未記入。宣言したのにテンプレートが無ければ例外（黙って通さない）。書き損じ・outputs への記述はロード時に落とす
+  2. `aiw exec`: claude / codex のステップを起動せずに拒否（`UnfilledInputError`・`exec.refused`・スタブも作らない・state は不変）。clipboard は見ない（不変条件5）
+  3. `aiw auto`: exec の前（A26 より先）に同じ判定で、人の作業待ち **A27**（終了コード 0・`awaiting-input`・`auto.awaiting-input`）
+  4. drive: A26 / A27 で戻ったら「作業が済んだら y で auto を再開」を聞く。手で y を選んで exec が断ったら、run へ進めるかは聞かずに選び直させる。
+     **空回りは実在した**——Test 298 で聞く分岐を外すと、drive が auto を再起動し続けて出力が溢れ ENOBUFS で落ちる
+  5. 設定: assets v8（user-task.md に humanInput のみ・executor は clipboard のまま）/ runtime v18（task-planning に `auto: true` と humanInput）。予算の導出値 10 → 11
+  6. Test 296（exec の拒否・正規化・不在・clipboard は見ない・テンプレート不在・書き損じ）/ 297（A27・書けば exec・予算 +1）/ 298（drive が A27 / A26 で聞く・手の y で run を聞かない）。
+     Test 294 の claude の 2 ケースは依頼を書いた状態へ（見たいのはスタブ）。変異 3 種（exec の判定・auto の判定・drive の聞く分岐）をそれぞれ外すと 296 / 297・298 / 298 が落ちることを確認
+- 観測: A27 の回数・ゲート①の却下率が auto の後に変わらないか・task-planning の halt
+- Status: resolved (2026-11-06・観測待ち)

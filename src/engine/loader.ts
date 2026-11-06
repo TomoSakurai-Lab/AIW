@@ -54,6 +54,27 @@ function resolveAuto(id: string, value: unknown): boolean | undefined {
 }
 
 /**
+ * BL-392: `humanInput` は inputs の真偽値だけ。書き損じ（"yes" など）や outputs への記述は、効かないまま黙って通すと
+ * 「依頼が未記入なら止める」が無言で外れるので、ロード時に落とす
+ */
+function resolveHumanInput(id: string, step: any): void {
+  const inputs: unknown[] = Array.isArray(step.inputs) ? step.inputs : [];
+  for (const ref of inputs as any[]) {
+    if (ref && ref.humanInput !== undefined && typeof ref.humanInput !== "boolean") {
+      throw new Error(`Step "${id}" input "${ref.path}" declares humanInput: ${JSON.stringify(ref.humanInput)}. Allowed: true or false.`);
+    }
+  }
+  for (const key of ["outputs", "optionalOutputs"]) {
+    const refs: unknown[] = Array.isArray(step[key]) ? step[key] : [];
+    for (const ref of refs as any[]) {
+      if (ref && ref.humanInput !== undefined) {
+        throw new Error(`Step "${id}" ${key} "${ref.path}" declares humanInput. It only applies to inputs.`);
+      }
+    }
+  }
+}
+
+/**
  * 改名した設定キー（2026-09-17・M4.4 の判定で昇格した唯一の共通化）。
  *
  * エンジンは claude のステップでも `codexTimeoutMs` / `codexIdleTimeoutMs` を読んでいた——
@@ -181,6 +202,7 @@ export function loadWorkflow(root: string): WorkflowConfig {
     }
     const effort = resolveEffort(id, step.effort);
     resolveAuto(id, step.auto);
+    resolveHumanInput(id, step);
     const preflight = resolvePreflight(id, step.preflight); // BL-286: 書き損じはロード時に落とす
     steps[id] = {
       id,

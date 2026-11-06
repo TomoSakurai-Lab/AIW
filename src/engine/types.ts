@@ -11,6 +11,12 @@ export type FileRef = {
    * 0 バイトが「不在」と同じ意味になると確かめたファイルだけに付ける（例: feature.md は Phase の一覧が無ければ単一タスク扱い）。
    */
   stub?: boolean;
+  /**
+   * BL-392（2026-11-06）: `inputs` の項目にだけ意味を持つ。**人が書く入力**（例: user-task.md）。
+   * 中身が `templates/` の同名ファイルと同じ（= 誰も書いていない）か、ファイルが無いなら、claude / codex のステップを起動しない
+   * （`aiw exec` は拒否・`aiw auto` は人の作業待ち A27）。clipboard は人が貼る経路なので見ない（不変条件5）。判定は engine/humanInput.ts
+   */
+  humanInput?: boolean;
 };
 
 export type ValidatorType =

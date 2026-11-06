@@ -15,6 +15,7 @@ import {
   runStep as engineRunStep,
   statusView,
   EngineError,
+  UnfilledInputError,
   resetForNewTask
 } from "./engine/engine.js";
 import { clipboardExecutor, clipboardMeta, copyStepPromptToClipboard, visibleOnScreen } from "./engine/executors/index.js";
@@ -898,6 +899,14 @@ async function runDrive(): Promise<void> {
       return false;
     }
     console.log(`\n${returnToDriveLine(result)}\n`);
+    // BL-392: 人の作業待ち（A26 起動前チェック / A27 依頼が未記入）は、drive に**聞く分岐が無い**。
+    // そのまま戻ると、状態が何も変わらないまま同じステップで auto を再起動し続ける（空回り）。人が作業を済ませるまでここで待つ
+    if (result.stop === "preflight" || result.stop === "awaiting-input") {
+      if (!yes(await ask("作業が済んだら y で auto を再開します。 [y / それ以外=中断] "))) {
+        console.log("drive を中断しました。済んだら再度 `aiw drive`（または `aiw auto`）。");
+        return false;
+      }
+    }
     return true;
   };
 
@@ -1028,6 +1037,12 @@ ${formatBriefing(buildBriefing(root, config, gate))}
               await engineExecStep(root, config, state.currentStep, { onProgress: progressPrinter({}) })
             );
           } catch (error) {
+            // BL-392: 依頼が未記入で起動しなかった。成果物は無いので run へ進めるかは聞かず、書いてから選び直してもらう
+            // （実測 10-23 / 10-26: ここで run へ進み、current-status.json の空で halt していた）
+            if (error instanceof UnfilledInputError) {
+              console.log(`⏸ ${error.message}`);
+              continue;
+            }
             console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
           }
           // 成果物の当否は validator が決める。ここでは run へ進めるかだけを聞く。

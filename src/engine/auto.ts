@@ -1,6 +1,6 @@
 // `aiw auto`（M5）: 承認ゲートの後の無人区間を、人間の代わりに exec → run と叩き続ける。
 //
-// **正本は docs/design-auto.md。** 停止条件の表（課題A: A1〜A26）・予算（課題C）・再試行（課題D）・
+// **正本は docs/design-auto.md。** 停止条件の表（課題A: A1〜A27）・予算（課題C）・再試行（課題D）・
 // 安全弁（課題H）・終了コード（課題G）はすべてそこで決めたもので、ここはその実装。
 //
 // auto は**人間の代行**であり、判定には一切関与しない（前提5）。したがってここでは次のことを**しない**:
@@ -26,6 +26,7 @@ import { rootPaths } from "./paths.js";
 import { parseJsonText } from "./jsonText.js";
 import { resolveCheckRepoRoot } from "./gitScope.js";
 import { readKnowledgeDiff } from "./knowledgeSnapshot.js";
+import { describeUnfilled, unfilledHumanInputs } from "./humanInput.js";
 import { runPreflight } from "./preflight.js";
 import { PromptAssemblyError } from "./promptAssembly.js";
 import { readState } from "./state.js";
@@ -40,6 +41,8 @@ export type AutoStopKind =
   | "clipboard"
   // BL-286: 起動前チェック（steps.<id>.preflight）が通らなかった。人の作業待ち（エラーではない・終了コード 0）
   | "preflight"
+  // BL-392: 人が書く入力（inputs の humanInput: true）がテンプレートのまま。人の作業待ち（エラーではない・終了コード 0）
+  | "awaiting-input"
   | "out-of-zone"
   | "complete"
   | "halted"
@@ -63,7 +66,7 @@ export type AutoExitCode = (typeof AUTO_EXIT)[keyof typeof AUTO_EXIT];
 
 export type AutoStop = {
   stop: AutoStopKind;
-  /** 設計文書の停止条件の番号（A1〜A26）。表と突き合わせるための鍵 */
+  /** 設計文書の停止条件の番号（A1〜A27）。表と突き合わせるための鍵 */
   condition: string;
   step: string | null;
   /** 停止理由の1行（設計文書 課題A の「表示する1行」） */
@@ -106,6 +109,8 @@ export function returnToDriveLine(stop: Pick<AutoStop, "stop" | "step">): string
       ? `${step} の承認待ちなので`
       : stop.stop === "preflight"
         ? `${step} の前に人の作業が要るので`
+        : stop.stop === "awaiting-input"
+          ? `${step} の依頼がまだ書かれていないので`
         : stop.stop === "clipboard"
           ? `${step} は手で貼るステップなので`
           : stop.stop === "out-of-zone"
@@ -787,6 +792,21 @@ async function loop(root: string, config: WorkflowConfig, opts: AutoOptions, ctx
         step: step.id,
         line: `⛔ 予算超過: ${ctx.executed.length}/${ctx.budget.total} — モデル化されていない経路（workflow.yaml と Event Log を確認）`,
         exitCode: AUTO_EXIT.budget
+      };
+    }
+
+    // BL-392: 人が書く入力がテンプレートのまま（new-task の直後など）なら exec せずに人の作業待ち（A27）で止まる。
+    // exec も同じ関数で拒否する（UnfilledInputError）が、それを executor 失敗として受けると異常停止になるので、ここで先に見て人の番にする。
+    // 起動前チェック（A26）より先に見る: 依頼が無いなら環境を整えても走らせる意味が無い
+    const unfilled = unfilledHumanInputs(root, step);
+    if (unfilled.length > 0) {
+      appendEvent(root, "auto.awaiting-input", { runId: ctx.runId, step: step.id, unfilled });
+      return {
+        stop: "awaiting-input",
+        condition: "A27",
+        step: step.id,
+        line: `⏸ 人の作業待ち: ${step.id} — 依頼がまだ書かれていない: ${describeUnfilled(unfilled)}。書いたら aiw auto で再開`,
+        exitCode: AUTO_EXIT.humanTurn
       };
     }
 

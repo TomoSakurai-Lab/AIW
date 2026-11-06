@@ -174,6 +174,8 @@ test("294: exec creates the missing stubs before launching a claude step that wa
   {
     const { root, config } = makeRoot(); // aiw init 直後 = task-planning・current-status.json なし
     assert.equal(existsSync(path.join(root, "current-status.json")), false, "前提: init はスタブを作っていない");
+    // BL-392: 依頼がテンプレートのままだと exec は起動を断る（Test 296）。ここで見たいのはスタブなので、依頼は書いた状態にする
+    writeIn(root, "user-task.md", "# User Task\n\n- 依頼の本文\n");
     const claude = withClaudePlanning(config);
     const { executor, seen } = probeExecutor(root, ["current-status.json", "current-task.md"]);
 
@@ -191,6 +193,7 @@ test("294: exec creates the missing stubs before launching a claude step that wa
     // 既にある宣言は消さない（書きかけ・前ステップの宣言は run 側の検査が扱う）
     const { root, config } = makeRoot();
     writeStatus(root, { step: "task-planning", result: "planned", reason: "書きかけ" });
+    writeIn(root, "user-task.md", "# User Task\n\n- 依頼の本文\n");
     const before = readFileSync(path.join(root, "current-status.json"), "utf8");
     const { executor } = probeExecutor(root, []);
     await execStep(root, withClaudePlanning(config), "task-planning", { executor });

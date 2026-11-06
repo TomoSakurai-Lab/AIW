@@ -154,6 +154,17 @@ research が持つのはコードの言葉（`## Modify` のファイル名・�
 - task-planning の所要（手貼りの時間は記録が無いので before は取れない。after だけ記録する）
 - 数本（目安 n=5）観測してから、`auto: true` への組み入れを別に判定する
 
+## 8. auto への組み入れ（2026-11-06・BL-392・人間が承認）
+
+- 観測（10-20〜10-27）: ゲート① 承認 19・却下 0・所要の中央値 4.6 分。halt 4 件は request-mapping の表ではなく、
+  **new-task の直後に、テンプレートのままの user-task.md で起動した**もの（10-23 12:13 / 10-26 03:00。claude は「空なので実行できません」で終わった）
+- 組み入れの前提として、`inputs` に `humanInput: true`（user-task.md）を宣言できるようにした。`templates/` の同名ファイルと同じ（未記入）なら、
+  `aiw exec` は claude / codex を起動せずに拒否し、`aiw auto` は人の作業待ち A27 で止まる。clipboard は見ない
+  （論点1: exec にも入れる・論点2: 判定はテンプレートと同じかだけ。どちらも推奨どおり承認）
+- runtime v18: `steps.task-planning.auto: true`。ゲート①は人間のまま（承認ゲートを持つので auto の辺は出ず、予算の導出値は 1 増えるだけ）。
+  無人になるのは「reflection の承認（feature の継続）→ task-planning」と「依頼を書いた後の `aiw auto`」。戻し方: `auto` の 1 行を消す
+- 観測: A27 の回数（new-task の後に人が書く前に auto を打った回数）・ゲート①の却下率が auto の後に変わらないか・task-planning の halt
+
 ## 論点の決着（2026-10-19 人間の裁定）
 
 1. **backlog 照合の分担: 承認。** task-planning は**依頼の言葉**（画面名・コンポーネント名・依頼に書かれた BL-ID）で、research は **`## Modify` のファイル名**で照合する。
